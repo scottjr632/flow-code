@@ -16,7 +16,10 @@ type SidebarProject = {
   updatedAt?: string | undefined;
 };
 type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt" | "messages">;
-type SidebarWorkspaceInput = Pick<Workspace, "id" | "name" | "branch" | "worktreePath">;
+type SidebarWorkspaceInput = Pick<
+  Workspace,
+  "id" | "name" | "branch" | "worktreePath" | "createdAt" | "updatedAt"
+>;
 type ThreadTraversalInput = Pick<Thread, "id" | "createdAt" | "updatedAt" | "lastVisitedAt">;
 
 export type ThreadTraversalDirection = "previous" | "next";
@@ -158,6 +161,51 @@ export function resolveThreadKeyboardTraversal<T>(input: {
       : (seedIndex - 1 + threadIds.length) % threadIds.length;
 
   return threadIds[activeIndex] ?? null;
+}
+
+export function getVisibleSidebarThreadIds<TThreadId>(
+  renderedProjects: readonly {
+    renderedThreads: readonly { id: TThreadId }[];
+    renderedWorkspaceRows: readonly {
+      isExpanded: boolean;
+      workspaceThreads: readonly { id: TThreadId }[];
+    }[];
+  }[],
+): TThreadId[] {
+  return renderedProjects.flatMap((renderedProject) => {
+    const workspaceThreadIds = renderedProject.renderedWorkspaceRows.flatMap((row) =>
+      row.isExpanded ? row.workspaceThreads.map((thread) => thread.id) : [],
+    );
+    const localThreadIds = renderedProject.renderedThreads.map((thread) => thread.id);
+    return [...workspaceThreadIds, ...localThreadIds];
+  });
+}
+
+export function resolveAdjacentThreadId<T>(input: {
+  threadIds: readonly T[];
+  currentThreadId: T | null;
+  direction: ThreadTraversalDirection;
+}): T | null {
+  const { currentThreadId, direction, threadIds } = input;
+
+  if (threadIds.length === 0) {
+    return null;
+  }
+
+  if (currentThreadId === null) {
+    return direction === "previous" ? (threadIds.at(-1) ?? null) : (threadIds[0] ?? null);
+  }
+
+  const currentIndex = threadIds.indexOf(currentThreadId);
+  if (currentIndex === -1) {
+    return null;
+  }
+
+  if (direction === "previous") {
+    return currentIndex > 0 ? (threadIds[currentIndex - 1] ?? null) : null;
+  }
+
+  return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
 }
 
 export function isContextMenuPointerDown(input: {
@@ -387,6 +435,38 @@ export function isWorkspaceTitleCustomized(workspace: SidebarWorkspaceInput): bo
   return workspace.name !== deriveDefaultWorkspaceTitle(workspace);
 }
 
+const WORKSPACE_DISPLAY_TITLE_MAX_LENGTH = 60;
+
+export function deriveWorkspaceDisplayTitle(
+  workspace: SidebarWorkspaceInput,
+  workspaceThreads: readonly Pick<Thread, "messages" | "createdAt">[],
+): string {
+  if (isWorkspaceTitleCustomized(workspace)) {
+    return workspace.name;
+  }
+
+  // Find the earliest first-user-message across all workspace threads
+  let earliest: { text: string; createdAt: string } | null = null;
+  for (const thread of workspaceThreads) {
+    const firstUserMsg = thread.messages.find((m) => m.role === "user");
+    if (!firstUserMsg) continue;
+    if (!earliest || thread.createdAt < earliest.createdAt) {
+      earliest = { text: firstUserMsg.text, createdAt: thread.createdAt };
+    }
+  }
+
+  if (earliest) {
+    const firstLine = earliest.text.split("\n")[0]?.trim() ?? "";
+    if (firstLine.length > 0) {
+      return firstLine.length > WORKSPACE_DISPLAY_TITLE_MAX_LENGTH
+        ? firstLine.slice(0, WORKSPACE_DISPLAY_TITLE_MAX_LENGTH - 3) + "..."
+        : firstLine;
+    }
+  }
+
+  return deriveDefaultWorkspaceTitle(workspace);
+}
+
 function toSortableTimestamp(iso: string | undefined): number | null {
   if (!iso) return null;
   const ms = Date.parse(iso);
@@ -479,6 +559,60 @@ export function getProjectSortTimestamp(
     return toSortableTimestamp(project.createdAt) ?? Number.NEGATIVE_INFINITY;
   }
   return toSortableTimestamp(project.updatedAt ?? project.createdAt) ?? Number.NEGATIVE_INFINITY;
+}
+
+export function getWorkspaceSortTimestamp(
+  workspace: SidebarWorkspaceInput,
+  workspaceThreads: readonly SidebarThreadSortInput[],
+  sortOrder: SidebarThreadSortOrder,
+): number {
+  if (workspaceThreads.length > 0) {
+    return workspaceThreads.reduce(
+      (latest, thread) => Math.max(latest, getThreadSortTimestamp(thread, sortOrder)),
+      Number.NEGATIVE_INFINITY,
+    );
+  }
+
+  if (sortOrder === "created_at") {
+    return toSortableTimestamp(workspace.createdAt) ?? Number.NEGATIVE_INFINITY;
+  }
+  return (
+    toSortableTimestamp(workspace.updatedAt ?? workspace.createdAt) ?? Number.NEGATIVE_INFINITY
+  );
+}
+
+export function sortWorkspacesForSidebar<
+  TWorkspace extends SidebarWorkspaceInput,
+  TThread extends Pick<Thread, "workspaceId" | "createdAt" | "updatedAt" | "messages">,
+>(
+  workspaces: readonly TWorkspace[],
+  threads: readonly TThread[],
+  sortOrder: SidebarThreadSortOrder,
+): TWorkspace[] {
+  const threadsByWorkspaceId = new Map<string, TThread[]>();
+  for (const thread of threads) {
+    if (!thread.workspaceId) continue;
+    const existing = threadsByWorkspaceId.get(thread.workspaceId) ?? [];
+    existing.push(thread);
+    threadsByWorkspaceId.set(thread.workspaceId, existing);
+  }
+
+  return [...workspaces].toSorted((left, right) => {
+    const rightTimestamp = getWorkspaceSortTimestamp(
+      right,
+      threadsByWorkspaceId.get(right.id) ?? [],
+      sortOrder,
+    );
+    const leftTimestamp = getWorkspaceSortTimestamp(
+      left,
+      threadsByWorkspaceId.get(left.id) ?? [],
+      sortOrder,
+    );
+    const byTimestamp =
+      rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
+    if (byTimestamp !== 0) return byTimestamp;
+    return left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
+  });
 }
 
 export function sortProjectsForSidebar<TProject extends SidebarProject, TThread extends Thread>(

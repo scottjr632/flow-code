@@ -2,6 +2,15 @@ import { DiffIcon, MessageSquareTextIcon, TerminalSquareIcon, type LucideIcon } 
 import { type ThreadTerminalGroup } from "./types";
 
 export type WorkspaceTabId = string;
+export const DEFAULT_CHAT_WORKSPACE_TAB_ID = "chat" as const;
+
+export function buildThreadWorkspaceTabId(threadId: string): WorkspaceTabId {
+  return `thread:${threadId}`;
+}
+
+export function isThreadWorkspaceTabId(tabId: WorkspaceTabId): boolean {
+  return tabId.startsWith("thread:");
+}
 
 export function buildTerminalWorkspaceTabId(groupId: string): WorkspaceTabId {
   return `terminal:${groupId}`;
@@ -18,11 +27,20 @@ function terminalTabTitle(groupIndex: number, splitCount: number, groupCount: nu
 
 export type WorkspaceTab =
   | {
-      id: "chat";
+      id: typeof DEFAULT_CHAT_WORKSPACE_TAB_ID;
       kind: "chat";
       title: string;
       closeable: false;
       icon: LucideIcon;
+    }
+  | {
+      id: WorkspaceTabId;
+      kind: "session";
+      title: string;
+      closeable: false;
+      icon: LucideIcon;
+      threadId: string;
+      isDraft: boolean;
     }
   | {
       id: "diff";
@@ -42,20 +60,43 @@ export type WorkspaceTab =
       primaryTerminalId: string;
     };
 
+function resolveSessionTabTitle(input: { isDraft: boolean; title: string }): string {
+  if (input.isDraft && input.title === "New thread") {
+    return "New session";
+  }
+  return input.title;
+}
+
 export function buildWorkspaceTabs(input: {
+  sessionTabs?: ReadonlyArray<{
+    threadId: string;
+    title: string;
+    isDraft: boolean;
+  }>;
   diffOpen: boolean;
   terminalOpen: boolean;
   terminalGroups: readonly ThreadTerminalGroup[];
 }): WorkspaceTab[] {
-  const tabs: WorkspaceTab[] = [
-    {
-      id: "chat",
-      kind: "chat",
-      title: "Chat",
-      closeable: false,
-      icon: MessageSquareTextIcon,
-    },
-  ];
+  const tabs: WorkspaceTab[] =
+    input.sessionTabs && input.sessionTabs.length > 0
+      ? input.sessionTabs.map((tab) => ({
+          id: buildThreadWorkspaceTabId(tab.threadId),
+          kind: "session",
+          title: resolveSessionTabTitle(tab),
+          closeable: false,
+          icon: MessageSquareTextIcon,
+          threadId: tab.threadId,
+          isDraft: tab.isDraft,
+        }))
+      : [
+          {
+            id: DEFAULT_CHAT_WORKSPACE_TAB_ID,
+            kind: "chat",
+            title: "Chat",
+            closeable: false,
+            icon: MessageSquareTextIcon,
+          },
+        ];
 
   if (input.diffOpen) {
     tabs.push({
@@ -103,5 +144,5 @@ export function resolveWorkspaceTabId(
   if (preferredTabId && tabs.some((tab) => tab.id === preferredTabId)) {
     return preferredTabId;
   }
-  return tabs[0]?.id ?? "chat";
+  return tabs[0]?.id ?? DEFAULT_CHAT_WORKSPACE_TAB_ID;
 }

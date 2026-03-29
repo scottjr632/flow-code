@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildThreadWorkspaceTabId,
   buildTerminalWorkspaceTabId,
   buildWorkspaceTabs,
+  DEFAULT_CHAT_WORKSPACE_TAB_ID,
   resolveWorkspaceTabId,
 } from "./workspaceTabs";
 
@@ -14,7 +16,7 @@ describe("workspaceTabs", () => {
         terminalOpen: false,
         terminalGroups: [],
       }).map((tab) => tab.id),
-    ).toEqual(["chat"]);
+    ).toEqual([DEFAULT_CHAT_WORKSPACE_TAB_ID]);
   });
 
   it("adds review and one terminal tab per terminal group", () => {
@@ -28,7 +30,7 @@ describe("workspaceTabs", () => {
         ],
       }).map((tab) => [tab.id, tab.title]),
     ).toEqual([
-      ["chat", "Chat"],
+      [DEFAULT_CHAT_WORKSPACE_TAB_ID, "Chat"],
       ["diff", "Review"],
       [buildTerminalWorkspaceTabId("group-a"), "Terminal 1"],
       [buildTerminalWorkspaceTabId("group-b"), "Terminal 2 (2)"],
@@ -43,8 +45,25 @@ describe("workspaceTabs", () => {
         terminalGroups: [{ id: "group-a", terminalIds: ["terminal-a"] }],
       }).map((tab) => [tab.id, tab.title]),
     ).toEqual([
-      ["chat", "Chat"],
+      [DEFAULT_CHAT_WORKSPACE_TAB_ID, "Chat"],
       [buildTerminalWorkspaceTabId("group-a"), "Terminal"],
+    ]);
+  });
+
+  it("replaces the default chat tab with workspace session tabs", () => {
+    expect(
+      buildWorkspaceTabs({
+        sessionTabs: [
+          { threadId: "thread-b", title: "Second session", isDraft: false },
+          { threadId: "draft-a", title: "New thread", isDraft: true },
+        ],
+        diffOpen: false,
+        terminalOpen: false,
+        terminalGroups: [],
+      }).map((tab) => [tab.id, tab.title]),
+    ).toEqual([
+      [buildThreadWorkspaceTabId("thread-b"), "Second session"],
+      [buildThreadWorkspaceTabId("draft-a"), "New session"],
     ]);
   });
 
@@ -55,7 +74,7 @@ describe("workspaceTabs", () => {
       terminalGroups: [],
     });
 
-    expect(resolveWorkspaceTabId("diff", tabs)).toBe("chat");
+    expect(resolveWorkspaceTabId("diff", tabs)).toBe(DEFAULT_CHAT_WORKSPACE_TAB_ID);
   });
 
   it("keeps the preferred terminal tab when it still exists", () => {

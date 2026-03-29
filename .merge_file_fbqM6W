@@ -76,18 +76,13 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
-  type Thread,
   type TurnDiffSummary,
 } from "../types";
 import { basenameOfPath } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
-import {
-  isFocusComposerShortcut,
-  resolveShortcutCommand,
-  shortcutLabelForCommand,
-} from "../keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import { ThreadDiffWorkspace } from "./ThreadDiffWorkspace";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -162,10 +157,8 @@ import {
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import {
-  buildThreadWorkspaceTabId,
   buildTerminalWorkspaceTabId,
   buildWorkspaceTabs,
-  DEFAULT_CHAT_WORKSPACE_TAB_ID,
   isTerminalWorkspaceTabId,
   resolveWorkspaceTabId,
   type WorkspaceTabId,
@@ -207,22 +200,15 @@ import {
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
   deriveComposerSendState,
-  getWorkspaceTabReconciliationTarget,
-  LAST_ACTIVE_WORKSPACE_TAB_BY_THREAD_KEY,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
-  LastActiveWorkspaceTabByThreadSchema,
   LastInvokedScriptByProjectSchema,
   PullRequestDialogState,
   readFileAsDataUrl,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   SendPhase,
-  shouldReuseHiddenDefaultTerminalForWorkspaceCreation,
-  updateLastActiveWorkspaceTabByThread,
 } from "./ChatView.logic";
-import { sortThreadsForSidebar } from "./Sidebar.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import { useHandleNewThread } from "../hooks/useHandleNewThread";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -298,7 +284,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const settings = useSettings();
-  const { handleNewThread } = useHandleNewThread();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
@@ -396,6 +381,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     useState<Record<string, number>>({});
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
+  const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState<WorkspaceTabId>("chat");
   const [isWorkspaceCommandPaletteOpen, setIsWorkspaceCommandPaletteOpen] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
@@ -424,14 +410,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     {},
     LastInvokedScriptByProjectSchema,
   );
-  const [lastActiveWorkspaceTabByThreadId, setLastActiveWorkspaceTabByThreadId] = useLocalStorage(
-    LAST_ACTIVE_WORKSPACE_TAB_BY_THREAD_KEY,
-    {},
-    LastActiveWorkspaceTabByThreadSchema,
-  );
   const messagesScrollRef = useRef<HTMLDivElement>(null);
-  const activeWorkspaceTabThreadIdRef = useRef(threadId);
-  activeWorkspaceTabThreadIdRef.current = threadId;
   const [messagesScrollElement, setMessagesScrollElement] = useState<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const lastKnownScrollTopRef = useRef(0);
@@ -471,15 +450,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
-  const activeWorkspaceTabId = lastActiveWorkspaceTabByThreadId[threadId] ?? "chat";
-  const setActiveWorkspaceTabId = useCallback(
-    (tabId: WorkspaceTabId) => {
-      setLastActiveWorkspaceTabByThreadId((current) =>
-        updateLastActiveWorkspaceTabByThread(current, activeWorkspaceTabThreadIdRef.current, tabId),
-      );
-    },
-    [setLastActiveWorkspaceTabByThreadId],
-  );
 
   const setPrompt = useCallback(
     (nextPrompt: string) => {
@@ -581,89 +551,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
-  const projectDraftThread = activeProject ? getDraftThreadByProjectId(activeProject.id) : null;
-  const workspaceSessionTabs = useMemo(() => {
-    if (!activeProject || !activeThread?.workspaceId) {
-      return [];
-    }
-
-    const sessionsById = new Map<
-      string,
-      Pick<Thread, "id" | "title" | "createdAt" | "updatedAt" | "messages"> & {
-        isDraft: boolean;
-      }
-    >();
-
-    threads
-      .filter(
-        (thread) =>
-          thread.archivedAt === null &&
-          thread.projectId === activeProject.id &&
-          thread.workspaceId === activeThread.workspaceId,
-      )
-      .forEach((thread) => {
-        sessionsById.set(thread.id, {
-          id: thread.id,
-          title: thread.title,
-          createdAt: thread.createdAt,
-          updatedAt: thread.updatedAt,
-          messages: thread.messages,
-          isDraft: false,
-        });
-      });
-
-    if (projectDraftThread && projectDraftThread.workspaceId === activeThread.workspaceId) {
-      sessionsById.set(projectDraftThread.threadId, {
-        id: projectDraftThread.threadId,
-        title: "New thread",
-        createdAt: projectDraftThread.createdAt,
-        updatedAt: projectDraftThread.createdAt,
-        messages: [],
-        isDraft: true,
-      });
-    }
-
-    if (!sessionsById.has(activeThread.id)) {
-      sessionsById.set(activeThread.id, {
-        id: activeThread.id,
-        title: activeThread.title,
-        createdAt: activeThread.createdAt,
-        updatedAt: activeThread.updatedAt,
-        messages: activeThread.messages,
-        isDraft: isLocalDraftThread,
-      });
-    }
-
-    return sortThreadsForSidebar(
-      Array.from(sessionsById.values()),
-      settings.sidebarThreadSortOrder,
-    ).map((thread) => ({
-      threadId: thread.id,
-      title: thread.title,
-      isDraft: thread.isDraft,
-    }));
-  }, [
-    activeProject,
-    activeThread,
-    isLocalDraftThread,
-    projectDraftThread,
-    settings.sidebarThreadSortOrder,
-    threads,
-  ]);
   const workspaceTabs = useMemo(
     () =>
       buildWorkspaceTabs({
-        sessionTabs: workspaceSessionTabs,
         diffOpen,
         terminalOpen: terminalState.terminalOpen,
         terminalGroups: terminalState.terminalGroups,
       }),
-    [diffOpen, terminalState.terminalGroups, terminalState.terminalOpen, workspaceSessionTabs],
+    [diffOpen, terminalState.terminalGroups, terminalState.terminalOpen],
   );
-  const defaultConversationWorkspaceTabId =
-    activeThread && activeThread.workspaceId
-      ? buildThreadWorkspaceTabId(activeThread.id)
-      : DEFAULT_CHAT_WORKSPACE_TAB_ID;
   const resolvedWorkspaceTabId = resolveWorkspaceTabId(activeWorkspaceTabId, workspaceTabs);
   const activeWorkspaceTab = workspaceTabs.find((tab) => tab.id === resolvedWorkspaceTabId);
   const activeTerminalWorkspaceTab =
@@ -688,27 +584,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, []);
 
   useEffect(() => {
-    const reconciliationTarget = getWorkspaceTabReconciliationTarget({
-      activeTabId: activeWorkspaceTabId,
-      resolvedTabId: resolvedWorkspaceTabId,
-      diffOpen,
-    });
-
-    if (reconciliationTarget) {
-      setActiveWorkspaceTabId(reconciliationTarget);
+    if (resolvedWorkspaceTabId !== activeWorkspaceTabId) {
+      setActiveWorkspaceTabId(resolvedWorkspaceTabId);
     }
-  }, [activeWorkspaceTabId, diffOpen, resolvedWorkspaceTabId, setActiveWorkspaceTabId]);
-
-  useEffect(() => {
-    if (
-      activeWorkspaceTabId === "diff" ||
-      isTerminalWorkspaceTabId(activeWorkspaceTabId) ||
-      activeWorkspaceTabId === defaultConversationWorkspaceTabId
-    ) {
-      return;
-    }
-    setActiveWorkspaceTabId(defaultConversationWorkspaceTabId);
-  }, [activeWorkspaceTabId, defaultConversationWorkspaceTabId]);
+  }, [activeWorkspaceTabId, resolvedWorkspaceTabId]);
 
   const openOrReuseProjectDraftThread = useCallback(
     async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
@@ -1418,7 +1297,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!diffOpen) {
       setActiveWorkspaceTabId("diff");
     } else if (resolvedWorkspaceTabId === "diff") {
-      setActiveWorkspaceTabId(defaultConversationWorkspaceTabId);
+      setActiveWorkspaceTabId("chat");
     }
     void navigate({
       to: "/$threadId",
@@ -1429,14 +1308,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
       },
     });
-  }, [
-    defaultConversationWorkspaceTabId,
-    diffOpen,
-    navigate,
-    resolvedWorkspaceTabId,
-    setActiveWorkspaceTabId,
-    threadId,
-  ]);
+  }, [diffOpen, navigate, resolvedWorkspaceTabId, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -1557,7 +1429,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadId) return;
     if (terminalState.terminalOpen && activeWorkspaceTab?.kind === "terminal") {
-      setActiveWorkspaceTabId(diffOpen ? "diff" : defaultConversationWorkspaceTabId);
+      setActiveWorkspaceTabId(diffOpen ? "diff" : "chat");
     } else if (!terminalState.terminalOpen) {
       setActiveWorkspaceTabId(
         firstTerminalWorkspaceTabId ??
@@ -1568,10 +1440,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeThreadId,
     activeWorkspaceTab?.kind,
-    defaultConversationWorkspaceTabId,
     diffOpen,
     firstTerminalWorkspaceTabId,
-    setActiveWorkspaceTabId,
     setTerminalOpen,
     terminalState.activeTerminalGroupId,
     terminalState.terminalOpen,
@@ -1586,7 +1456,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeThreadId,
     hasReachedSplitLimit,
-    setActiveWorkspaceTabId,
     storeSplitTerminal,
     terminalState.activeTerminalGroupId,
     workspaceTerminalTabIdForGroup,
@@ -1597,7 +1466,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     storeNewTerminal(activeThreadId, terminalId);
     setActiveWorkspaceTabId(buildTerminalWorkspaceTabId(terminalGroupIdForTerminal(terminalId)));
     setTerminalFocusRequestId((value) => value + 1);
-  }, [activeThreadId, setActiveWorkspaceTabId, storeNewTerminal]);
+  }, [activeThreadId, storeNewTerminal]);
   const activateTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadId) return;
@@ -1605,12 +1474,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setActiveWorkspaceTabId(workspaceTerminalTabIdForTerminal(terminalId));
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [
-      activeThreadId,
-      setActiveWorkspaceTabId,
-      storeSetActiveTerminal,
-      workspaceTerminalTabIdForTerminal,
-    ],
+    [activeThreadId, storeSetActiveTerminal, workspaceTerminalTabIdForTerminal],
   );
   const closeTerminal = useCallback(
     (terminalId: string) => {
@@ -1643,18 +1507,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       storeCloseTerminal(activeThreadId, terminalId);
       if (isFinalTerminal && activeWorkspaceTab?.kind === "terminal") {
-        setActiveWorkspaceTabId(diffOpen ? "diff" : defaultConversationWorkspaceTabId);
+        setActiveWorkspaceTabId(diffOpen ? "diff" : "chat");
       }
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [
-      activeThreadId,
-      activeWorkspaceTab?.kind,
-      defaultConversationWorkspaceTabId,
-      diffOpen,
-      setActiveWorkspaceTabId,
-      storeCloseTerminal,
-    ],
+    [activeThreadId, activeWorkspaceTab?.kind, diffOpen, storeCloseTerminal],
   );
   const runProjectScript = useCallback(
     async (
@@ -1741,7 +1598,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeThread,
       activeThreadId,
       gitCwd,
-      setActiveWorkspaceTabId,
       setTerminalOpen,
       setThreadError,
       storeNewTerminal,
@@ -2547,22 +2403,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       if (!activeThreadId || event.defaultPrevented || isWorkspaceCommandPaletteOpen) return;
-      if (isFocusComposerShortcut(event)) {
-        if (isConnecting || isComposerApprovalState) {
-          return;
-        }
-        event.preventDefault();
-        event.stopPropagation();
-        if (resolvedWorkspaceTabId !== "chat") {
-          setActiveWorkspaceTabId("chat");
-          window.requestAnimationFrame(() => {
-            scheduleComposerFocus();
-          });
-          return;
-        }
-        scheduleComposerFocus();
-        return;
-      }
       const shortcutContext = {
         terminalFocus: isTerminalFocused(),
         terminalOpen: Boolean(terminalState.terminalOpen),
@@ -2627,8 +2467,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return () => window.removeEventListener("keydown", handler);
   }, [
     activeProject,
-    isComposerApprovalState,
-    isConnecting,
     terminalState.terminalOpen,
     terminalState.activeTerminalId,
     activeThreadId,
@@ -2640,9 +2478,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     splitTerminal,
     keybindings,
     onToggleDiff,
-    resolvedWorkspaceTabId,
-    scheduleComposerFocus,
-    setActiveWorkspaceTabId,
     toggleTerminalVisibility,
   ]);
 
@@ -3924,7 +3759,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         },
       });
     },
-    [navigate, setActiveWorkspaceTabId, threadId],
+    [navigate, threadId],
   );
   const onRevertUserMessage = (messageId: MessageId) => {
     const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
@@ -3933,10 +3768,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     void onRevertToTurnCount(targetTurnCount);
   };
-  const isChatWorkspaceActive =
-    activeWorkspaceTab?.kind === "chat" ||
-    activeWorkspaceTab?.kind === "session" ||
-    !activeWorkspaceTab;
+  const isChatWorkspaceActive = activeWorkspaceTab?.kind === "chat" || !activeWorkspaceTab;
   const openReviewWorkspace = useCallback(() => {
     if (!isGitRepo) {
       return;
@@ -3954,79 +3786,33 @@ export default function ChatView({ threadId }: ChatViewProps) {
       },
     });
     setActiveWorkspaceTabId("diff");
-  }, [diffOpen, isGitRepo, navigate, setActiveWorkspaceTabId, threadId]);
+  }, [diffOpen, isGitRepo, navigate, threadId]);
   const selectWorkspaceTab = useCallback(
     (tabId: WorkspaceTabId) => {
-      const targetTab = workspaceTabs.find((tab) => tab.id === tabId);
-      if (!targetTab) {
+      if (!isTerminalWorkspaceTabId(tabId)) {
         setActiveWorkspaceTabId(tabId);
         return;
       }
 
-      if (targetTab.kind === "session") {
-        setActiveWorkspaceTabId(tabId);
-        if (targetTab.threadId !== threadId) {
-          void navigate({
-            to: "/$threadId",
-            params: { threadId: targetTab.threadId },
-          });
-        }
-        return;
-      }
-
-      if (!isTerminalWorkspaceTabId(tabId) || targetTab.kind !== "terminal") {
+      const targetTab = workspaceTabs.find((tab) => tab.kind === "terminal" && tab.id === tabId);
+      if (!targetTab || targetTab.kind !== "terminal") {
         setActiveWorkspaceTabId(tabId);
         return;
       }
 
       activateTerminal(targetTab.primaryTerminalId);
     },
-    [activateTerminal, navigate, setActiveWorkspaceTabId, threadId, workspaceTabs],
+    [activateTerminal, workspaceTabs],
   );
-  const createSessionWorkspace = useCallback(() => {
-    if (!activeProject || !activeThread?.workspaceId) {
-      return;
-    }
-    void handleNewThread(activeProject.id, {
-      workspaceId: activeThread.workspaceId,
-      branch: activeThread.branch,
-      worktreePath: activeThread.worktreePath,
-      envMode: activeThread.worktreePath ? "worktree" : (draftThread?.envMode ?? "worktree"),
-    });
-  }, [
-    activeProject,
-    activeThread?.branch,
-    activeThread?.workspaceId,
-    activeThread?.worktreePath,
-    draftThread?.envMode,
-    handleNewThread,
-  ]);
   const createTerminalWorkspace = useCallback(() => {
     if (!activeProject) {
-      return;
-    }
-    if (
-      shouldReuseHiddenDefaultTerminalForWorkspaceCreation({
-        terminalOpen: terminalState.terminalOpen,
-        terminalIds: terminalState.terminalIds,
-      })
-    ) {
-      setTerminalOpen(true);
-      activateTerminal(DEFAULT_THREAD_TERMINAL_ID);
       return;
     }
     if (!terminalState.terminalOpen) {
       setTerminalOpen(true);
     }
     createNewTerminal();
-  }, [
-    activateTerminal,
-    activeProject,
-    createNewTerminal,
-    setTerminalOpen,
-    terminalState.terminalIds,
-    terminalState.terminalOpen,
-  ]);
+  }, [activeProject, createNewTerminal, setTerminalOpen, terminalState.terminalOpen]);
   const closeWorkspaceTab = useCallback(
     (tabId: WorkspaceTabId) => {
       if (tabId === "diff") {
@@ -4046,8 +3832,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       if (resolvedWorkspaceTabId === tabId) {
         const fallbackTabId =
-          workspaceTabs.find((tab) => tab.id !== tabId)?.id ??
-          (diffOpen ? "diff" : defaultConversationWorkspaceTabId);
+          workspaceTabs.find((tab) => tab.id !== tabId)?.id ?? (diffOpen ? "diff" : "chat");
         setActiveWorkspaceTabId(fallbackTabId);
       }
 
@@ -4058,10 +3843,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [
       closeTerminal,
       diffOpen,
-      defaultConversationWorkspaceTabId,
       onToggleDiff,
       resolvedWorkspaceTabId,
-      setActiveWorkspaceTabId,
       terminalState.terminalOpen,
       workspaceTabs,
     ],
@@ -4229,10 +4012,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeTabId={resolvedWorkspaceTabId}
           onSelectTab={selectWorkspaceTab}
           onCloseTab={closeWorkspaceTab}
-          canCreateSession={activeThread.workspaceId !== null}
           canCreateTerminal={activeProject !== undefined}
           canOpenReview={isGitRepo}
-          onCreateSession={createSessionWorkspace}
           onCreateTerminal={createTerminalWorkspace}
           onOpenReview={openReviewWorkspace}
         />

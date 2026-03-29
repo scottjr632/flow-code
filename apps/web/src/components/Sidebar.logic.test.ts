@@ -5,12 +5,14 @@ import {
   getFallbackThreadIdAfterDelete,
   getThreadIdsForKeyboardTraversal,
   getThreadIdsByMostRecentVisit,
+  getVisibleSidebarThreadIds,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   groupThreadsForSidebarProject,
   hasUnseenCompletion,
   isWorkspaceTitleCustomized,
   isContextMenuPointerDown,
+  resolveAdjacentThreadId,
   resolveThreadKeyboardTraversal,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
@@ -19,6 +21,7 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
+  sortWorkspacesForSidebar,
 } from "./Sidebar.logic";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import {
@@ -253,6 +256,109 @@ describe("getThreadIdsForKeyboardTraversal", () => {
       ThreadId.makeUnsafe("thread-2"),
       ThreadId.makeUnsafe("thread-1"),
       ThreadId.makeUnsafe("thread-3"),
+    ]);
+  });
+});
+
+describe("resolveAdjacentThreadId", () => {
+  it("resolves adjacent thread ids in ordered sidebar traversal", () => {
+    const threads = [
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-3"),
+    ];
+
+    expect(
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: threads[1] ?? null,
+        direction: "previous",
+      }),
+    ).toBe(threads[0]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: threads[1] ?? null,
+        direction: "next",
+      }),
+    ).toBe(threads[2]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: null,
+        direction: "next",
+      }),
+    ).toBe(threads[0]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: null,
+        direction: "previous",
+      }),
+    ).toBe(threads[2]);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds: threads,
+        currentThreadId: threads[0] ?? null,
+        direction: "previous",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("getVisibleSidebarThreadIds", () => {
+  it("returns only the rendered visible thread order across projects", () => {
+    expect(
+      getVisibleSidebarThreadIds([
+        {
+          renderedThreads: [
+            { id: ThreadId.makeUnsafe("thread-12") },
+            { id: ThreadId.makeUnsafe("thread-11") },
+            { id: ThreadId.makeUnsafe("thread-10") },
+          ],
+          renderedWorkspaceRows: [],
+        },
+        {
+          renderedThreads: [
+            { id: ThreadId.makeUnsafe("thread-8") },
+            { id: ThreadId.makeUnsafe("thread-6") },
+          ],
+          renderedWorkspaceRows: [],
+        },
+      ]),
+    ).toEqual([
+      ThreadId.makeUnsafe("thread-12"),
+      ThreadId.makeUnsafe("thread-11"),
+      ThreadId.makeUnsafe("thread-10"),
+      ThreadId.makeUnsafe("thread-8"),
+      ThreadId.makeUnsafe("thread-6"),
+    ]);
+  });
+
+  it("includes threads from expanded workspace rows", () => {
+    expect(
+      getVisibleSidebarThreadIds([
+        {
+          renderedThreads: [{ id: ThreadId.makeUnsafe("local-1") }],
+          renderedWorkspaceRows: [
+            {
+              isExpanded: true,
+              workspaceThreads: [
+                { id: ThreadId.makeUnsafe("ws-1") },
+                { id: ThreadId.makeUnsafe("ws-2") },
+              ],
+            },
+            {
+              isExpanded: false,
+              workspaceThreads: [{ id: ThreadId.makeUnsafe("ws-3") }],
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      ThreadId.makeUnsafe("ws-1"),
+      ThreadId.makeUnsafe("ws-2"),
+      ThreadId.makeUnsafe("local-1"),
     ]);
   });
 });
@@ -632,6 +738,67 @@ describe("workspace title helpers", () => {
     });
 
     expect(isWorkspaceTitleCustomized(workspace)).toBe(true);
+  });
+});
+
+describe("sortWorkspacesForSidebar", () => {
+  it("sorts workspaces by the freshest workspace session activity", () => {
+    const workspaces = [
+      makeWorkspace({
+        id: "workspace-a" as never,
+        name: "feature/a",
+        updatedAt: "2026-03-09T10:00:00.000Z",
+      }),
+      makeWorkspace({
+        id: "workspace-b" as never,
+        name: "feature/b",
+        updatedAt: "2026-03-09T09:00:00.000Z",
+      }),
+    ];
+
+    const sorted = sortWorkspacesForSidebar(
+      workspaces,
+      [
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-1"),
+          workspaceId: workspaces[0]!.id,
+          updatedAt: "2026-03-09T11:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-2"),
+          workspaceId: workspaces[1]!.id,
+          updatedAt: "2026-03-09T12:00:00.000Z",
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((workspace) => workspace.id)).toEqual([
+      "workspace-b" as never,
+      "workspace-a" as never,
+    ]);
+  });
+
+  it("falls back to workspace timestamps when a workspace has no sessions yet", () => {
+    const workspaces = [
+      makeWorkspace({
+        id: "workspace-a" as never,
+        name: "feature/a",
+        createdAt: "2026-03-09T10:00:00.000Z",
+      }),
+      makeWorkspace({
+        id: "workspace-b" as never,
+        name: "feature/b",
+        createdAt: "2026-03-09T12:00:00.000Z",
+      }),
+    ];
+
+    const sorted = sortWorkspacesForSidebar(workspaces, [], "created_at");
+
+    expect(sorted.map((workspace) => workspace.id)).toEqual([
+      "workspace-b" as never,
+      "workspace-a" as never,
+    ]);
   });
 });
 

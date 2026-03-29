@@ -1,4 +1,4 @@
-import { DiffIcon, PlusIcon, TerminalSquareIcon, XIcon } from "lucide-react";
+import { DiffIcon, PlusIcon, SquarePenIcon, TerminalSquareIcon, XIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { type WorkspaceTab, type WorkspaceTabId } from "~/workspaceTabs";
@@ -9,8 +9,10 @@ interface WorkspaceTabBarProps {
   activeTabId: WorkspaceTabId;
   onSelectTab: (tabId: WorkspaceTabId) => void;
   onCloseTab: (tabId: WorkspaceTabId) => void;
+  canCreateSession: boolean;
   canCreateTerminal: boolean;
   canOpenReview: boolean;
+  onCreateSession: () => void;
   onCreateTerminal: () => void;
   onOpenReview: () => void;
 }
@@ -20,8 +22,10 @@ export function WorkspaceTabBar({
   activeTabId,
   onSelectTab,
   onCloseTab,
+  canCreateSession,
   canCreateTerminal,
   canOpenReview,
+  onCreateSession,
   onCreateTerminal,
   onOpenReview,
 }: WorkspaceTabBarProps) {
@@ -85,6 +89,10 @@ export function WorkspaceTabBar({
             <PlusIcon className="size-3.5" />
           </MenuTrigger>
           <MenuPopup align="end" side="bottom">
+            <MenuItem disabled={!canCreateSession} onClick={onCreateSession}>
+              <SquarePenIcon className="size-3.5" />
+              New session
+            </MenuItem>
             <MenuItem disabled={!canCreateTerminal} onClick={onCreateTerminal}>
               <TerminalSquareIcon className="size-3.5" />
               New terminal
