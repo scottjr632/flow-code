@@ -124,6 +124,7 @@ describe("terminalContext", () => {
         },
       ],
       diffComments: [],
+      sessionReferences: [],
     });
   });
 
@@ -176,6 +177,42 @@ describe("terminalContext", () => {
         {
           header: "apps/web/src/components/DiffPanel.tsx added line 12",
           body: "Comment:\n  Check the null guard.\nCode:\n  12 | if (foo)",
+        },
+      ],
+      sessionReferences: [],
+    });
+  });
+
+  it("strips trailing session references before parsing other display context", () => {
+    const prompt = [
+      appendTerminalContextsToPrompt("Use @session:fix-reconnect-flow#thread-a", [makeContext()]),
+      "",
+      "<session_context>",
+      "- Fix reconnect flow:",
+      "  Thread id: thread-a",
+      "  Branch: feature/reconnect",
+      "</session_context>",
+    ].join("\n");
+
+    expect(deriveDisplayedUserMessageState(prompt)).toEqual({
+      visibleText: "Use @session:fix-reconnect-flow",
+      copyText: prompt,
+      contextCount: 2,
+      previewTitle: [
+        "Fix reconnect flow\nThread id: thread-a\nBranch: feature/reconnect",
+        "Terminal 1 lines 12-13\n12 | git status\n13 | On branch main",
+      ].join("\n\n"),
+      contexts: [
+        {
+          header: "Terminal 1 lines 12-13",
+          body: "12 | git status\n13 | On branch main",
+        },
+      ],
+      diffComments: [],
+      sessionReferences: [
+        {
+          header: "Fix reconnect flow",
+          body: "Thread id: thread-a\nBranch: feature/reconnect",
         },
       ],
     });

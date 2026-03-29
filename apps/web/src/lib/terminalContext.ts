@@ -1,5 +1,10 @@
 import { type ThreadId } from "@t3tools/contracts";
 import { extractTrailingDiffComments, type ParsedDiffCommentEntry } from "./diffCommentContext";
+import {
+  extractTrailingSessionReferences,
+  type ParsedSessionReferenceEntry,
+  replaceSessionReferenceTokensForDisplay,
+} from "./sessionReferences";
 
 export interface TerminalContextSelection {
   terminalId: string;
@@ -29,6 +34,7 @@ export interface DisplayedUserMessageState {
   previewTitle: string | null;
   contexts: ParsedTerminalContextEntry[];
   diffComments: ParsedDiffCommentEntry[];
+  sessionReferences: ParsedSessionReferenceEntry[];
 }
 
 export interface ParsedTerminalContextEntry {
@@ -237,9 +243,17 @@ export function extractTrailingTerminalContexts(prompt: string): ExtractedTermin
 }
 
 export function deriveDisplayedUserMessageState(prompt: string): DisplayedUserMessageState {
-  const extractedDiffComments = extractTrailingDiffComments(prompt);
+  const extractedSessionReferences = extractTrailingSessionReferences(prompt);
+  const extractedDiffComments = extractTrailingDiffComments(extractedSessionReferences.promptText);
   const extractedContexts = extractTrailingTerminalContexts(extractedDiffComments.promptText);
   const previewSections = [
+    ...(extractedSessionReferences.references.length > 0
+      ? [
+          extractedSessionReferences.references
+            .map(({ header, body }) => (body.length > 0 ? `${header}\n${body}` : header))
+            .join("\n\n"),
+        ]
+      : []),
     ...(extractedContexts.contexts.length > 0
       ? [
           extractedContexts.contexts
@@ -256,12 +270,16 @@ export function deriveDisplayedUserMessageState(prompt: string): DisplayedUserMe
       : []),
   ].filter((section) => section.length > 0);
   return {
-    visibleText: extractedContexts.promptText,
+    visibleText: replaceSessionReferenceTokensForDisplay(extractedContexts.promptText),
     copyText: prompt,
-    contextCount: extractedContexts.contextCount + extractedDiffComments.comments.length,
+    contextCount:
+      extractedSessionReferences.references.length +
+      extractedContexts.contextCount +
+      extractedDiffComments.comments.length,
     previewTitle: previewSections.length > 0 ? previewSections.join("\n\n") : null,
     contexts: extractedContexts.contexts,
     diffComments: extractedDiffComments.comments,
+    sessionReferences: extractedSessionReferences.references,
   };
 }
 

@@ -150,6 +150,10 @@ import {
   type TerminalContextSelection,
 } from "../lib/terminalContext";
 import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
+import {
+  appendSessionReferencesToPrompt,
+  searchWorkspaceSessionReferences,
+} from "../lib/sessionReferences";
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import {
@@ -1137,17 +1141,36 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }),
   );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const workspaceSessionReferenceItems = useMemo(
+    () =>
+      searchWorkspaceSessionReferences({
+        threads,
+        workspaceId: activeThread?.workspaceId ?? null,
+        activeThreadId: activeThread?.id ?? null,
+        query: pathTriggerQuery,
+      }).map((thread) => ({
+        id: `session-reference:${thread.threadId}`,
+        type: "session-reference" as const,
+        token: thread.token,
+        label: thread.title,
+        description: thread.description,
+      })),
+    [activeThread?.id, activeThread?.workspaceId, pathTriggerQuery, threads],
+  );
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return workspaceEntries.map((entry) => ({
-        id: `path:${entry.kind}:${entry.path}`,
-        type: "path",
-        path: entry.path,
-        pathKind: entry.kind,
-        label: basenameOfPath(entry.path),
-        description: entry.parentPath ?? "",
-      }));
+      return [
+        ...workspaceSessionReferenceItems,
+        ...workspaceEntries.map((entry) => ({
+          id: `path:${entry.kind}:${entry.path}`,
+          type: "path" as const,
+          path: entry.path,
+          pathKind: entry.kind,
+          label: basenameOfPath(entry.path),
+          description: entry.parentPath ?? "",
+        })),
+      ];
     }
 
     if (composerTrigger.kind === "slash-command") {
@@ -1199,7 +1222,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [composerTrigger, searchableModelOptions, workspaceEntries, workspaceSessionReferenceItems]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -2710,6 +2733,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       promptWithTerminalContexts,
       composerDiffCommentsSnapshot,
     );
+    const messageTextWithSessionReferences = appendSessionReferencesToPrompt(messageTextForSend, {
+      threads,
+      workspaceId: activeThread.workspaceId,
+      currentThreadId: threadIdForSend,
+    });
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
@@ -2717,7 +2745,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       model: selectedModel,
       models: selectedProviderModels,
       effort: selectedPromptEffort,
-      text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      text: messageTextWithSessionReferences || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
     const turnAttachmentsPromise = Promise.all(
       composerImagesSnapshot.map(async (image) => ({
@@ -3524,6 +3552,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!trigger) return;
       if (item.type === "path") {
         const replacement = `@${item.path} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "session-reference") {
+        const replacement = `@${item.token} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,

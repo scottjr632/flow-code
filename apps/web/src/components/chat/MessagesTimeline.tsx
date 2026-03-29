@@ -50,6 +50,7 @@ import {
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
 import { parseAssistantDirectives } from "~/lib/codexDirectives";
+import { replaceSessionReferenceTokensForDisplay } from "~/lib/sessionReferences";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
@@ -450,9 +451,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           const parsedAssistantDirectives = row.parsedAssistantDirectives;
           const reviewComments = parsedAssistantDirectives?.codeComments ?? [];
           const hasReviewComments = reviewComments.length > 0;
-          const messageText =
+          const messageText = replaceSessionReferenceTokensForDisplay(
             parsedAssistantDirectives?.displayText ||
-            (row.message.streaming || hasReviewComments ? "" : "(empty response)");
+              (row.message.streaming || hasReviewComments ? "" : "(empty response)"),
+          );
           return (
             <>
               {row.showCompletionDivider && (

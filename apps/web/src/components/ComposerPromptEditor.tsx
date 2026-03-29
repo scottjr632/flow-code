@@ -63,6 +63,10 @@ import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
 } from "~/lib/terminalContext";
+import {
+  formatSessionReferenceMentionLabel,
+  isSessionReferenceToken,
+} from "~/lib/sessionReferences";
 import { cn } from "~/lib/utils";
 import { basenameOfPath, getVscodeIconUrlForEntry, inferEntryKindFromPath } from "~/vscode-icons";
 import {
@@ -250,6 +254,14 @@ function renderMentionChipDom(container: HTMLElement, pathValue: string): void {
   container.textContent = "";
   container.style.setProperty("user-select", "none");
   container.style.setProperty("-webkit-user-select", "none");
+
+  if (isSessionReferenceToken(pathValue)) {
+    const label = document.createElement("span");
+    label.className = COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME;
+    label.textContent = formatSessionReferenceMentionLabel(pathValue);
+    container.append(label);
+    return;
+  }
 
   const theme = resolvedThemeFromDocument();
   const icon = document.createElement("img");
