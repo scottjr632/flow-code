@@ -1,5 +1,7 @@
 import { type ThreadId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { create } from "zustand";
+import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
 type WorkspaceEditorBufferStatus = "idle" | "loading" | "ready" | "saving" | "error";
 
@@ -47,6 +49,23 @@ interface WorkspaceEditorStoreState {
   setVimMode: (threadId: ThreadId, enabled: boolean) => void;
 }
 
+export const WORKSPACE_EDITOR_VIM_MODE_KEY = "t3code:workspace-editor-vim-mode";
+
+export function readPersistedWorkspaceEditorVimMode(): boolean {
+  return getLocalStorageItem(WORKSPACE_EDITOR_VIM_MODE_KEY, Schema.Boolean) ?? false;
+}
+
+function createInitialThreadWorkspaceEditorState(): ThreadWorkspaceEditorState {
+  return {
+    openFilePaths: [],
+    buffersByPath: {},
+    expandedDirectoryPaths: [],
+    explorerOpen: true,
+    problemsOpen: true,
+    vimMode: readPersistedWorkspaceEditorVimMode(),
+  };
+}
+
 const INITIAL_THREAD_WORKSPACE_EDITOR_STATE: ThreadWorkspaceEditorState = {
   openFilePaths: [],
   buffersByPath: {},
@@ -68,7 +87,7 @@ function ensureThreadState(
   editorsByThreadId: Record<string, ThreadWorkspaceEditorState>,
   threadId: ThreadId,
 ): ThreadWorkspaceEditorState {
-  return editorsByThreadId[threadId] ?? INITIAL_THREAD_WORKSPACE_EDITOR_STATE;
+  return editorsByThreadId[threadId] ?? createInitialThreadWorkspaceEditorState();
 }
 
 export const useWorkspaceEditorStore = create<WorkspaceEditorStoreState>()((set) => ({
@@ -265,6 +284,7 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStoreState>()((set)
       if (threadState.vimMode === enabled) {
         return state;
       }
+      setLocalStorageItem(WORKSPACE_EDITOR_VIM_MODE_KEY, enabled, Schema.Boolean);
       return {
         editorsByThreadId: {
           ...state.editorsByThreadId,

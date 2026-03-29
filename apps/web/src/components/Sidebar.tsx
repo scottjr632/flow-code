@@ -124,7 +124,6 @@ import {
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
-import { AppLogo } from "./AppLogo";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -2301,7 +2300,6 @@ export default function Sidebar({
         <TooltipTrigger
           render={
             <div className="ml-1 flex min-w-0 flex-1 cursor-pointer items-center gap-2">
-              <AppLogo decorative className="size-5 rounded-md" />
               <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
                 Flow
               </span>

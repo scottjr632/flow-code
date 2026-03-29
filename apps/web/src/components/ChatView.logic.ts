@@ -10,6 +10,7 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import { DEFAULT_THREAD_TERMINAL_ID } from "../types";
+import { isFileWorkspaceTabId, isTerminalWorkspaceTabId } from "../workspaceTabs";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const LAST_ACTIVE_WORKSPACE_TAB_BY_THREAD_KEY = "t3code:last-active-workspace-tab-by-thread";
@@ -219,6 +220,19 @@ export function getWorkspaceTabReconciliationTarget(options: {
   }
 
   return options.resolvedTabId;
+}
+
+export function shouldPreserveExplicitWorkspaceTabSelection(options: {
+  activeTabId: string;
+  defaultConversationWorkspaceTabId: string;
+}): boolean {
+  return (
+    options.activeTabId === "diff" ||
+    options.activeTabId === "files" ||
+    isFileWorkspaceTabId(options.activeTabId) ||
+    isTerminalWorkspaceTabId(options.activeTabId) ||
+    options.activeTabId === options.defaultConversationWorkspaceTabId
+  );
 }
 
 export function buildWorkspaceTabOrderContextId(options: {

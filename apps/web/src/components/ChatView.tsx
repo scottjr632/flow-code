@@ -224,6 +224,7 @@ import {
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   SendPhase,
+  shouldPreserveExplicitWorkspaceTabSelection,
   shouldReuseHiddenDefaultTerminalForWorkspaceCreation,
   updateLastActiveWorkspaceTabByThread,
   WORKSPACE_TAB_ORDER_BY_CONTEXT_KEY,
@@ -797,9 +798,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   useEffect(() => {
     if (
-      activeWorkspaceTabId === "diff" ||
-      isTerminalWorkspaceTabId(activeWorkspaceTabId) ||
-      activeWorkspaceTabId === defaultConversationWorkspaceTabId
+      shouldPreserveExplicitWorkspaceTabSelection({
+        activeTabId: activeWorkspaceTabId,
+        defaultConversationWorkspaceTabId,
+      })
     ) {
       return;
     }
@@ -4107,10 +4109,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
     setActiveWorkspaceTabId("diff");
   }, [diffOpen, isGitRepo, navigate, setActiveWorkspaceTabId, threadId]);
-  }, [diffOpen, isGitRepo, navigate, setActiveWorkspaceTabId, threadId]);
   const openFilesWorkspace = useCallback(() => {
     setActiveWorkspaceTabId("files");
-  }, []);
+  }, [setActiveWorkspaceTabId]);
   const selectWorkspaceTab = useCallback(
     (tabId: WorkspaceTabId) => {
       const targetTab = workspaceTabs.find((tab) => tab.id === tabId);

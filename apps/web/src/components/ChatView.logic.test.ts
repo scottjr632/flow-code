@@ -6,6 +6,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   deriveComposerSendState,
   getWorkspaceTabReconciliationTarget,
+  shouldPreserveExplicitWorkspaceTabSelection,
   shouldReuseHiddenDefaultTerminalForWorkspaceCreation,
   updateLastActiveWorkspaceTabByThread,
 } from "./ChatView.logic";
@@ -182,6 +183,35 @@ describe("buildWorkspaceTabOrderContextId", () => {
         workspaceId: null,
       }),
     ).toBe("thread:thread-1");
+  });
+});
+
+describe("shouldPreserveExplicitWorkspaceTabSelection", () => {
+  it("preserves the files browser tab", () => {
+    expect(
+      shouldPreserveExplicitWorkspaceTabSelection({
+        activeTabId: "files",
+        defaultConversationWorkspaceTabId: "chat",
+      }),
+    ).toBe(true);
+  });
+
+  it("preserves opened file tabs", () => {
+    expect(
+      shouldPreserveExplicitWorkspaceTabSelection({
+        activeTabId: "file:apps/web/src/components/ChatView.tsx",
+        defaultConversationWorkspaceTabId: "chat",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not preserve unrelated stale tabs", () => {
+    expect(
+      shouldPreserveExplicitWorkspaceTabSelection({
+        activeTabId: "unknown",
+        defaultConversationWorkspaceTabId: "chat",
+      }),
+    ).toBe(false);
   });
 });
 

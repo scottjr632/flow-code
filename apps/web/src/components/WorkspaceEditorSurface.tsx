@@ -153,6 +153,7 @@ export function WorkspaceEditorSurface(props: {
     (state) => state.ensureDirectoriesExpanded,
   );
   const setExplorerOpen = useWorkspaceEditorStore((state) => state.setExplorerOpen);
+  const setVimMode = useWorkspaceEditorStore((state) => state.setVimMode);
 
   const activeBuffer = activeRelativePath
     ? (editorState.buffersByPath[activeRelativePath] ?? null)
@@ -705,6 +706,20 @@ export function WorkspaceEditorSurface(props: {
           </div>
 
           <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              className={cn(
+                "inline-flex h-5 items-center rounded-sm px-1.5 text-[10px] font-medium transition-colors",
+                editorState.vimMode
+                  ? "bg-primary/12 text-foreground hover:bg-primary/16"
+                  : "text-muted-foreground/70 hover:bg-accent/50 hover:text-foreground",
+              )}
+              onClick={() => setVimMode(props.threadId, !editorState.vimMode)}
+              aria-pressed={editorState.vimMode}
+              title={editorState.vimMode ? "Disable Vim mode" : "Enable Vim mode"}
+            >
+              Vim
+            </button>
             <button
               type="button"
               className={cn(
