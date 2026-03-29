@@ -97,6 +97,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CircleAlertIcon,
+  FolderIcon,
   ListTodoIcon,
   LockIcon,
   LockOpenIcon,
@@ -168,9 +169,11 @@ import {
   buildWorkspaceTabs,
   DEFAULT_CHAT_WORKSPACE_TAB_ID,
   reorderWorkspaceTabIds,
+  isFileWorkspaceTabId,
   isTerminalWorkspaceTabId,
   resolveWorkspaceTabId,
   sortWorkspaceTabsByOrder,
+  type WorkspaceFileTabState,
   type WorkspaceTabId,
 } from "../workspaceTabs";
 import {
@@ -230,6 +233,12 @@ import { sortThreadsForSidebar } from "./Sidebar.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { resolveExistingWorkspaceContext } from "../workspaceContext";
+import {
+  isBufferDirty,
+  useThreadWorkspaceEditorState,
+  useWorkspaceEditorStore,
+} from "../workspaceEditorStore";
+import { WorkspaceEditorSurface } from "./WorkspaceEditorSurface";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -596,6 +605,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const terminalState = useTerminalStateStore((state) =>
     selectThreadTerminalState(state.terminalStateByThreadId, terminalOwnerId ?? threadId),
   );
+  const workspaceEditorState = useThreadWorkspaceEditorState(activeThreadId);
+  const closeWorkspaceEditorFile = useWorkspaceEditorStore((store) => store.closeFile);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const activeContextWindow = useMemo(
     () => deriveLatestContextWindowSnapshot(activeThread?.activities ?? []),
@@ -694,10 +705,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }),
     [activeThread?.id, activeWorkspaceContext.workspaceId, threadId],
   );
+  const workspaceFileTabs = useMemo<WorkspaceFileTabState[]>(
+    () =>
+      workspaceEditorState.openFilePaths.map((relativePath) => ({
+        relativePath,
+        title: basenameOfPath(relativePath),
+        dirty: isBufferDirty(workspaceEditorState.buffersByPath[relativePath]),
+      })),
+    [workspaceEditorState.buffersByPath, workspaceEditorState.openFilePaths],
+  );
   const workspaceTabs = useMemo(() => {
     const tabs = buildWorkspaceTabs({
       sessionTabs: workspaceSessionTabs,
       diffOpen,
+      fileTabs: workspaceFileTabs,
       terminalOpen: terminalState.terminalOpen,
       terminalGroups: terminalState.terminalGroups,
       runningTerminalIds: terminalState.runningTerminalIds,
@@ -706,6 +727,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return sortWorkspaceTabsByOrder(tabs, workspaceTabOrderByContextId[workspaceTabOrderContextId]);
   }, [
     diffOpen,
+    workspaceFileTabs,
     terminalState.terminalGroups,
     terminalState.runningTerminalIds,
     terminalState.terminalOpen,
@@ -719,6 +741,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       : DEFAULT_CHAT_WORKSPACE_TAB_ID;
   const resolvedWorkspaceTabId = resolveWorkspaceTabId(activeWorkspaceTabId, workspaceTabs);
   const activeWorkspaceTab = workspaceTabs.find((tab) => tab.id === resolvedWorkspaceTabId);
+  const activeFilesWorkspaceTab = activeWorkspaceTab?.kind === "files" ? activeWorkspaceTab : null;
+  const activeFileWorkspaceTab = activeWorkspaceTab?.kind === "file" ? activeWorkspaceTab : null;
   const activeTerminalWorkspaceTab =
     activeWorkspaceTab?.kind === "terminal" ? activeWorkspaceTab : null;
 
@@ -3848,7 +3872,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           trigger.rangeStart,
           replacementRangeEnd,
           replacement,
-          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          {
+            expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+          },
         );
         if (applied) {
           setComposerHighlightedItemId(null);
@@ -3866,7 +3892,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           trigger.rangeStart,
           replacementRangeEnd,
           replacement,
-          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          {
+            expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+          },
         );
         if (applied) {
           setComposerHighlightedItemId(null);
@@ -3885,7 +3913,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
             trigger.rangeStart,
             replacementRangeEnd,
             replacement,
-            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+            {
+              expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+            },
           );
           if (applied) {
             setComposerHighlightedItemId(null);
@@ -4077,6 +4107,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
     setActiveWorkspaceTabId("diff");
   }, [diffOpen, isGitRepo, navigate, setActiveWorkspaceTabId, threadId]);
+  }, [diffOpen, isGitRepo, navigate, setActiveWorkspaceTabId, threadId]);
+  const openFilesWorkspace = useCallback(() => {
+    setActiveWorkspaceTabId("files");
+  }, []);
   const selectWorkspaceTab = useCallback(
     (tabId: WorkspaceTabId) => {
       const targetTab = workspaceTabs.find((tab) => tab.id === tabId);
@@ -4161,6 +4195,39 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
+      if (tabId === "files") {
+        if (resolvedWorkspaceTabId === tabId) {
+          const fallbackTabId =
+            workspaceTabs.find((tab) => tab.id !== tabId)?.id ?? (diffOpen ? "diff" : "chat");
+          setActiveWorkspaceTabId(fallbackTabId);
+        }
+        return;
+      }
+      if (isFileWorkspaceTabId(tabId)) {
+        const relativePath = tabId.slice("file:".length);
+        if (!activeThreadId) {
+          return;
+        }
+        if (resolvedWorkspaceTabId === tabId) {
+          const fallbackTabId =
+            workspaceTabs.find((tab) => tab.id !== tabId)?.id ?? (diffOpen ? "diff" : "chat");
+          setActiveWorkspaceTabId(fallbackTabId);
+        }
+        const api = readNativeApi();
+        if (api && activeProject) {
+          void api.projects
+            .syncLspDocument({
+              cwd: activeProject.cwd,
+              relativePath,
+              event: "close",
+            })
+            .catch(() => {
+              // Ignore close sync failures; the file tab still needs to close locally.
+            });
+        }
+        closeWorkspaceEditorFile(activeThreadId, relativePath);
+        return;
+      }
       if (!isTerminalWorkspaceTabId(tabId) || !terminalState.terminalOpen) {
         return;
       }
@@ -4182,6 +4249,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
     },
     [
+      activeThreadId,
+      activeProject,
+      closeWorkspaceEditorFile,
       closeTerminal,
       diffOpen,
       defaultConversationWorkspaceTabId,
@@ -4208,6 +4278,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
 
     if (activeProject) {
+      items.push({
+        id: "action:browse-files",
+        group: "actions",
+        title: "Browse files",
+        subtitle: activeProject.name,
+        keywords: "explorer files editor workspace",
+        icon: FolderIcon,
+        onSelect: () => {
+          openFilesWorkspace();
+        },
+      });
       items.push({
         id: "action:new-terminal",
         group: "actions",
@@ -4291,6 +4372,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     navigate,
     newThreadShortcutLabel,
     newTerminalShortcutLabel,
+    openFilesWorkspace,
     projects,
     resolvedWorkspaceTabId,
     setTerminalOpen,
@@ -4371,9 +4453,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onCloseTab={closeWorkspaceTab}
           canCreateSession={activeWorkspaceContext.workspaceId !== null}
           canCreateTerminal={activeProject !== undefined}
+          canOpenFiles={activeProject !== undefined}
           canOpenReview={isGitRepo}
           onCreateSession={createSessionWorkspace}
           onCreateTerminal={createTerminalWorkspace}
+          onOpenFiles={openFilesWorkspace}
           onOpenReview={openReviewWorkspace}
         />
       </div>
@@ -5000,6 +5084,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
               />
             ) : null}
           </>
+        ) : (activeFilesWorkspaceTab || activeFileWorkspaceTab) && activeProject ? (
+          <div className="flex-1 overflow-hidden">
+            <WorkspaceEditorSurface
+              threadId={activeThread.id}
+              workspaceRoot={activeProject.cwd}
+              resolvedTheme={resolvedTheme}
+              activeRelativePath={activeFileWorkspaceTab?.relativePath ?? null}
+              onSelectWorkspaceTab={selectWorkspaceTab}
+            />
+          </div>
         ) : activeWorkspaceTab?.kind === "diff" ? (
           <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
             <ThreadDiffWorkspace mode="sheet" />

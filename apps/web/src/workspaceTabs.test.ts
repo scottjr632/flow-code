@@ -11,20 +11,20 @@ import {
 } from "./workspaceTabs";
 
 describe("workspaceTabs", () => {
-  it("always includes chat first", () => {
+  it("always includes chat, files, and review", () => {
     expect(
       buildWorkspaceTabs({
-        diffOpen: false,
+        fileTabs: [],
         terminalOpen: false,
         terminalGroups: [],
       }).map((tab) => tab.id),
-    ).toEqual([DEFAULT_CHAT_WORKSPACE_TAB_ID]);
+    ).toEqual(["chat", "files", "diff"]);
   });
 
-  it("adds review and one terminal tab per terminal group", () => {
+  it("adds one terminal tab per terminal group", () => {
     expect(
       buildWorkspaceTabs({
-        diffOpen: true,
+        fileTabs: [],
         terminalOpen: true,
         terminalGroups: [
           { id: "group-a", terminalIds: ["terminal-a"] },
@@ -32,7 +32,8 @@ describe("workspaceTabs", () => {
         ],
       }).map((tab) => [tab.id, tab.title]),
     ).toEqual([
-      [DEFAULT_CHAT_WORKSPACE_TAB_ID, "Chat"],
+      ["chat", "Chat"],
+      ["files", "Files"],
       ["diff", "Review"],
       [buildTerminalWorkspaceTabId("group-a"), "Terminal 1"],
       [buildTerminalWorkspaceTabId("group-b"), "Terminal 2 (2)"],
@@ -42,12 +43,14 @@ describe("workspaceTabs", () => {
   it("uses a plain terminal title when there is only one terminal group", () => {
     expect(
       buildWorkspaceTabs({
-        diffOpen: false,
+        fileTabs: [],
         terminalOpen: true,
         terminalGroups: [{ id: "group-a", terminalIds: ["terminal-a"] }],
       }).map((tab) => [tab.id, tab.title]),
     ).toEqual([
-      [DEFAULT_CHAT_WORKSPACE_TAB_ID, "Chat"],
+      ["chat", "Chat"],
+      ["files", "Files"],
+      ["diff", "Review"],
       [buildTerminalWorkspaceTabId("group-a"), "Terminal"],
     ]);
   });
@@ -71,17 +74,17 @@ describe("workspaceTabs", () => {
 
   it("falls back to chat when the preferred tab is no longer available", () => {
     const tabs = buildWorkspaceTabs({
-      diffOpen: false,
+      fileTabs: [],
       terminalOpen: false,
       terminalGroups: [],
     });
 
-    expect(resolveWorkspaceTabId("diff", tabs)).toBe(DEFAULT_CHAT_WORKSPACE_TAB_ID);
+    expect(resolveWorkspaceTabId("terminal:nonexistent", tabs)).toBe("chat");
   });
 
   it("keeps the preferred terminal tab when it still exists", () => {
     const tabs = buildWorkspaceTabs({
-      diffOpen: true,
+      fileTabs: [],
       terminalOpen: true,
       terminalGroups: [{ id: "group-a", terminalIds: ["terminal-a"] }],
     });

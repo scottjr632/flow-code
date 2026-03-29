@@ -1,4 +1,11 @@
-import { DiffIcon, MessageSquareTextIcon, TerminalSquareIcon, type LucideIcon } from "lucide-react";
+import {
+  DiffIcon,
+  FileCode2Icon,
+  FolderTreeIcon,
+  MessageSquareTextIcon,
+  TerminalSquareIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { type ThreadTerminalGroup } from "./types";
 
 export type WorkspaceTabId = string;
@@ -12,12 +19,26 @@ export function isThreadWorkspaceTabId(tabId: WorkspaceTabId): boolean {
   return tabId.startsWith("thread:");
 }
 
+export interface WorkspaceFileTabState {
+  relativePath: string;
+  title: string;
+  dirty: boolean;
+}
+
 export function buildTerminalWorkspaceTabId(groupId: string): WorkspaceTabId {
   return `terminal:${groupId}`;
 }
 
+export function buildFileWorkspaceTabId(relativePath: string): WorkspaceTabId {
+  return `file:${relativePath}`;
+}
+
 export function isTerminalWorkspaceTabId(tabId: WorkspaceTabId): boolean {
   return tabId.startsWith("terminal:");
+}
+
+export function isFileWorkspaceTabId(tabId: WorkspaceTabId): boolean {
+  return tabId.startsWith("file:");
 }
 
 function terminalTabTitle(groupIndex: number, splitCount: number, groupCount: number): string {
@@ -46,8 +67,24 @@ export type WorkspaceTab =
       id: "diff";
       kind: "diff";
       title: string;
+      closeable: boolean;
+      icon: LucideIcon;
+    }
+  | {
+      id: "files";
+      kind: "files";
+      title: string;
+      closeable: boolean;
+      icon: LucideIcon;
+    }
+  | {
+      id: WorkspaceTabId;
+      kind: "file";
+      title: string;
       closeable: true;
       icon: LucideIcon;
+      relativePath: string;
+      dirty: boolean;
     }
   | {
       id: WorkspaceTabId;
@@ -74,7 +111,8 @@ export function buildWorkspaceTabs(input: {
     title: string;
     isDraft: boolean;
   }>;
-  diffOpen: boolean;
+  diffOpen?: boolean;
+  fileTabs?: readonly WorkspaceFileTabState[];
   terminalOpen: boolean;
   terminalGroups: readonly ThreadTerminalGroup[];
   runningTerminalIds?: readonly string[];
@@ -100,15 +138,33 @@ export function buildWorkspaceTabs(input: {
           },
         ];
 
-  if (input.diffOpen) {
+  tabs.push({
+    id: "files",
+    kind: "files",
+    title: "Files",
+    closeable: false,
+    icon: FolderTreeIcon,
+  });
+
+  tabs.push({
+    id: "diff",
+    kind: "diff",
+    title: "Review",
+    closeable: false,
+    icon: DiffIcon,
+  });
+
+  (input.fileTabs ?? []).forEach((fileTab) => {
     tabs.push({
-      id: "diff",
-      kind: "diff",
-      title: "Review",
+      id: buildFileWorkspaceTabId(fileTab.relativePath),
+      kind: "file",
+      title: fileTab.title,
       closeable: true,
-      icon: DiffIcon,
+      icon: FileCode2Icon,
+      relativePath: fileTab.relativePath,
+      dirty: fileTab.dirty,
     });
-  }
+  });
 
   if (input.terminalOpen) {
     const normalizedTerminalGroups = input.terminalGroups.filter(
@@ -194,10 +250,16 @@ export function reorderWorkspaceTabIds(
   }
 
   const nextTabIds = [...tabIds];
-  const [draggedTab] = nextTabIds.splice(draggedIndex, 1);
-  if (!draggedTab) {
-    return [...tabIds];
+  const [next] = nextTabIds.splice(draggedIndex, 1);
+  if (!next) {
+    return nextTabIds;
   }
-  nextTabIds.splice(targetIndex, 0, draggedTab);
+  const nextTargetIndex = nextTabIds.indexOf(targetTabId);
+  if (nextTargetIndex === -1) {
+    nextTabIds.push(next);
+    return nextTabIds;
+  }
+  nextTabIds.splice(nextTargetIndex, 0, next);
+
   return nextTabIds;
 }

@@ -1,4 +1,3 @@
-import { DiffIcon, PlusIcon, SquarePenIcon, TerminalSquareIcon, XIcon } from "lucide-react";
 import {
   DndContext,
   DragOverlay,
@@ -14,6 +13,7 @@ import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dn
 import { restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import { useMemo, useState } from "react";
+import { DiffIcon, FolderTreeIcon, PlusIcon, SquarePenIcon, TerminalSquareIcon, XIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { type WorkspaceTab, type WorkspaceTabId } from "~/workspaceTabs";
@@ -27,9 +27,11 @@ interface WorkspaceTabBarProps {
   onCloseTab: (tabId: WorkspaceTabId) => void;
   canCreateSession: boolean;
   canCreateTerminal: boolean;
+  canOpenFiles: boolean;
   canOpenReview: boolean;
   onCreateSession: () => void;
   onCreateTerminal: () => void;
+  onOpenFiles: () => void;
   onOpenReview: () => void;
 }
 
@@ -41,9 +43,11 @@ export function WorkspaceTabBar({
   onCloseTab,
   canCreateSession,
   canCreateTerminal,
+  canOpenFiles,
   canOpenReview,
   onCreateSession,
   onCreateTerminal,
+  onOpenFiles,
   onOpenReview,
 }: WorkspaceTabBarProps) {
   const sensors = useSensors(
@@ -87,10 +91,7 @@ export function WorkspaceTabBar({
           onDragCancel={handleDragCancel}
           onDragEnd={handleDragEnd}
         >
-          <SortableContext
-            items={tabs.map((tab) => tab.id)}
-            strategy={horizontalListSortingStrategy}
-          >
+          <SortableContext items={tabs.map((tab) => tab.id)} strategy={horizontalListSortingStrategy}>
             <div className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {tabs.map((tab) => (
                 <SortableWorkspaceTab
@@ -130,6 +131,10 @@ export function WorkspaceTabBar({
             <MenuItem disabled={!canCreateTerminal} onClick={onCreateTerminal}>
               <TerminalSquareIcon className="size-3.5" />
               New terminal
+            </MenuItem>
+            <MenuItem disabled={!canOpenFiles} onClick={onOpenFiles}>
+              <FolderTreeIcon className="size-3.5" />
+              Browse files
             </MenuItem>
             <MenuItem disabled={!canOpenReview} onClick={onOpenReview}>
               <DiffIcon className="size-3.5" />

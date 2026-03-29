@@ -62,6 +62,15 @@ import { Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
+import { getWorkspaceDiagnostics } from "./projectDiagnostics";
+import { listWorkspaceDirectory, readWorkspaceFile } from "./projectFiles";
+import {
+  getWorkspaceLspStatus,
+  startWorkspaceLsp,
+  stopAllWorkspaceLsps,
+  stopWorkspaceLsp,
+  syncWorkspaceLspDocument,
+} from "./projectLsp";
 import {
   ATTACHMENTS_ROUTE_PREFIX,
   normalizeAttachmentRelativePath,
@@ -728,7 +737,18 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* readiness.markHttpListening;
 
   yield* Effect.addFinalizer(() =>
-    Effect.all([closeAllClients, closeWebSocketServer.pipe(Effect.ignoreCause({ log: true }))]),
+    Effect.all([
+      Effect.tryPromise({
+        try: () => stopAllWorkspaceLsps(),
+        catch: (cause) =>
+          new ServerLifecycleError({
+            operation: "stopAllWorkspaceLsps",
+            ...(cause ? { cause } : {}),
+          }),
+      }).pipe(Effect.ignoreCause({ log: true })),
+      closeAllClients,
+      closeWebSocketServer.pipe(Effect.ignoreCause({ log: true })),
+    ]).pipe(Effect.asVoid),
   );
 
   const routeRequest = Effect.fnUntraced(function* (ws: WebSocket, request: WebSocketRequest) {
@@ -775,6 +795,28 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         });
       }
 
+      case WS_METHODS.projectsListDirectory: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => listWorkspaceDirectory(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to list workspace directory: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.projectsReadFile: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => readWorkspaceFile(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to read workspace file: ${String(cause)}`,
+            }),
+        });
+      }
+
       case WS_METHODS.projectsWriteFile: {
         const body = stripRequestTag(request.body);
         const target = yield* resolveWorkspaceWritePath({
@@ -800,7 +842,62 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               }),
           ),
         );
-        return { relativePath: target.relativePath };
+        return { relativePath: target.relativePath, mtimeMs: null };
+      }
+
+      case WS_METHODS.projectsGetDiagnostics: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => getWorkspaceDiagnostics(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to compute workspace diagnostics: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.projectsGetLspStatus: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => getWorkspaceLspStatus(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to inspect workspace language server status: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.projectsStartLsp: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => startWorkspaceLsp(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to start workspace language server: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.projectsStopLsp: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => stopWorkspaceLsp(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to stop workspace language server: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.projectsSyncLspDocument: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => syncWorkspaceLspDocument(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to sync workspace document with language server: ${String(cause)}`,
+            }),
+        });
       }
 
       case WS_METHODS.shellOpenInEditor: {

@@ -8,24 +8,13 @@ import {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
+import { IGNORED_DIRECTORY_NAMES, isPathInIgnoredDirectory } from "./workspaceIgnore";
 
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_SCAN_READDIR_CONCURRENCY = 32;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
-const IGNORED_DIRECTORY_NAMES = new Set([
-  ".git",
-  ".convex",
-  "node_modules",
-  ".next",
-  ".turbo",
-  "dist",
-  "build",
-  "out",
-  ".cache",
-]);
-
 interface WorkspaceIndex {
   scannedAt: number;
   entries: SearchableWorkspaceEntry[];
@@ -195,12 +184,6 @@ function insertRankedEntry(
 
   rankedEntries.splice(insertionIndex, 0, candidate);
   rankedEntries.pop();
-}
-
-function isPathInIgnoredDirectory(relativePath: string): boolean {
-  const firstSegment = relativePath.split("/")[0];
-  if (!firstSegment) return false;
-  return IGNORED_DIRECTORY_NAMES.has(firstSegment);
 }
 
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {

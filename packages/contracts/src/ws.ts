@@ -35,7 +35,17 @@ import {
   TerminalWriteInput,
 } from "./terminal";
 import { KeybindingRule } from "./keybindings";
-import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
+import {
+  ProjectGetDiagnosticsInput,
+  ProjectGetLspStatusInput,
+  ProjectListDirectoryInput,
+  ProjectReadFileInput,
+  ProjectSearchEntriesInput,
+  ProjectStartLspInput,
+  ProjectStopLspInput,
+  ProjectSyncLspDocumentInput,
+  ProjectWriteFileInput,
+} from "./project";
 import { OpenInEditorInput } from "./editor";
 import { ServerConfigUpdatedPayload, ServerProviderUpdatedPayload } from "./server";
 import { ServerSettingsPatch } from "./settings";
@@ -48,7 +58,14 @@ export const WS_METHODS = {
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
+  projectsListDirectory: "projects.listDirectory",
+  projectsReadFile: "projects.readFile",
   projectsWriteFile: "projects.writeFile",
+  projectsGetDiagnostics: "projects.getDiagnostics",
+  projectsGetLspStatus: "projects.getLspStatus",
+  projectsStartLsp: "projects.startLsp",
+  projectsStopLsp: "projects.stopLsp",
+  projectsSyncLspDocument: "projects.syncLspDocument",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -117,7 +134,14 @@ const WebSocketRequestBody = Schema.Union([
 
   // Project Search
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
+  tagRequestBody(WS_METHODS.projectsListDirectory, ProjectListDirectoryInput),
+  tagRequestBody(WS_METHODS.projectsReadFile, ProjectReadFileInput),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
+  tagRequestBody(WS_METHODS.projectsGetDiagnostics, ProjectGetDiagnosticsInput),
+  tagRequestBody(WS_METHODS.projectsGetLspStatus, ProjectGetLspStatusInput),
+  tagRequestBody(WS_METHODS.projectsStartLsp, ProjectStartLspInput),
+  tagRequestBody(WS_METHODS.projectsStopLsp, ProjectStopLspInput),
+  tagRequestBody(WS_METHODS.projectsSyncLspDocument, ProjectSyncLspDocumentInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),

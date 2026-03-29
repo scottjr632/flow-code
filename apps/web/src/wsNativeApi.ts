@@ -157,7 +157,14 @@ export function createWsNativeApi(): NativeApi {
     },
     projects: {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
+      listDirectory: (input) => transport.request(WS_METHODS.projectsListDirectory, input),
+      readFile: (input) => transport.request(WS_METHODS.projectsReadFile, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
+      getDiagnostics: (input) => transport.request(WS_METHODS.projectsGetDiagnostics, input),
+      getLspStatus: (input) => transport.request(WS_METHODS.projectsGetLspStatus, input),
+      startLsp: (input) => transport.request(WS_METHODS.projectsStartLsp, input),
+      stopLsp: (input) => transport.request(WS_METHODS.projectsStopLsp, input),
+      syncLspDocument: (input) => transport.request(WS_METHODS.projectsSyncLspDocument, input),
     },
     shell: {
       openInEditor: (cwd, editor) =>

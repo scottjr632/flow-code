@@ -20,8 +20,21 @@ import type {
   GitStatusResult,
 } from "./git";
 import type {
+  ProjectGetDiagnosticsInput,
+  ProjectGetDiagnosticsResult,
+  ProjectGetLspStatusInput,
+  ProjectGetLspStatusResult,
+  ProjectListDirectoryInput,
+  ProjectListDirectoryResult,
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ProjectStartLspInput,
+  ProjectStopLspInput,
+  ProjectStopLspResult,
+  ProjectSyncLspDocumentInput,
+  ProjectSyncLspDocumentResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
@@ -140,7 +153,14 @@ export interface NativeApi {
   };
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
+    listDirectory: (input: ProjectListDirectoryInput) => Promise<ProjectListDirectoryResult>;
+    readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+    getDiagnostics: (input: ProjectGetDiagnosticsInput) => Promise<ProjectGetDiagnosticsResult>;
+    getLspStatus: (input: ProjectGetLspStatusInput) => Promise<ProjectGetLspStatusResult>;
+    startLsp: (input: ProjectStartLspInput) => Promise<ProjectGetLspStatusResult>;
+    stopLsp: (input: ProjectStopLspInput) => Promise<ProjectStopLspResult>;
+    syncLspDocument: (input: ProjectSyncLspDocumentInput) => Promise<ProjectSyncLspDocumentResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
