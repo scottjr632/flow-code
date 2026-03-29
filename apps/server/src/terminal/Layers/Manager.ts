@@ -46,6 +46,19 @@ const decodeTerminalCloseInput = Schema.decodeUnknownSync(TerminalCloseInput);
 
 type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
 
+const POSIX_TERMINAL_BOOTSTRAP_PROCESS_NAMES = new Set([
+  "bash",
+  "csh",
+  "dash",
+  "fish",
+  "ksh",
+  "login",
+  "sh",
+  "spawn-helper",
+  "tcsh",
+  "zsh",
+]);
+
 function defaultShellResolver(): string {
   if (process.platform === "win32") {
     return process.env.ComSpec ?? "cmd.exe";
@@ -188,9 +201,132 @@ async function checkWindowsSubprocessActivity(terminalPid: number): Promise<bool
   }
 }
 
+export function posixForegroundProcessActivityFromPsOutput(
+  psOutput: string,
+  terminalPid: number,
+): boolean | null {
+  for (const line of psOutput.split(/\r?\n/g)) {
+    const [pidRaw, pgidRaw, tpgidRaw] = line.trim().split(/\s+/g);
+    const pid = Number(pidRaw);
+    if (pid !== terminalPid) {
+      continue;
+    }
+
+    const pgid = Number(pgidRaw);
+    const tpgid = Number(tpgidRaw);
+    if (!Number.isInteger(pgid) || pgid <= 0) {
+      return null;
+    }
+    if (!Number.isInteger(tpgid) || tpgid <= 0) {
+      return null;
+    }
+
+    return pgid !== tpgid;
+  }
+
+  return null;
+}
+
+export function posixTerminalBootstrapChildPidFromPsOutput(
+  psOutput: string,
+  parentPid: number,
+): number | null {
+  const children: Array<{ pid: number; commandName: string }> = [];
+
+  for (const line of psOutput.split(/\r?\n/g)) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) {
+      continue;
+    }
+
+    const [pidRaw, ppidRaw, ...commandParts] = trimmed.split(/\s+/g);
+    const pid = Number(pidRaw);
+    const ppid = Number(ppidRaw);
+    if (ppid !== parentPid || !Number.isInteger(pid) || pid <= 0) {
+      continue;
+    }
+
+    const commandName = normalizePosixProcessCommandName(commandParts.join(" "));
+    if (!POSIX_TERMINAL_BOOTSTRAP_PROCESS_NAMES.has(commandName)) {
+      return null;
+    }
+
+    children.push({ pid, commandName });
+  }
+
+  if (children.length !== 1) {
+    return null;
+  }
+
+  return children[0]?.pid ?? null;
+}
+
+function normalizePosixProcessCommandName(command: string): string {
+  const firstToken = command.trim().split(/\s+/g)[0] ?? "";
+  const withoutPrefix = firstToken.replace(/^-+/, "");
+  const basename = path.basename(withoutPrefix);
+  return basename.toLowerCase();
+}
+
+async function resolvePosixTerminalActivityProbePid(terminalPid: number): Promise<number> {
+  let probePid = terminalPid;
+
+  for (let depth = 0; depth < 4; depth += 1) {
+    try {
+      const childProcessResult = await runProcess("ps", ["-o", "pid=,ppid=,command=", "-ax"], {
+        timeoutMs: 1_000,
+        allowNonZeroExit: true,
+        maxBufferBytes: 524_288,
+        outputMode: "truncate",
+      });
+      if (childProcessResult.code !== 0) {
+        return probePid;
+      }
+      const bootstrapChildPid = posixTerminalBootstrapChildPidFromPsOutput(
+        childProcessResult.stdout,
+        probePid,
+      );
+      if (!bootstrapChildPid || bootstrapChildPid === probePid) {
+        return probePid;
+      }
+      probePid = bootstrapChildPid;
+    } catch {
+      return probePid;
+    }
+  }
+
+  return probePid;
+}
+
 async function checkPosixSubprocessActivity(terminalPid: number): Promise<boolean> {
+  const probePid = await resolvePosixTerminalActivityProbePid(terminalPid);
+
   try {
-    const pgrepResult = await runProcess("pgrep", ["-P", String(terminalPid)], {
+    const foregroundProcessGroupResult = await runProcess(
+      "ps",
+      ["-o", "pid=,pgid=,tpgid=", "-p", String(probePid)],
+      {
+        timeoutMs: 1_000,
+        allowNonZeroExit: true,
+        maxBufferBytes: 32_768,
+        outputMode: "truncate",
+      },
+    );
+    if (foregroundProcessGroupResult.code === 0) {
+      const foregroundActivity = posixForegroundProcessActivityFromPsOutput(
+        foregroundProcessGroupResult.stdout,
+        probePid,
+      );
+      if (foregroundActivity !== null) {
+        return foregroundActivity;
+      }
+    }
+  } catch {
+    // Fall back to child-process inspection when foreground group detection is unavailable.
+  }
+
+  try {
+    const pgrepResult = await runProcess("pgrep", ["-P", String(probePid)], {
       timeoutMs: 1_000,
       allowNonZeroExit: true,
       maxBufferBytes: 32_768,
@@ -222,7 +358,7 @@ async function checkPosixSubprocessActivity(terminalPid: number): Promise<boolea
       const pid = Number(pidRaw);
       const ppid = Number(ppidRaw);
       if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-      if (ppid === terminalPid) {
+      if (ppid === probePid) {
         return true;
       }
     }

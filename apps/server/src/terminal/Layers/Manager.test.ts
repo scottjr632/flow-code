@@ -17,7 +17,11 @@ import {
   type PtyProcess,
   type PtySpawnInput,
 } from "../Services/PTY";
-import { TerminalManagerRuntime } from "./Manager";
+import {
+  posixForegroundProcessActivityFromPsOutput,
+  posixTerminalBootstrapChildPidFromPsOutput,
+  TerminalManagerRuntime,
+} from "./Manager";
 import { Effect, Encoding } from "effect";
 
 class FakePtyProcess implements PtyProcess {
@@ -450,6 +454,36 @@ describe("TerminalManager", () => {
     );
 
     manager.dispose();
+  });
+
+  it("treats only a different foreground process group as active terminal work on posix", () => {
+    expect(posixForegroundProcessActivityFromPsOutput("9000 9000 9000\n", 9000)).toBe(false);
+    expect(posixForegroundProcessActivityFromPsOutput("9000 9000 9012\n", 9000)).toBe(true);
+  });
+
+  it("falls back when posix process group output is incomplete", () => {
+    expect(posixForegroundProcessActivityFromPsOutput("9000 9000 0\n", 9000)).toBeNull();
+    expect(posixForegroundProcessActivityFromPsOutput("9000 9000\n", 9000)).toBeNull();
+    expect(posixForegroundProcessActivityFromPsOutput("", 9000)).toBeNull();
+  });
+
+  it("follows a single shell bootstrap child when present", () => {
+    const output = ["100 1 zsh (kiro-cli-term)", "101 100 /bin/zsh", "200 1 /usr/bin/other"].join(
+      "\n",
+    );
+
+    expect(posixTerminalBootstrapChildPidFromPsOutput(output, 100)).toBe(101);
+  });
+
+  it("ignores missing, multiple, or non-bootstrap shell children", () => {
+    expect(posixTerminalBootstrapChildPidFromPsOutput("", 100)).toBeNull();
+    expect(
+      posixTerminalBootstrapChildPidFromPsOutput(
+        ["101 100 /bin/zsh", "102 100 /bin/bash"].join("\n"),
+        100,
+      ),
+    ).toBeNull();
+    expect(posixTerminalBootstrapChildPidFromPsOutput("101 100 python3", 100)).toBeNull();
   });
 
   it("caps persisted history to configured line limit", async () => {

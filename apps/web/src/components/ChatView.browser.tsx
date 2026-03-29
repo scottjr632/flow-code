@@ -661,6 +661,17 @@ function dispatchChatNewShortcut(): void {
   );
 }
 
+function dispatchFocusComposerShortcut(): void {
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "l",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 async function triggerChatNewShortcutUntilPath(
   router: ReturnType<typeof getRouter>,
   predicate: (pathname: string) => boolean,
@@ -2085,6 +2096,35 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
+
+  it("focuses the composer with Cmd+L", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-focus-composer-shortcut" as MessageId,
+        targetText: "focus composer shortcut",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      const modeButton = await waitForInteractionModeButton("Chat");
+      modeButton.focus();
+      expect(document.activeElement).toBe(modeButton);
+
+      dispatchFocusComposerShortcut();
+
+      await vi.waitFor(
+        () => {
+          expect(document.activeElement).toBe(composerEditor);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("creates a fresh draft after the previous draft thread is promoted", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

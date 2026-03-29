@@ -125,6 +125,34 @@ describe("terminalStateStore actions", () => {
     ).toEqual([]);
   });
 
+  it("does not persist running terminal activity across reloads", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_ID, "terminal-2");
+    store.setTerminalActivity(THREAD_ID, "terminal-2", true);
+
+    const storageKey = useTerminalStateStore.persist.getOptions().name;
+    if (!storageKey) {
+      throw new Error("Missing terminal state storage key");
+    }
+    const rawPersistedState = localStorage.getItem(storageKey);
+    expect(rawPersistedState).not.toBeNull();
+
+    const persistedState = JSON.parse(rawPersistedState ?? "null") as {
+      state: {
+        terminalStateByThreadId: Record<
+          string,
+          {
+            runningTerminalIds: string[];
+          }
+        >;
+      };
+      version: number;
+    };
+
+    expect(persistedState.version).toBe(2);
+    expect(persistedState.state.terminalStateByThreadId[THREAD_ID]?.runningTerminalIds).toEqual([]);
+  });
+
   it("resets to default and clears persisted entry when closing the last terminal", () => {
     const store = useTerminalStateStore.getState();
     store.closeTerminal(THREAD_ID, "default");

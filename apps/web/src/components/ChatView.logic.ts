@@ -1,4 +1,4 @@
-import { ProjectId, type ModelSelection, type ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, type ModelSelection } from "@t3tools/contracts";
 import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -9,11 +9,14 @@ import {
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
 } from "../lib/terminalContext";
+import { DEFAULT_THREAD_TERMINAL_ID } from "../types";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+export const LAST_ACTIVE_WORKSPACE_TAB_BY_THREAD_KEY = "t3code:last-active-workspace-tab-by-thread";
 const WORKTREE_BRANCH_PREFIX = "t3code";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+export const LastActiveWorkspaceTabByThreadSchema = Schema.Record(ThreadId, Schema.String);
 
 export function buildLocalDraftThread(
   threadId: ThreadId,
@@ -171,4 +174,55 @@ export function buildExpiredTerminalContextToastCopy(
     title: `${noun} omitted from message`,
     description: "Re-add it if you want that terminal output included.",
   };
+}
+
+export function updateLastActiveWorkspaceTabByThread(
+  lastActiveWorkspaceTabByThreadId: Readonly<Record<ThreadId, string>>,
+  threadId: ThreadId,
+  tabId: string,
+): Record<ThreadId, string> {
+  if (tabId === "chat") {
+    if (!(threadId in lastActiveWorkspaceTabByThreadId)) {
+      return lastActiveWorkspaceTabByThreadId as Record<ThreadId, string>;
+    }
+    const nextWorkspaceTabsByThreadId = { ...lastActiveWorkspaceTabByThreadId };
+    delete nextWorkspaceTabsByThreadId[threadId];
+    return nextWorkspaceTabsByThreadId;
+  }
+
+  if (lastActiveWorkspaceTabByThreadId[threadId] === tabId) {
+    return lastActiveWorkspaceTabByThreadId as Record<ThreadId, string>;
+  }
+
+  return {
+    ...lastActiveWorkspaceTabByThreadId,
+    [threadId]: tabId,
+  };
+}
+
+export function getWorkspaceTabReconciliationTarget(options: {
+  activeTabId: string;
+  resolvedTabId: string;
+  diffOpen: boolean;
+}): string | null {
+  if (options.activeTabId === options.resolvedTabId) {
+    return null;
+  }
+
+  if (options.activeTabId === "diff" && !options.diffOpen) {
+    return null;
+  }
+
+  return options.resolvedTabId;
+}
+
+export function shouldReuseHiddenDefaultTerminalForWorkspaceCreation(options: {
+  terminalOpen: boolean;
+  terminalIds: readonly string[];
+}): boolean {
+  if (options.terminalOpen) {
+    return false;
+  }
+
+  return options.terminalIds.length === 1 && options.terminalIds[0] === DEFAULT_THREAD_TERMINAL_ID;
 }

@@ -39,6 +39,7 @@ import {
   type DiffCommentSide,
 } from "../lib/diffCommentContext";
 import { randomUUID } from "../lib/utils";
+import { resolveTurnChipLabel } from "./DiffPanel.logic";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
@@ -317,6 +318,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
   );
+  const latestTurnId = orderedTurnDiffSummaries[0]?.turnId ?? null;
 
   const selectedTurnId = diffSearch.diffTurnId ?? null;
   const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
@@ -659,10 +661,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               >
                 <div className="flex items-center gap-1">
                   <span className="text-[10px] leading-tight font-medium">
-                    Turn{" "}
-                    {summary.checkpointTurnCount ??
-                      inferredCheckpointTurnCountByTurnId[summary.turnId] ??
-                      "?"}
+                    {resolveTurnChipLabel(
+                      summary,
+                      latestTurnId,
+                      inferredCheckpointTurnCountByTurnId,
+                    )}
                   </span>
                   <span className="text-[9px] leading-tight opacity-70">
                     {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}

@@ -29,6 +29,10 @@ interface ThreadTerminalState {
 
 const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
 
+interface PersistedTerminalStateStoreState {
+  terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>;
+}
+
 function createTerminalStateStorage() {
   return resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined);
 }
@@ -429,6 +433,28 @@ function setThreadTerminalActivity(
   return { ...normalized, runningTerminalIds: [...runningTerminalIds] };
 }
 
+function clearThreadTerminalActivity(state: ThreadTerminalState): ThreadTerminalState {
+  if (state.runningTerminalIds.length === 0) {
+    return state;
+  }
+  return { ...state, runningTerminalIds: [] };
+}
+
+function clearPersistedTerminalActivity(
+  terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>,
+): Record<ThreadId, ThreadTerminalState> {
+  let mutated = false;
+  const nextEntries = Object.entries(terminalStateByThreadId).map(([threadId, state]) => {
+    const nextState = clearThreadTerminalActivity(state);
+    if (nextState !== state) {
+      mutated = true;
+    }
+    return [threadId as ThreadId, nextState] as const;
+  });
+
+  return mutated ? Object.fromEntries(nextEntries) : terminalStateByThreadId;
+}
+
 export function selectThreadTerminalState(
   terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>,
   threadId: ThreadId,
@@ -543,11 +569,24 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
     },
     {
       name: TERMINAL_STATE_STORAGE_KEY,
-      version: 1,
+      version: 2,
       storage: createJSONStorage(createTerminalStateStorage),
       partialize: (state) => ({
-        terminalStateByThreadId: state.terminalStateByThreadId,
+        terminalStateByThreadId: clearPersistedTerminalActivity(state.terminalStateByThreadId),
       }),
+      migrate: (persistedState) => {
+        const candidate =
+          persistedState &&
+          typeof persistedState === "object" &&
+          "terminalStateByThreadId" in persistedState
+            ? (persistedState as PersistedTerminalStateStoreState)
+            : { terminalStateByThreadId: {} };
+        return {
+          terminalStateByThreadId: clearPersistedTerminalActivity(
+            candidate.terminalStateByThreadId,
+          ),
+        };
+      },
     },
   ),
 );

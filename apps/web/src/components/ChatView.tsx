@@ -82,7 +82,11 @@ import { basenameOfPath } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import {
+  isFocusComposerShortcut,
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+} from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import { ThreadDiffWorkspace } from "./ThreadDiffWorkspace";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -200,13 +204,18 @@ import {
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
   deriveComposerSendState,
+  getWorkspaceTabReconciliationTarget,
+  LAST_ACTIVE_WORKSPACE_TAB_BY_THREAD_KEY,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
+  LastActiveWorkspaceTabByThreadSchema,
   LastInvokedScriptByProjectSchema,
   PullRequestDialogState,
   readFileAsDataUrl,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   SendPhase,
+  shouldReuseHiddenDefaultTerminalForWorkspaceCreation,
+  updateLastActiveWorkspaceTabByThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 
@@ -381,7 +390,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     useState<Record<string, number>>({});
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
-  const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState<WorkspaceTabId>("chat");
   const [isWorkspaceCommandPaletteOpen, setIsWorkspaceCommandPaletteOpen] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
@@ -410,7 +418,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     {},
     LastInvokedScriptByProjectSchema,
   );
+  const [lastActiveWorkspaceTabByThreadId, setLastActiveWorkspaceTabByThreadId] = useLocalStorage(
+    LAST_ACTIVE_WORKSPACE_TAB_BY_THREAD_KEY,
+    {},
+    LastActiveWorkspaceTabByThreadSchema,
+  );
   const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const activeWorkspaceTabThreadIdRef = useRef(threadId);
+  activeWorkspaceTabThreadIdRef.current = threadId;
   const [messagesScrollElement, setMessagesScrollElement] = useState<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const lastKnownScrollTopRef = useRef(0);
@@ -450,6 +465,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
+  const activeWorkspaceTabId = lastActiveWorkspaceTabByThreadId[threadId] ?? "chat";
+  const setActiveWorkspaceTabId = useCallback(
+    (tabId: WorkspaceTabId) => {
+      setLastActiveWorkspaceTabByThreadId((current) =>
+        updateLastActiveWorkspaceTabByThread(current, activeWorkspaceTabThreadIdRef.current, tabId),
+      );
+    },
+    [setLastActiveWorkspaceTabByThreadId],
+  );
 
   const setPrompt = useCallback(
     (nextPrompt: string) => {
@@ -584,10 +608,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, []);
 
   useEffect(() => {
-    if (resolvedWorkspaceTabId !== activeWorkspaceTabId) {
-      setActiveWorkspaceTabId(resolvedWorkspaceTabId);
+    const reconciliationTarget = getWorkspaceTabReconciliationTarget({
+      activeTabId: activeWorkspaceTabId,
+      resolvedTabId: resolvedWorkspaceTabId,
+      diffOpen,
+    });
+
+    if (reconciliationTarget) {
+      setActiveWorkspaceTabId(reconciliationTarget);
     }
-  }, [activeWorkspaceTabId, resolvedWorkspaceTabId]);
+  }, [activeWorkspaceTabId, diffOpen, resolvedWorkspaceTabId, setActiveWorkspaceTabId]);
 
   const openOrReuseProjectDraftThread = useCallback(
     async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
@@ -1308,7 +1338,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
       },
     });
-  }, [diffOpen, navigate, resolvedWorkspaceTabId, threadId]);
+  }, [diffOpen, navigate, resolvedWorkspaceTabId, setActiveWorkspaceTabId, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -1442,6 +1472,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeWorkspaceTab?.kind,
     diffOpen,
     firstTerminalWorkspaceTabId,
+    setActiveWorkspaceTabId,
     setTerminalOpen,
     terminalState.activeTerminalGroupId,
     terminalState.terminalOpen,
@@ -1456,6 +1487,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeThreadId,
     hasReachedSplitLimit,
+    setActiveWorkspaceTabId,
     storeSplitTerminal,
     terminalState.activeTerminalGroupId,
     workspaceTerminalTabIdForGroup,
@@ -1466,7 +1498,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     storeNewTerminal(activeThreadId, terminalId);
     setActiveWorkspaceTabId(buildTerminalWorkspaceTabId(terminalGroupIdForTerminal(terminalId)));
     setTerminalFocusRequestId((value) => value + 1);
-  }, [activeThreadId, storeNewTerminal]);
+  }, [activeThreadId, setActiveWorkspaceTabId, storeNewTerminal]);
   const activateTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadId) return;
@@ -1474,7 +1506,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setActiveWorkspaceTabId(workspaceTerminalTabIdForTerminal(terminalId));
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeThreadId, storeSetActiveTerminal, workspaceTerminalTabIdForTerminal],
+    [
+      activeThreadId,
+      setActiveWorkspaceTabId,
+      storeSetActiveTerminal,
+      workspaceTerminalTabIdForTerminal,
+    ],
   );
   const closeTerminal = useCallback(
     (terminalId: string) => {
@@ -1511,7 +1548,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeThreadId, activeWorkspaceTab?.kind, diffOpen, storeCloseTerminal],
+    [
+      activeThreadId,
+      activeWorkspaceTab?.kind,
+      diffOpen,
+      setActiveWorkspaceTabId,
+      storeCloseTerminal,
+    ],
   );
   const runProjectScript = useCallback(
     async (
@@ -1598,6 +1641,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeThread,
       activeThreadId,
       gitCwd,
+      setActiveWorkspaceTabId,
       setTerminalOpen,
       setThreadError,
       storeNewTerminal,
@@ -2403,6 +2447,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       if (!activeThreadId || event.defaultPrevented || isWorkspaceCommandPaletteOpen) return;
+      if (isFocusComposerShortcut(event)) {
+        if (isConnecting || isComposerApprovalState) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (resolvedWorkspaceTabId !== "chat") {
+          setActiveWorkspaceTabId("chat");
+          window.requestAnimationFrame(() => {
+            scheduleComposerFocus();
+          });
+          return;
+        }
+        scheduleComposerFocus();
+        return;
+      }
       const shortcutContext = {
         terminalFocus: isTerminalFocused(),
         terminalOpen: Boolean(terminalState.terminalOpen),
@@ -2467,6 +2527,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return () => window.removeEventListener("keydown", handler);
   }, [
     activeProject,
+    isComposerApprovalState,
+    isConnecting,
     terminalState.terminalOpen,
     terminalState.activeTerminalId,
     activeThreadId,
@@ -2478,6 +2540,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     splitTerminal,
     keybindings,
     onToggleDiff,
+    resolvedWorkspaceTabId,
+    scheduleComposerFocus,
+    setActiveWorkspaceTabId,
     toggleTerminalVisibility,
   ]);
 
@@ -3759,7 +3824,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         },
       });
     },
-    [navigate, threadId],
+    [navigate, setActiveWorkspaceTabId, threadId],
   );
   const onRevertUserMessage = (messageId: MessageId) => {
     const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
@@ -3786,7 +3851,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       },
     });
     setActiveWorkspaceTabId("diff");
-  }, [diffOpen, isGitRepo, navigate, threadId]);
+  }, [diffOpen, isGitRepo, navigate, setActiveWorkspaceTabId, threadId]);
   const selectWorkspaceTab = useCallback(
     (tabId: WorkspaceTabId) => {
       if (!isTerminalWorkspaceTabId(tabId)) {
@@ -3802,17 +3867,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       activateTerminal(targetTab.primaryTerminalId);
     },
-    [activateTerminal, workspaceTabs],
+    [activateTerminal, setActiveWorkspaceTabId, workspaceTabs],
   );
   const createTerminalWorkspace = useCallback(() => {
     if (!activeProject) {
+      return;
+    }
+    if (
+      shouldReuseHiddenDefaultTerminalForWorkspaceCreation({
+        terminalOpen: terminalState.terminalOpen,
+        terminalIds: terminalState.terminalIds,
+      })
+    ) {
+      setTerminalOpen(true);
+      activateTerminal(DEFAULT_THREAD_TERMINAL_ID);
       return;
     }
     if (!terminalState.terminalOpen) {
       setTerminalOpen(true);
     }
     createNewTerminal();
-  }, [activeProject, createNewTerminal, setTerminalOpen, terminalState.terminalOpen]);
+  }, [
+    activateTerminal,
+    activeProject,
+    createNewTerminal,
+    setTerminalOpen,
+    terminalState.terminalIds,
+    terminalState.terminalOpen,
+  ]);
   const closeWorkspaceTab = useCallback(
     (tabId: WorkspaceTabId) => {
       if (tabId === "diff") {
@@ -3845,6 +3927,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       diffOpen,
       onToggleDiff,
       resolvedWorkspaceTabId,
+      setActiveWorkspaceTabId,
       terminalState.terminalOpen,
       workspaceTabs,
     ],
