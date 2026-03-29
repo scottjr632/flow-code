@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { appendDiffCommentsToPrompt } from "../lib/diffCommentContext";
 import { appendTerminalContextsToPrompt } from "../lib/terminalContext";
+import { buildInlineDiffCommentText } from "./chat/userMessageDiffComments";
 import { buildInlineTerminalContextText } from "./chat/userMessageTerminalContexts";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
@@ -102,6 +104,31 @@ describe("estimateTimelineMessageHeight", () => {
       estimateTimelineMessageHeight({
         role: "user",
         text: `${buildInlineTerminalContextText([{ header: "Terminal 1 lines 40-43" }])} Investigate this`,
+      }),
+    );
+  });
+
+  it("adds diff comment chrome without counting the hidden block as message text", () => {
+    const prompt = appendDiffCommentsToPrompt("Investigate this", [
+      {
+        filePath: "apps/web/src/components/DiffPanel.tsx",
+        lineStart: 12,
+        lineEnd: 13,
+        side: "additions",
+        body: "This branch needs a guard.",
+        excerpt: "12 | if (foo)\n13 |   bar()",
+      },
+    ]);
+
+    expect(
+      estimateTimelineMessageHeight({
+        role: "user",
+        text: prompt,
+      }),
+    ).toBe(
+      estimateTimelineMessageHeight({
+        role: "user",
+        text: `${buildInlineDiffCommentText([{ header: "apps/web/src/components/DiffPanel.tsx added lines 12-13" }])} Investigate this`,
       }),
     );
   });

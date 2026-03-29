@@ -64,6 +64,10 @@ function normalizeCheckpointErrorMessage(error: unknown): string {
     return "Turn diffs are unavailable because this project is not a git repository.";
   }
 
+  if (lower.includes("selected turn review backend")) {
+    return "Turn diffs are unavailable because the selected turn review backend is not available for this project.";
+  }
+
   if (
     lower.includes("checkpoint unavailable for thread") ||
     lower.includes("checkpoint invariant violation")

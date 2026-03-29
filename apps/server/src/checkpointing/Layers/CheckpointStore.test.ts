@@ -12,6 +12,7 @@ import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { GitCommandError } from "../../git/Errors.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ThreadId } from "@t3tools/contracts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -23,9 +24,15 @@ const GitCoreTestLayer = GitCoreLive.pipe(
 );
 const CheckpointStoreTestLayer = CheckpointStoreLive.pipe(
   Layer.provide(GitCoreTestLayer),
+  Layer.provide(ServerSettingsService.layerTest()),
   Layer.provide(NodeServices.layer),
 );
-const TestLayer = Layer.mergeAll(NodeServices.layer, GitCoreTestLayer, CheckpointStoreTestLayer);
+const TestLayer = Layer.mergeAll(
+  NodeServices.layer,
+  GitCoreTestLayer,
+  ServerSettingsService.layerTest(),
+  CheckpointStoreTestLayer,
+);
 
 function makeTmpDir(
   prefix = "checkpoint-store-test-",
@@ -42,6 +49,7 @@ function writeTextFile(
 ): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> {
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.makeDirectory(path.dirname(filePath), { recursive: true });
     yield* fileSystem.writeFileString(filePath, contents);
   });
 }
@@ -80,7 +88,7 @@ function initRepoWithCommit(
   });
 }
 
-function buildLargeText(lineCount = 20_000): string {
+function buildLargeText(lineCount = 120_000): string {
   return Array.from({ length: lineCount }, (_, index) => `line ${String(index).padStart(5, "0")}`)
     .join("\n")
     .concat("\n");
@@ -88,6 +96,37 @@ function buildLargeText(lineCount = 20_000): string {
 
 it.layer(TestLayer)("CheckpointStoreLive", (it) => {
   describe("diffCheckpoints", () => {
+    it.effect("excludes node_modules content from git checkpoint diffs", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore;
+        const threadId = ThreadId.makeUnsafe("thread-checkpoint-store-ignore-node-modules");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: fromCheckpointRef,
+        });
+        yield* writeTextFile(path.join(tmp, "src.txt"), "source change\n");
+        yield* writeTextFile(path.join(tmp, "node_modules", "pkg", "index.js"), "ignored change\n");
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: toCheckpointRef,
+        });
+
+        const diff = yield* checkpointStore.diffCheckpoints({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+
+        expect(diff).toContain("src.txt");
+        expect(diff).not.toContain("node_modules/pkg/index.js");
+      }),
+    );
+
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
@@ -102,6 +141,7 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
           checkpointRef: fromCheckpointRef,
         });
         yield* writeTextFile(path.join(tmp, "README.md"), buildLargeText());
+        yield* writeTextFile(path.join(tmp, "node_modules", "pkg", "index.js"), buildLargeText());
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
           checkpointRef: toCheckpointRef,
@@ -115,7 +155,9 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
 
         expect(diff).toContain("diff --git");
         expect(diff).not.toContain("[truncated]");
-        expect(diff).toContain("+line 19999");
+        expect(diff).not.toContain("node_modules/pkg/index.js");
+        expect(diff.length).toBeGreaterThan(1_000_000);
+        expect(diff).toContain("+line 119999");
       }),
     );
   });

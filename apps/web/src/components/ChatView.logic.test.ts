@@ -8,6 +8,7 @@ describe("deriveComposerSendState", () => {
     const state = deriveComposerSendState({
       prompt: "\uFFFC",
       imageCount: 0,
+      diffComments: [],
       terminalContexts: [
         {
           id: "ctx-expired",
@@ -24,6 +25,7 @@ describe("deriveComposerSendState", () => {
 
     expect(state.trimmedPrompt).toBe("");
     expect(state.sendableTerminalContexts).toEqual([]);
+    expect(state.sendableDiffComments).toEqual([]);
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(false);
   });
@@ -32,6 +34,7 @@ describe("deriveComposerSendState", () => {
     const state = deriveComposerSendState({
       prompt: `yoo \uFFFC waddup`,
       imageCount: 0,
+      diffComments: [],
       terminalContexts: [
         {
           id: "ctx-expired",
@@ -48,6 +51,30 @@ describe("deriveComposerSendState", () => {
 
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
+    expect(state.hasSendableContent).toBe(true);
+  });
+
+  it("treats diff comments as sendable context even without plain prompt text", () => {
+    const state = deriveComposerSendState({
+      prompt: "",
+      imageCount: 0,
+      terminalContexts: [],
+      diffComments: [
+        {
+          id: "comment-1",
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          filePath: "apps/web/src/components/DiffPanel.tsx",
+          lineStart: 12,
+          lineEnd: 14,
+          side: "additions",
+          body: "This branch needs a guard.",
+          excerpt: "12 | if (foo)\n13 |   bar()",
+          createdAt: "2026-03-28T12:52:29.000Z",
+        },
+      ],
+    });
+
+    expect(state.sendableDiffComments).toHaveLength(1);
     expect(state.hasSendableContent).toBe(true);
   });
 });

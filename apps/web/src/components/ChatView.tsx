@@ -132,6 +132,11 @@ import {
   useComposerThreadDraft,
 } from "../composerDraftStore";
 import {
+  appendDiffCommentsToPrompt,
+  formatDiffCommentLabel,
+  type DiffCommentDraft,
+} from "../lib/diffCommentContext";
+import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
   insertInlineTerminalContextPlaceholder,
@@ -155,6 +160,7 @@ import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu"
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
+import { ComposerPendingDiffComments } from "./chat/ComposerPendingDiffComments";
 import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
@@ -269,14 +275,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
+  const composerDiffComments = composerDraft.diffComments;
   const composerSendState = useMemo(
     () =>
       deriveComposerSendState({
         prompt,
         imageCount: composerImages.length,
         terminalContexts: composerTerminalContexts,
+        diffComments: composerDiffComments,
       }),
-    [composerImages.length, composerTerminalContexts, prompt],
+    [composerDiffComments, composerImages.length, composerTerminalContexts, prompt],
   );
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -294,9 +302,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const addComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.addTerminalContexts,
   );
+  const addComposerDraftDiffComments = useComposerDraftStore((store) => store.addDiffComments);
   const removeComposerDraftTerminalContext = useComposerDraftStore(
     (store) => store.removeTerminalContext,
   );
+  const removeComposerDraftDiffComment = useComposerDraftStore((store) => store.removeDiffComment);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.setTerminalContexts,
   );
@@ -327,6 +337,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>(composerTerminalContexts);
+  const composerDiffCommentsRef = useRef<DiffCommentDraft[]>(composerDiffComments);
   const [localDraftErrorsByThreadId, setLocalDraftErrorsByThreadId] = useState<
     Record<ThreadId, string | null>
   >({});
@@ -437,6 +448,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [addComposerDraftTerminalContexts, threadId],
   );
+  const addComposerDiffCommentsToDraft = useCallback(
+    (comments: DiffCommentDraft[]) => {
+      addComposerDraftDiffComments(threadId, comments);
+    },
+    [addComposerDraftDiffComments, threadId],
+  );
   const removeComposerImageFromDraft = useCallback(
     (imageId: string) => {
       removeComposerDraftImage(threadId, imageId);
@@ -464,6 +481,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       );
     },
     [composerTerminalContexts, removeComposerDraftTerminalContext, setPrompt, threadId],
+  );
+  const removeComposerDiffCommentFromDraft = useCallback(
+    (commentId: string) => {
+      removeComposerDraftDiffComment(threadId, commentId);
+    },
+    [removeComposerDraftDiffComment, threadId],
   );
 
   const serverThread = threads.find((t) => t.id === threadId);
@@ -1981,6 +2004,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [composerTerminalContexts]);
 
   useEffect(() => {
+    composerDiffCommentsRef.current = composerDiffComments;
+  }, [composerDiffComments]);
+
+  useEffect(() => {
     if (!activeThread?.id) return;
     if (activeThread.messages.length === 0) {
       return;
@@ -2458,12 +2485,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
+      sendableDiffComments: sendableComposerDiffComments,
       expiredTerminalContextCount,
       hasSendableContent,
     } = deriveComposerSendState({
       prompt: promptForSend,
       imageCount: composerImages.length,
       terminalContexts: composerTerminalContexts,
+      diffComments: composerDiffComments,
     });
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
@@ -2482,7 +2511,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     const standaloneSlashCommand =
-      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
+      composerImages.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      sendableComposerDiffComments.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
@@ -2533,9 +2564,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
-    const messageTextForSend = appendTerminalContextsToPrompt(
+    const composerDiffCommentsSnapshot = [...sendableComposerDiffComments];
+    const promptWithTerminalContexts = appendTerminalContextsToPrompt(
       promptForSend,
       composerTerminalContextsSnapshot,
+    );
+    const messageTextForSend = appendDiffCommentsToPrompt(
+      promptWithTerminalContexts,
+      composerDiffCommentsSnapshot,
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
@@ -2639,6 +2675,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           titleSeed = `Image: ${firstComposerImageName}`;
         } else if (composerTerminalContextsSnapshot.length > 0) {
           titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
+        } else if (composerDiffCommentsSnapshot.length > 0) {
+          titleSeed = formatDiffCommentLabel(composerDiffCommentsSnapshot[0]!);
         } else {
           titleSeed = "New thread";
         }
@@ -2748,7 +2786,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0
+        composerTerminalContextsRef.current.length === 0 &&
+        composerDiffCommentsRef.current.length === 0
       ) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
@@ -2763,6 +2802,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
         addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
         addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
+        addComposerDiffCommentsToDraft(composerDiffCommentsSnapshot);
         setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
       }
       setThreadError(
@@ -3814,6 +3854,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             </div>
                           ))}
                         </div>
+                      )}
+                    {!isComposerApprovalState &&
+                      pendingUserInputs.length === 0 &&
+                      composerDiffComments.length > 0 && (
+                        <ComposerPendingDiffComments
+                          comments={composerDiffComments}
+                          className="mb-3"
+                          onRemove={removeComposerDiffCommentFromDraft}
+                        />
                       )}
                     <ComposerPromptEditor
                       ref={composerEditorRef}

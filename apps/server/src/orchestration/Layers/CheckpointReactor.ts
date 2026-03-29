@@ -24,7 +24,6 @@ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
-import { isGitRepository } from "../../git/Utils.ts";
 
 type ReactorInput =
   | {
@@ -146,12 +145,10 @@ const make = Effect.gen(function* () {
     return Option.none();
   });
 
-  const isGitWorkspace = (cwd: string) => isGitRepository(cwd);
-
   // Resolves the workspace CWD for checkpoint operations, preferring the
   // active provider session CWD and falling back to the thread/project config.
   // Returns undefined when no CWD can be determined or the workspace is not
-  // a git repository.
+  // compatible with the selected turn-review backend.
   const resolveCheckpointCwd = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly thread: { readonly projectId: ProjectId; readonly worktreePath: string | null };
@@ -178,13 +175,17 @@ const make = Effect.gen(function* () {
     if (!cwd) {
       return undefined;
     }
-    if (!isGitWorkspace(cwd)) {
+    if (
+      !(yield* checkpointStore
+        .supportsCheckpoints(cwd)
+        .pipe(Effect.catch(() => Effect.succeed(false))))
+    ) {
       return undefined;
     }
     return cwd;
   });
 
-  // Shared tail for both capture paths: creates the git checkpoint ref, diffs
+  // Shared tail for both capture paths: creates the checkpoint snapshot, diffs
   // it against the previous turn, then dispatches the domain events to update
   // the orchestration read model.
   const captureAndDispatchCheckpoint = Effect.fnUntraced(function* (input: {
@@ -319,7 +320,7 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // Captures a real git checkpoint when a turn completes via a runtime event.
+  // Captures a real checkpoint when a turn completes via a runtime event.
   const captureCheckpointFromTurnCompletion = Effect.fnUntraced(function* (
     event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>,
   ) {
@@ -341,7 +342,7 @@ const make = Effect.gen(function* () {
 
     // Only skip if a real (non-placeholder) checkpoint already exists for this turn.
     // ProviderRuntimeIngestion may insert placeholder entries with status "missing"
-    // before this reactor runs; those must not prevent real git capture.
+    // before this reactor runs; those must not prevent the real capture.
     if (
       thread.checkpoints.some(
         (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
@@ -385,14 +386,14 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // Captures a real git checkpoint when a placeholder checkpoint (status "missing")
+  // Captures a real checkpoint when a placeholder checkpoint (status "missing")
   // is detected via a domain event. This replaces the placeholder with a real
-  // git-ref-based checkpoint.
+  // backend-specific checkpoint snapshot.
   //
   // ProviderRuntimeIngestion creates placeholder checkpoints on turn.diff.updated
   // events from the Codex runtime. This handler fires when the corresponding
   // domain event arrives, allowing the reactor to capture the actual filesystem
-  // state into a git ref and dispatch a replacement checkpoint.
+  // state and dispatch a replacement checkpoint.
   const captureCheckpointFromPlaceholder = Effect.fnUntraced(function* (
     event: Extract<OrchestrationEvent, { type: "thread.turn-diff-completed" }>,
   ) {
@@ -583,11 +584,16 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.catch(() => Effect.void));
       return;
     }
-    if (!isGitWorkspace(sessionRuntime.value.cwd)) {
+    if (
+      !(yield* checkpointStore
+        .supportsCheckpoints(sessionRuntime.value.cwd)
+        .pipe(Effect.catch(() => Effect.succeed(false))))
+    ) {
       yield* appendRevertFailureActivity({
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,
-        detail: "Checkpoints are unavailable because this project is not a git repository.",
+        detail:
+          "Checkpoints are unavailable because the selected turn review backend is not available for this project.",
         createdAt: now,
       }).pipe(Effect.catch(() => Effect.void));
       return;
@@ -705,7 +711,7 @@ const make = Effect.gen(function* () {
     }
 
     // When ProviderRuntimeIngestion creates a placeholder checkpoint (status "missing")
-    // from a turn.diff.updated runtime event, capture the real git checkpoint to
+    // from a turn.diff.updated runtime event, capture the real checkpoint to
     // replace it. The providerService.streamEvents PubSub does not reliably deliver
     // turn.completed runtime events to this reactor (shared subscription), so
     // reacting to the domain event is the reliable path.

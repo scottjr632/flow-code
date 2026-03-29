@@ -105,7 +105,7 @@ describe("CheckpointDiffQueryLive", () => {
     });
 
     const checkpointStore: CheckpointStoreShape = {
-      isGitRepository: () => Effect.succeed(true),
+      supportsCheckpoints: () => Effect.succeed(true),
       captureCheckpoint: () => Effect.void,
       hasCheckpointRef: ({ checkpointRef }) =>
         Effect.sync(() => {
@@ -162,7 +162,7 @@ describe("CheckpointDiffQueryLive", () => {
     const threadId = ThreadId.makeUnsafe("thread-missing");
 
     const checkpointStore: CheckpointStoreShape = {
-      isGitRepository: () => Effect.succeed(true),
+      supportsCheckpoints: () => Effect.succeed(true),
       captureCheckpoint: () => Effect.void,
       hasCheckpointRef: () => Effect.succeed(true),
       restoreCheckpoint: () => Effect.succeed(true),

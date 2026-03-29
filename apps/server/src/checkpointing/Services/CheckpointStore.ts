@@ -44,14 +44,14 @@ export interface DeleteCheckpointRefsInput {
  */
 export interface CheckpointStoreShape {
   /**
-   * Check whether cwd is inside a Git worktree.
+   * Check whether the configured turn-review backend is available for this workspace.
    */
-  readonly isGitRepository: (cwd: string) => Effect.Effect<boolean, CheckpointStoreError>;
+  readonly supportsCheckpoints: (cwd: string) => Effect.Effect<boolean, CheckpointStoreError>;
 
   /**
    * Capture a checkpoint commit and store it at the provided checkpoint ref.
    *
-   * Uses an isolated temporary Git index and writes a hidden ref.
+   * Backend-specific capture of the current workspace state for later diff/revert operations.
    */
   readonly captureCheckpoint: (
     input: CaptureCheckpointInput,

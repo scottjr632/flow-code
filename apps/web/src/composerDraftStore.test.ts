@@ -207,6 +207,25 @@ describe("composerDraftStore clearComposerContent", () => {
     expect(draft).toBeUndefined();
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:optimistic");
   });
+
+  it("clears pending diff comments with the rest of the composer draft", () => {
+    useComposerDraftStore.getState().addDiffComment(threadId, {
+      id: "comment-1",
+      threadId,
+      filePath: "apps/web/src/components/DiffPanel.tsx",
+      lineStart: 4,
+      lineEnd: 5,
+      side: "additions",
+      body: "This needs a guard.",
+      excerpt: "4 | if (foo)\n5 |   bar()",
+      createdAt: "2026-03-28T12:00:00.000Z",
+    });
+
+    useComposerDraftStore.getState().clearComposerContent(threadId);
+
+    const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
+    expect(draft).toBeUndefined();
+  });
 });
 
 describe("composerDraftStore syncPersistedAttachments", () => {

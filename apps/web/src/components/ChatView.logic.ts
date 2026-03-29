@@ -3,6 +3,7 @@ import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
+import { type DiffCommentDraft } from "../lib/diffCommentContext";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
@@ -125,22 +126,31 @@ export function deriveComposerSendState(options: {
   prompt: string;
   imageCount: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  diffComments: ReadonlyArray<DiffCommentDraft>;
 }): {
   trimmedPrompt: string;
   sendableTerminalContexts: TerminalContextDraft[];
+  sendableDiffComments: DiffCommentDraft[];
   expiredTerminalContextCount: number;
   hasSendableContent: boolean;
 } {
   const trimmedPrompt = stripInlineTerminalContextPlaceholders(options.prompt).trim();
   const sendableTerminalContexts = filterTerminalContextsWithText(options.terminalContexts);
+  const sendableDiffComments = options.diffComments.filter(
+    (comment) => comment.body.trim().length > 0 && comment.excerpt.trim().length > 0,
+  );
   const expiredTerminalContextCount =
     options.terminalContexts.length - sendableTerminalContexts.length;
   return {
     trimmedPrompt,
     sendableTerminalContexts,
+    sendableDiffComments,
     expiredTerminalContextCount,
     hasSendableContent:
-      trimmedPrompt.length > 0 || options.imageCount > 0 || sendableTerminalContexts.length > 0,
+      trimmedPrompt.length > 0 ||
+      options.imageCount > 0 ||
+      sendableTerminalContexts.length > 0 ||
+      sendableDiffComments.length > 0,
   };
 }
 

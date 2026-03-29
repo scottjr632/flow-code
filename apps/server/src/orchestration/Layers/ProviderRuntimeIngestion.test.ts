@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -32,6 +33,7 @@ import {
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import { CheckpointStoreLive } from "../../checkpointing/Layers/CheckpointStore.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -39,6 +41,7 @@ import {
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
@@ -135,6 +138,25 @@ function createProviderServiceHarness() {
   };
 }
 
+function initWorkspaceVcs(workspaceRoot: string, kind: "git" | "jj" | "none"): void {
+  if (kind === "none") {
+    return;
+  }
+
+  const result =
+    kind === "git"
+      ? spawnSync("git", ["init", workspaceRoot], { encoding: "utf8" })
+      : spawnSync("jj", ["git", "init", workspaceRoot], { encoding: "utf8" });
+
+  if (result.status === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Failed to initialize ${kind} workspace: ${result.stderr || result.stdout || "unknown error"}`,
+  );
+}
+
 async function waitForThread(
   engine: OrchestrationEngineShape,
   predicate: (thread: ProviderRuntimeTestThread) => boolean,
@@ -192,9 +214,12 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness(options?: { serverSettings?: Partial<ServerSettings> }) {
+  async function createHarness(options?: {
+    serverSettings?: Partial<ServerSettings>;
+    vcs?: "git" | "jj" | "none";
+  }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
-    fs.mkdirSync(path.join(workspaceRoot, ".git"));
+    initWorkspaceVcs(workspaceRoot, options?.vcs ?? "git");
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -202,8 +227,10 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(GitCoreLive));
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(checkpointStoreLayer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
@@ -1985,6 +2012,62 @@ describe("ProviderRuntimeIngestion", () => {
     expect(checkpoint?.status).toBe("missing");
     expect(checkpoint?.assistantMessageId).toBe("assistant:item-p1-assistant");
     expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
+  });
+
+  it("creates turn-diff checkpoints for jj workspaces when the jj backend is selected", async () => {
+    const harness = await createHarness({
+      serverSettings: { turnReviewVcs: "jj" },
+      vcs: "jj",
+    });
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.diff.updated",
+      eventId: asEventId("evt-turn-diff-jj"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-jj"),
+      itemId: asItemId("item-jj-assistant"),
+      payload: {
+        unifiedDiff: "diff --git a/file.txt b/file.txt\n+hello\n",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.checkpoints.some((checkpoint) => checkpoint.turnId === "turn-jj"),
+    );
+
+    expect(thread.checkpoints.some((checkpoint) => checkpoint.turnId === "turn-jj")).toBe(true);
+  });
+
+  it("does not create turn-diff checkpoints for jj workspaces when git is forced", async () => {
+    const harness = await createHarness({
+      serverSettings: { turnReviewVcs: "git" },
+      vcs: "jj",
+    });
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.diff.updated",
+      eventId: asEventId("evt-turn-diff-git-only"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-git-only"),
+      itemId: asItemId("item-git-only-assistant"),
+      payload: {
+        unifiedDiff: "diff --git a/file.txt b/file.txt\n+hello\n",
+      },
+    });
+
+    await harness.drain();
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === "thread-1");
+
+    expect(thread?.checkpoints.some((checkpoint) => checkpoint.turnId === "turn-git-only")).toBe(
+      false,
+    );
   });
 
   it("projects context window updates into normalized thread activities", async () => {

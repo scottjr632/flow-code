@@ -42,11 +42,14 @@ import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import { DiffCommentInlineChip } from "./DiffCommentInlineChip";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import {
   deriveDisplayedUserMessageState,
+  type DisplayedUserMessageState,
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
+import { parseAssistantDirectives } from "~/lib/codexDirectives";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
@@ -55,6 +58,7 @@ import {
   formatInlineTerminalContextLabel,
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
+import { CodeReviewComments } from "./CodeReviewComments";
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
@@ -180,6 +184,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         message: timelineEntry.message,
+        parsedAssistantDirectives:
+          timelineEntry.message.role === "assistant"
+            ? parseAssistantDirectives(timelineEntry.message.text)
+            : null,
         durationStart:
           durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt,
         showCompletionDivider:
@@ -358,6 +366,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           const userImages = row.message.attachments ?? [];
           const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
           const terminalContexts = displayedUserMessage.contexts;
+          const diffComments = displayedUserMessage.diffComments;
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           return (
             <div className="flex justify-end">
@@ -400,10 +409,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   </div>
                 )}
                 {(displayedUserMessage.visibleText.trim().length > 0 ||
-                  terminalContexts.length > 0) && (
+                  terminalContexts.length > 0 ||
+                  diffComments.length > 0) && (
                   <UserMessageBody
                     text={displayedUserMessage.visibleText}
                     terminalContexts={terminalContexts}
+                    diffComments={diffComments}
                   />
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
@@ -436,7 +447,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       {row.kind === "message" &&
         row.message.role === "assistant" &&
         (() => {
-          const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+          const parsedAssistantDirectives = row.parsedAssistantDirectives;
+          const reviewComments = parsedAssistantDirectives?.codeComments ?? [];
+          const hasReviewComments = reviewComments.length > 0;
+          const messageText =
+            parsedAssistantDirectives?.displayText ||
+            (row.message.streaming || hasReviewComments ? "" : "(empty response)");
           return (
             <>
               {row.showCompletionDivider && (
@@ -449,10 +465,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 </div>
               )}
               <div className="min-w-0 px-1 py-0.5">
-                <ChatMarkdown
-                  text={messageText}
-                  cwd={markdownCwd}
-                  isStreaming={Boolean(row.message.streaming)}
+                {messageText.trim().length > 0 ? (
+                  <ChatMarkdown
+                    text={messageText}
+                    cwd={markdownCwd}
+                    isStreaming={Boolean(row.message.streaming)}
+                  />
+                ) : null}
+                <CodeReviewComments
+                  comments={reviewComments}
+                  {...(workspaceRoot ? { workspaceRoot } : {})}
                 />
                 {(() => {
                   const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
@@ -613,6 +635,7 @@ type TimelineRow =
       id: string;
       createdAt: string;
       message: TimelineMessage;
+      parsedAssistantDirectives: ReturnType<typeof parseAssistantDirectives> | null;
       durationStart: string;
       showCompletionDivider: boolean;
     }
@@ -672,17 +695,45 @@ const UserMessageTerminalContextInlineLabel = memo(
   },
 );
 
+const UserMessageDiffCommentInlineLabel = memo(function UserMessageDiffCommentInlineLabel(props: {
+  comment: DisplayedUserMessageState["diffComments"][number];
+}) {
+  const tooltipText =
+    props.comment.body.length > 0
+      ? `${props.comment.header}\n${props.comment.body}`
+      : props.comment.header;
+
+  return <DiffCommentInlineChip label={props.comment.header} tooltipText={tooltipText} />;
+});
+
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
+  diffComments: DisplayedUserMessageState["diffComments"];
 }) {
+  const prefixNodes: ReactNode[] = [];
+
+  for (const comment of props.diffComments) {
+    prefixNodes.push(
+      <UserMessageDiffCommentInlineLabel
+        key={`user-diff-comment-inline:${comment.header}`}
+        comment={comment}
+      />,
+    );
+    prefixNodes.push(
+      <span key={`user-diff-comment-inline-space:${comment.header}`} aria-hidden="true">
+        {" "}
+      </span>,
+    );
+  }
+
   if (props.terminalContexts.length > 0) {
     const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
       props.text,
       props.terminalContexts,
     );
     const inlinePrefix = buildInlineTerminalContextText(props.terminalContexts);
-    const inlineNodes: ReactNode[] = [];
+    const inlineNodes: ReactNode[] = [...prefixNodes];
 
     if (hasEmbeddedInlineLabels) {
       let cursor = 0;
@@ -754,12 +805,13 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     );
   }
 
-  if (props.text.length === 0) {
+  if (props.text.length === 0 && prefixNodes.length === 0) {
     return null;
   }
 
   return (
     <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+      {prefixNodes}
       {props.text}
     </pre>
   );

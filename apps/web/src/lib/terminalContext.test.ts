@@ -1,6 +1,7 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
+import { appendDiffCommentsToPrompt } from "./diffCommentContext";
 import {
   appendTerminalContextsToPrompt,
   buildTerminalContextPreviewTitle,
@@ -122,6 +123,7 @@ describe("terminalContext", () => {
           body: "12 | git status\n13 | On branch main",
         },
       ],
+      diffComments: [],
     });
   });
 
@@ -131,6 +133,51 @@ describe("terminalContext", () => {
       contextCount: 0,
       previewTitle: null,
       contexts: [],
+    });
+  });
+
+  it("strips trailing diff comment blocks from displayed user messages", () => {
+    const promptWithTerminalContext = appendTerminalContextsToPrompt("Investigate this", [
+      makeContext(),
+    ]);
+    const prompt = appendDiffCommentsToPrompt(promptWithTerminalContext, [
+      {
+        filePath: "apps/web/src/components/DiffPanel.tsx",
+        lineStart: 12,
+        lineEnd: 12,
+        side: "additions",
+        body: "Check the null guard.",
+        excerpt: "12 | if (foo)",
+      },
+    ]);
+
+    expect(deriveDisplayedUserMessageState(prompt)).toEqual({
+      visibleText: "Investigate this",
+      copyText: prompt,
+      contextCount: 2,
+      previewTitle: [
+        "Terminal 1 lines 12-13",
+        "12 | git status",
+        "13 | On branch main",
+        "",
+        "apps/web/src/components/DiffPanel.tsx added line 12",
+        "Comment:",
+        "  Check the null guard.",
+        "Code:",
+        "  12 | if (foo)",
+      ].join("\n"),
+      contexts: [
+        {
+          header: "Terminal 1 lines 12-13",
+          body: "12 | git status\n13 | On branch main",
+        },
+      ],
+      diffComments: [
+        {
+          header: "apps/web/src/components/DiffPanel.tsx added line 12",
+          body: "Comment:\n  Check the null guard.\nCode:\n  12 | if (foo)",
+        },
+      ],
     });
   });
 

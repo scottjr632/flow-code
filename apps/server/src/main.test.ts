@@ -1,7 +1,6 @@
 import * as Http from "node:http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
-import type { OrchestrationReadModel } from "@t3tools/contracts";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,11 +10,9 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { beforeEach } from "vitest";
 import { NetService } from "@t3tools/shared/Net";
 
-import { CliConfig, recordStartupHeartbeat, t3Cli, type CliConfigShape } from "./main";
+import { CliConfig, t3Cli, type CliConfigShape } from "./main";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { Server, type ServerShape } from "./wsServer";
 import { ServerSettingsService } from "./serverSettings";
 
@@ -55,7 +52,6 @@ const testLayer = Layer.mergeAll(
     openInEditor: () => Effect.void,
   } satisfies OpenShape),
   ServerSettingsService.layerTest(),
-  AnalyticsService.layerTest,
   FetchHttpClient.layer,
   NodeServices.layer,
 );
@@ -343,43 +339,6 @@ it.layer(testLayer)("server CLI command", (it) => {
         assert.fail("Expected fixPath and start to be called");
       }
       assert.isTrue(fixPathOrder < startOrder);
-    }),
-  );
-
-  it.effect("records a startup heartbeat with thread/project counts", () =>
-    Effect.gen(function* () {
-      const recordTelemetry = vi.fn(
-        (_event: string, _properties?: Readonly<Record<string, unknown>>) => Effect.void,
-      );
-      const getSnapshot = vi.fn(() =>
-        Effect.succeed({
-          snapshotSequence: 2,
-          projects: [{} as OrchestrationReadModel["projects"][number]],
-          threads: [
-            {} as OrchestrationReadModel["threads"][number],
-            {} as OrchestrationReadModel["threads"][number],
-          ],
-          updatedAt: new Date(1).toISOString(),
-        } satisfies OrchestrationReadModel),
-      );
-
-      yield* recordStartupHeartbeat.pipe(
-        Effect.provideService(ProjectionSnapshotQuery, {
-          getSnapshot,
-        }),
-        Effect.provideService(AnalyticsService, {
-          record: recordTelemetry,
-          flush: Effect.void,
-        }),
-      );
-
-      assert.deepEqual(recordTelemetry.mock.calls[0], [
-        "server.boot.heartbeat",
-        {
-          threadCount: 2,
-          projectCount: 1,
-        },
-      ]);
     }),
   );
 

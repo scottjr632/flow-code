@@ -81,6 +81,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const TURN_REVIEW_VCS_LABELS = {
+  auto: "Auto",
+  git: "Git",
+  jj: "Jujutsu",
+} as const;
+
 const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 
 type InstallProviderSettings = {
@@ -462,6 +468,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
+      ...(settings.turnReviewVcs !== DEFAULT_UNIFIED_SETTINGS.turnReviewVcs
+        ? ["Turn review VCS"]
+        : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -486,6 +495,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.timestampFormat,
+      settings.turnReviewVcs,
       theme,
     ],
   );
@@ -834,6 +844,48 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
               aria-label="Wrap diff lines by default"
             />
+          }
+        />
+
+        <SettingsRow
+          title="Turn review VCS"
+          description="Choose the backend used for turn diffs and checkpoint reverts. Git branch and PR actions stay Git-only."
+          resetAction={
+            settings.turnReviewVcs !== DEFAULT_UNIFIED_SETTINGS.turnReviewVcs ? (
+              <SettingResetButton
+                label="turn review VCS"
+                onClick={() =>
+                  updateSettings({
+                    turnReviewVcs: DEFAULT_UNIFIED_SETTINGS.turnReviewVcs,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.turnReviewVcs}
+              onValueChange={(value) => {
+                if (value === "auto" || value === "git" || value === "jj") {
+                  updateSettings({ turnReviewVcs: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Turn review VCS backend">
+                <SelectValue>{TURN_REVIEW_VCS_LABELS[settings.turnReviewVcs]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="auto">
+                  {TURN_REVIEW_VCS_LABELS.auto}
+                </SelectItem>
+                <SelectItem hideIndicator value="git">
+                  {TURN_REVIEW_VCS_LABELS.git}
+                </SelectItem>
+                <SelectItem hideIndicator value="jj">
+                  {TURN_REVIEW_VCS_LABELS.jj}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 

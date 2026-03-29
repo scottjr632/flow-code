@@ -1,4 +1,4 @@
-import { parsePatchFiles } from "@pierre/diffs";
+import { parsePatchFiles, type SelectedLineRange } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
@@ -9,6 +9,7 @@ import {
   Columns2Icon,
   Rows3Icon,
   TextWrapIcon,
+  XIcon,
 } from "lucide-react";
 import {
   type WheelEvent as ReactWheelEvent,
@@ -19,7 +20,6 @@ import {
   useState,
 } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
-import { gitBranchesQueryOptions } from "~/lib/gitReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
@@ -32,7 +32,16 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
+import { useComposerDraftStore } from "../composerDraftStore";
+import {
+  formatDiffCommentLabel,
+  type DiffCommentDraft,
+  type DiffCommentSide,
+} from "../lib/diffCommentContext";
+import { randomUUID } from "../lib/utils";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { Button } from "./ui/button";
+import { Textarea } from "./ui/textarea";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
@@ -157,6 +166,102 @@ function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
 }
 
+interface DraftDiffCommentSelection {
+  fileKey: string;
+  filePath: string;
+  lineStart: number;
+  lineEnd: number;
+  side: DiffCommentSide;
+  excerpt: string;
+}
+
+interface InlineDiffCommentAnnotationMetadata {
+  kind: "draft-form";
+  selection: DraftDiffCommentSelection;
+}
+
+function formatCommentSelectionSummary(selection: {
+  filePath: string;
+  lineStart: number;
+  lineEnd: number;
+  side: DiffCommentSide;
+}): string {
+  return formatDiffCommentLabel(selection);
+}
+
+function buildDiffLineExcerpt(
+  fileDiff: FileDiffMetadata,
+  side: DiffCommentSide,
+  lineStart: number,
+  lineEnd: number,
+): string {
+  const lineLookup = new Map<number, string>();
+
+  for (const hunk of fileDiff.hunks) {
+    for (const segment of hunk.hunkContent) {
+      if (segment.type === "context") {
+        const contextStart = side === "deletions" ? hunk.deletionStart : hunk.additionStart;
+        const segmentOffset =
+          (side === "deletions" ? segment.deletionLineIndex : segment.additionLineIndex) -
+          (side === "deletions" ? hunk.deletionLineIndex : hunk.additionLineIndex);
+        const segmentStartLine = contextStart + segmentOffset;
+        const sourceLines = side === "deletions" ? fileDiff.deletionLines : fileDiff.additionLines;
+        const sourceIndex =
+          side === "deletions" ? segment.deletionLineIndex : segment.additionLineIndex;
+        for (let index = 0; index < segment.lines; index += 1) {
+          lineLookup.set(segmentStartLine + index, sourceLines[sourceIndex + index] ?? "");
+        }
+        continue;
+      }
+
+      const sourceCount = side === "deletions" ? segment.deletions : segment.additions;
+      if (sourceCount === 0) {
+        continue;
+      }
+      const sourceStartLine = side === "deletions" ? hunk.deletionStart : hunk.additionStart;
+      const sourceIndex =
+        side === "deletions" ? segment.deletionLineIndex : segment.additionLineIndex;
+      const hunkBaseIndex = side === "deletions" ? hunk.deletionLineIndex : hunk.additionLineIndex;
+      const segmentStartLine = sourceStartLine + (sourceIndex - hunkBaseIndex);
+      const sourceLines = side === "deletions" ? fileDiff.deletionLines : fileDiff.additionLines;
+      for (let index = 0; index < sourceCount; index += 1) {
+        lineLookup.set(segmentStartLine + index, sourceLines[sourceIndex + index] ?? "");
+      }
+    }
+  }
+
+  const excerptLines: string[] = [];
+  for (let lineNumber = lineStart; lineNumber <= lineEnd; lineNumber += 1) {
+    if (!lineLookup.has(lineNumber)) {
+      continue;
+    }
+    excerptLines.push(`${lineNumber} | ${lineLookup.get(lineNumber) ?? ""}`);
+  }
+  return excerptLines.join("\n");
+}
+
+function buildCommentSelectionFromRange(
+  fileDiff: FileDiffMetadata,
+  fileKey: string,
+  range: SelectedLineRange,
+): DraftDiffCommentSelection | null {
+  const side = (range.side ?? range.endSide ?? "additions") as DiffCommentSide;
+  const lineStart = Math.max(1, Math.min(range.start, range.end));
+  const lineEnd = Math.max(lineStart, Math.max(range.start, range.end));
+  const excerpt = buildDiffLineExcerpt(fileDiff, side, lineStart, lineEnd).trim();
+  if (excerpt.length === 0) {
+    return null;
+  }
+  return {
+    fileKey,
+    filePath: resolveFileDiffPath(fileDiff),
+    lineStart,
+    lineEnd,
+    side,
+    excerpt,
+  };
+}
+
 interface DiffPanelProps {
   mode?: DiffPanelMode;
 }
@@ -169,6 +274,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const settings = useSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
+  const [selectedRangesByFileKey, setSelectedRangesByFileKey] = useState<
+    Record<string, SelectedLineRange | null>
+  >({});
+  const [activeCommentSelection, setActiveCommentSelection] =
+    useState<DraftDiffCommentSelection | null>(null);
+  const [activeCommentBody, setActiveCommentBody] = useState("");
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const previousDiffOpenRef = useRef(false);
@@ -181,6 +292,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = routeThreadId;
+  const addComposerDiffComment = useComposerDraftStore((store) => store.addDiffComment);
   const activeThread = useStore((store) =>
     activeThreadId ? store.threads.find((thread) => thread.id === activeThreadId) : undefined,
   );
@@ -189,8 +301,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     activeProjectId ? store.projects.find((project) => project.id === activeProjectId) : undefined,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
-  const gitBranchesQuery = useQuery(gitBranchesQueryOptions(activeCwd ?? null));
-  const isGitRepo = gitBranchesQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
@@ -266,7 +376,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,
-      enabled: isGitRepo,
+      enabled: true,
     }),
   );
   const selectedTurnCheckpointDiff = selectedTurn
@@ -330,6 +440,63 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     },
     [activeCwd],
   );
+
+  const clearCommentComposer = useCallback(
+    (fileKey?: string) => {
+      const targetFileKey = fileKey ?? activeCommentSelection?.fileKey ?? null;
+      if (targetFileKey) {
+        setSelectedRangesByFileKey((currentRanges) => ({
+          ...currentRanges,
+          [targetFileKey]: null,
+        }));
+      }
+      setActiveCommentSelection(null);
+      setActiveCommentBody("");
+    },
+    [activeCommentSelection],
+  );
+
+  const openCommentComposer = useCallback((selection: DraftDiffCommentSelection | null) => {
+    if (!selection) {
+      return;
+    }
+    setActiveCommentSelection(selection);
+    setActiveCommentBody("");
+  }, []);
+
+  const addSelectedCommentToDraft = useCallback(() => {
+    if (!activeThreadId || !activeCommentSelection) {
+      return;
+    }
+    const body = activeCommentBody.trim();
+    if (body.length === 0) {
+      return;
+    }
+    addComposerDiffComment(activeThreadId, {
+      id: randomUUID(),
+      threadId: activeThreadId,
+      filePath: activeCommentSelection.filePath,
+      lineStart: activeCommentSelection.lineStart,
+      lineEnd: activeCommentSelection.lineEnd,
+      side: activeCommentSelection.side,
+      body,
+      excerpt: activeCommentSelection.excerpt,
+      createdAt: new Date().toISOString(),
+    } satisfies DiffCommentDraft);
+    clearCommentComposer(activeCommentSelection.fileKey);
+  }, [
+    activeCommentBody,
+    activeCommentSelection,
+    activeThreadId,
+    addComposerDiffComment,
+    clearCommentComposer,
+  ]);
+
+  useEffect(() => {
+    setSelectedRangesByFileKey({});
+    setActiveCommentSelection(null);
+    setActiveCommentBody("");
+  }, [selectedTurnId, renderablePatch]);
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
@@ -548,10 +715,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
-      ) : !isGitRepo ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          Turn diffs are unavailable because this project is not a git repository.
-        </div>
       ) : orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
@@ -591,6 +754,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   const filePath = resolveFileDiffPath(fileDiff);
                   const fileKey = buildFileDiffRenderKey(fileDiff);
                   const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                  const selectedRange = selectedRangesByFileKey[fileKey] ?? null;
+                  const isCommentComposerOpen = activeCommentSelection?.fileKey === fileKey;
                   return (
                     <div
                       key={themedFileKey}
@@ -607,15 +772,98 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                         openDiffFileInEditor(filePath);
                       }}
                     >
-                      <FileDiff
+                      <FileDiff<InlineDiffCommentAnnotationMetadata>
                         fileDiff={fileDiff}
+                        lineAnnotations={
+                          isCommentComposerOpen && activeCommentSelection
+                            ? [
+                                {
+                                  side: activeCommentSelection.side,
+                                  lineNumber: activeCommentSelection.lineEnd,
+                                  metadata: {
+                                    kind: "draft-form",
+                                    selection: activeCommentSelection,
+                                  },
+                                },
+                              ]
+                            : []
+                        }
                         options={{
                           diffStyle: diffRenderMode === "split" ? "split" : "unified",
                           lineDiffType: "none",
+                          enableGutterUtility: true,
+                          enableLineSelection: true,
                           overflow: diffWordWrap ? "wrap" : "scroll",
                           theme: resolveDiffThemeName(resolvedTheme),
                           themeType: resolvedTheme as DiffThemeType,
                           unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
+                          onGutterUtilityClick: (range) => {
+                            openCommentComposer(
+                              buildCommentSelectionFromRange(fileDiff, fileKey, range),
+                            );
+                          },
+                          onLineSelected: (range) => {
+                            setSelectedRangesByFileKey((currentRanges) => ({
+                              ...currentRanges,
+                              [fileKey]: range,
+                            }));
+                            if (!range && activeCommentSelection?.fileKey === fileKey) {
+                              clearCommentComposer(fileKey);
+                            }
+                          },
+                        }}
+                        selectedLines={selectedRange}
+                        renderAnnotation={(annotation) => {
+                          if (annotation.metadata?.kind !== "draft-form") {
+                            return null;
+                          }
+                          return (
+                            <div className="mx-4 my-2 rounded-xl border border-border/70 bg-card/95 p-3 shadow-sm">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="space-y-1">
+                                  <p className="text-xs font-medium text-foreground">
+                                    Add review comment
+                                  </p>
+                                  <p className="text-[11px] text-muted-foreground/75">
+                                    {formatCommentSelectionSummary(annotation.metadata.selection)}
+                                  </p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  onClick={() => clearCommentComposer(fileKey)}
+                                  aria-label="Cancel diff comment"
+                                >
+                                  <XIcon className="size-3.5" />
+                                </Button>
+                              </div>
+                              <Textarea
+                                className="mt-3 min-h-24 font-mono text-sm"
+                                value={activeCommentBody}
+                                onChange={(event) => setActiveCommentBody(event.target.value)}
+                                placeholder="Explain what needs attention in this change."
+                              />
+                              <div className="mt-2 flex justify-end gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => clearCommentComposer(fileKey)}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={activeCommentBody.trim().length === 0}
+                                  onClick={addSelectedCommentToDraft}
+                                >
+                                  Comment
+                                </Button>
+                              </div>
+                            </div>
+                          );
                         }}
                       />
                     </div>

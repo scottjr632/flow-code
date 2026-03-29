@@ -20,7 +20,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
-import { isGitRepository } from "../../git/Utils.ts";
+import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   ProviderRuntimeIngestionService,
@@ -503,6 +503,7 @@ function runtimeEventToActivities(
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
+  const checkpointStore = yield* CheckpointStore;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
 
@@ -524,7 +525,7 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
 
-  const isGitRepoForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
+  const supportsCheckpointingForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
     if (!thread) {
@@ -537,7 +538,7 @@ const make = Effect.gen(function* () {
     if (!workspaceCwd) {
       return false;
     }
-    return isGitRepository(workspaceCwd);
+    return yield* checkpointStore.supportsCheckpoints(workspaceCwd);
   });
 
   const rememberAssistantMessageId = (threadId: ThreadId, turnId: TurnId, messageId: MessageId) =>
@@ -1182,7 +1183,7 @@ const make = Effect.gen(function* () {
 
       if (event.type === "turn.diff.updated") {
         const turnId = toTurnId(event.turnId);
-        if (turnId && (yield* isGitRepoForThread(thread.id))) {
+        if (turnId && (yield* supportsCheckpointingForThread(thread.id))) {
           // Skip if a checkpoint already exists for this turn. A real
           // (non-placeholder) capture from CheckpointReactor should not
           // be clobbered, and dispatching a duplicate placeholder for the

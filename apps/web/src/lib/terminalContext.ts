@@ -1,4 +1,5 @@
 import { type ThreadId } from "@t3tools/contracts";
+import { extractTrailingDiffComments, type ParsedDiffCommentEntry } from "./diffCommentContext";
 
 export interface TerminalContextSelection {
   terminalId: string;
@@ -27,6 +28,7 @@ export interface DisplayedUserMessageState {
   contextCount: number;
   previewTitle: string | null;
   contexts: ParsedTerminalContextEntry[];
+  diffComments: ParsedDiffCommentEntry[];
 }
 
 export interface ParsedTerminalContextEntry {
@@ -235,13 +237,31 @@ export function extractTrailingTerminalContexts(prompt: string): ExtractedTermin
 }
 
 export function deriveDisplayedUserMessageState(prompt: string): DisplayedUserMessageState {
-  const extractedContexts = extractTrailingTerminalContexts(prompt);
+  const extractedDiffComments = extractTrailingDiffComments(prompt);
+  const extractedContexts = extractTrailingTerminalContexts(extractedDiffComments.promptText);
+  const previewSections = [
+    ...(extractedContexts.contexts.length > 0
+      ? [
+          extractedContexts.contexts
+            .map(({ header, body }) => (body.length > 0 ? `${header}\n${body}` : header))
+            .join("\n\n"),
+        ]
+      : []),
+    ...(extractedDiffComments.comments.length > 0
+      ? [
+          extractedDiffComments.comments
+            .map(({ header, body }) => (body.length > 0 ? `${header}\n${body}` : header))
+            .join("\n\n"),
+        ]
+      : []),
+  ].filter((section) => section.length > 0);
   return {
     visibleText: extractedContexts.promptText,
     copyText: prompt,
-    contextCount: extractedContexts.contextCount,
-    previewTitle: extractedContexts.previewTitle,
+    contextCount: extractedContexts.contextCount + extractedDiffComments.comments.length,
+    previewTitle: previewSections.length > 0 ? previewSections.join("\n\n") : null,
     contexts: extractedContexts.contexts,
+    diffComments: extractedDiffComments.comments,
   };
 }
 

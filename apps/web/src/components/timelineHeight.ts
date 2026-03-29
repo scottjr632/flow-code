@@ -1,4 +1,6 @@
 import { deriveDisplayedUserMessageState } from "../lib/terminalContext";
+import { parseAssistantDirectives, type CodeCommentDirective } from "../lib/codexDirectives";
+import { buildInlineDiffCommentText } from "./chat/userMessageDiffComments";
 import { buildInlineTerminalContextText } from "./chat/userMessageTerminalContexts";
 
 const ASSISTANT_CHARS_PER_LINE_FALLBACK = 72;
@@ -16,6 +18,8 @@ const USER_MONO_AVG_CHAR_WIDTH_PX = 8.4;
 const ASSISTANT_AVG_CHAR_WIDTH_PX = 7.2;
 const MIN_USER_CHARS_PER_LINE = 4;
 const MIN_ASSISTANT_CHARS_PER_LINE = 20;
+const REVIEW_COMMENT_HEADER_HEIGHT_PX = 36;
+const REVIEW_COMMENT_CARD_BASE_HEIGHT_PX = 68;
 
 interface TimelineMessageHeightInput {
   role: "user" | "assistant" | "system";
@@ -66,22 +70,58 @@ function estimateCharsPerLineForAssistant(timelineWidthPx: number | null): numbe
   );
 }
 
+function estimateReviewCommentsHeight(
+  reviewComments: ReadonlyArray<CodeCommentDirective>,
+  charsPerLine: number,
+): number {
+  if (reviewComments.length === 0) {
+    return 0;
+  }
+
+  return (
+    REVIEW_COMMENT_HEADER_HEIGHT_PX +
+    reviewComments.reduce((totalHeight, reviewComment) => {
+      const titleLines = estimateWrappedLineCount(reviewComment.title, charsPerLine);
+      const bodyLines = estimateWrappedLineCount(reviewComment.body, charsPerLine);
+      const fileLabel = reviewComment.start
+        ? `${reviewComment.file}:${reviewComment.start}`
+        : reviewComment.file;
+      const fileLines = estimateWrappedLineCount(fileLabel, charsPerLine);
+      return (
+        totalHeight +
+        REVIEW_COMMENT_CARD_BASE_HEIGHT_PX +
+        (titleLines + bodyLines) * LINE_HEIGHT_PX +
+        fileLines * 16
+      );
+    }, 0)
+  );
+}
+
 export function estimateTimelineMessageHeight(
   message: TimelineMessageHeightInput,
   layout: TimelineHeightEstimateLayout = { timelineWidthPx: null },
 ): number {
   if (message.role === "assistant") {
     const charsPerLine = estimateCharsPerLineForAssistant(layout.timelineWidthPx);
-    const estimatedLines = estimateWrappedLineCount(message.text, charsPerLine);
-    return ASSISTANT_BASE_HEIGHT_PX + estimatedLines * LINE_HEIGHT_PX;
+    const parsedAssistantDirectives = parseAssistantDirectives(message.text);
+    const estimatedLines = estimateWrappedLineCount(
+      parsedAssistantDirectives.displayText,
+      charsPerLine,
+    );
+    return (
+      ASSISTANT_BASE_HEIGHT_PX +
+      estimatedLines * LINE_HEIGHT_PX +
+      estimateReviewCommentsHeight(parsedAssistantDirectives.codeComments, charsPerLine)
+    );
   }
 
   if (message.role === "user") {
     const charsPerLine = estimateCharsPerLineForUser(layout.timelineWidthPx);
     const displayedUserMessage = deriveDisplayedUserMessageState(message.text);
     const renderedText =
-      displayedUserMessage.contexts.length > 0
+      displayedUserMessage.contexts.length > 0 || displayedUserMessage.diffComments.length > 0
         ? [
+            buildInlineDiffCommentText(displayedUserMessage.diffComments),
             buildInlineTerminalContextText(displayedUserMessage.contexts),
             displayedUserMessage.visibleText,
           ]
