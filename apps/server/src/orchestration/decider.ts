@@ -2,17 +2,22 @@ import type {
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
+  OrchestrationWorkspace,
+  WorkspaceId,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
+  findWorkspaceByProjectAndWorktreePath,
   requireProject,
   requireProjectAbsent,
   requireThread,
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
+  requireWorkspace,
+  requireWorkspaceAbsent,
 } from "./commandInvariants.ts";
 
 const nowIso = () => new Date().toISOString();
@@ -45,6 +50,29 @@ function withEventBase(
     correlationId: input.commandId,
     metadata: input.metadata ?? {},
   };
+}
+
+function invariantError(commandType: string, detail: string): OrchestrationCommandInvariantError {
+  return new OrchestrationCommandInvariantError({ commandType, detail });
+}
+
+function deriveWorkspaceTitle(input: {
+  readonly branch: string | null;
+  readonly worktreePath: string;
+}) {
+  if (input.branch) {
+    return input.branch;
+  }
+  const normalizedPath = input.worktreePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const segments = normalizedPath.split("/").filter((segment) => segment.length > 0);
+  return segments.at(-1) ?? input.worktreePath;
+}
+
+function resolveWorkspaceBranch(
+  workspace: OrchestrationWorkspace,
+  branch: string | null | undefined,
+): string | null {
+  return branch === undefined ? workspace.branch : branch;
 }
 
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
@@ -135,6 +163,113 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "workspace.create": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      yield* requireWorkspaceAbsent({
+        readModel,
+        command,
+        workspaceId: command.workspaceId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "workspace",
+          aggregateId: command.workspaceId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "workspace.created",
+        payload: {
+          workspaceId: command.workspaceId,
+          projectId: command.projectId,
+          title: command.title,
+          branch: command.branch,
+          worktreePath: command.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "workspace.meta.update": {
+      yield* requireWorkspace({
+        readModel,
+        command,
+        workspaceId: command.workspaceId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "workspace",
+          aggregateId: command.workspaceId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "workspace.meta-updated",
+        payload: {
+          workspaceId: command.workspaceId,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.branch !== undefined ? { branch: command.branch } : {}),
+          ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "workspace.delete": {
+      yield* requireWorkspace({
+        readModel,
+        command,
+        workspaceId: command.workspaceId,
+      });
+      const occurredAt = nowIso();
+      const detachEvents = readModel.threads
+        .filter((thread) => thread.deletedAt === null && thread.workspaceId === command.workspaceId)
+        .map((thread) => {
+          const eventBase = withEventBase({
+            aggregateKind: "thread" as const,
+            aggregateId: thread.id,
+            occurredAt,
+            commandId: command.commandId,
+          });
+          return {
+            eventId: eventBase.eventId,
+            aggregateKind: eventBase.aggregateKind,
+            aggregateId: eventBase.aggregateId,
+            occurredAt: eventBase.occurredAt,
+            commandId: eventBase.commandId,
+            causationEventId: eventBase.causationEventId,
+            correlationId: eventBase.correlationId,
+            metadata: eventBase.metadata,
+            type: "thread.meta-updated" as const,
+            payload: {
+              threadId: thread.id,
+              workspaceId: null,
+              updatedAt: occurredAt,
+            },
+          };
+        });
+      return [
+        {
+          ...withEventBase({
+            aggregateKind: "workspace",
+            aggregateId: command.workspaceId,
+            occurredAt,
+            commandId: command.commandId,
+          }),
+          type: "workspace.deleted",
+          payload: {
+            workspaceId: command.workspaceId,
+            deletedAt: occurredAt,
+          },
+        },
+        ...detachEvents,
+      ];
+    }
+
     case "thread.create": {
       yield* requireProject({
         readModel,
@@ -146,7 +281,80 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      return {
+      let workspaceId: WorkspaceId | null = null;
+      let branch = command.branch;
+      let worktreePath = command.worktreePath;
+      const events: Array<Omit<OrchestrationEvent, "sequence">> = [];
+
+      if (command.workspaceId !== undefined && command.workspaceId !== null) {
+        const workspace = yield* requireWorkspace({
+          readModel,
+          command,
+          workspaceId: command.workspaceId,
+        });
+        if (workspace.projectId !== command.projectId) {
+          return yield* invariantError(
+            command.type,
+            `Workspace '${command.workspaceId}' does not belong to project '${command.projectId}'.`,
+          );
+        }
+        if (worktreePath !== null && worktreePath !== workspace.worktreePath) {
+          return yield* invariantError(
+            command.type,
+            `Workspace '${command.workspaceId}' path does not match thread worktree path.`,
+          );
+        }
+        workspaceId = workspace.id;
+        branch = resolveWorkspaceBranch(workspace, branch);
+        worktreePath = workspace.worktreePath;
+      } else if (worktreePath !== null) {
+        const existingWorkspace = findWorkspaceByProjectAndWorktreePath(
+          readModel,
+          command.projectId,
+          worktreePath,
+        );
+        if (existingWorkspace) {
+          workspaceId = existingWorkspace.id;
+          if (branch !== undefined && branch !== existingWorkspace.branch) {
+            events.push({
+              ...withEventBase({
+                aggregateKind: "workspace",
+                aggregateId: existingWorkspace.id,
+                occurredAt: command.createdAt,
+                commandId: command.commandId,
+              }),
+              type: "workspace.meta-updated",
+              payload: {
+                workspaceId: existingWorkspace.id,
+                branch,
+                updatedAt: command.createdAt,
+              },
+            });
+          }
+        } else {
+          workspaceId = crypto.randomUUID() as WorkspaceId;
+          events.push({
+            ...withEventBase({
+              aggregateKind: "workspace",
+              aggregateId: workspaceId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            }),
+            type: "workspace.created",
+            payload: {
+              workspaceId,
+              projectId: command.projectId,
+              title: deriveWorkspaceTitle({ branch, worktreePath }),
+              branch,
+              worktreePath,
+              createdAt: command.createdAt,
+              updatedAt: command.createdAt,
+            },
+          });
+        }
+      }
+
+      events.push({
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -157,16 +365,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          workspaceId,
           title: command.title,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,
-          branch: command.branch,
-          worktreePath: command.worktreePath,
+          branch,
+          worktreePath,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
-      };
+      });
+      return events.length === 1 ? events[0]! : events;
     }
 
     case "thread.delete": {
@@ -237,13 +447,93 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.meta.update": {
-      yield* requireThread({
+      const existingThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
-      return {
+      let workspaceId = existingThread.workspaceId;
+      let branch = command.branch;
+      let worktreePath = command.worktreePath;
+      const events: Array<Omit<OrchestrationEvent, "sequence">> = [];
+
+      if (command.workspaceId === null || command.worktreePath === null) {
+        workspaceId = null;
+      } else if (command.workspaceId !== undefined) {
+        const workspace =
+          command.workspaceId === null
+            ? null
+            : yield* requireWorkspace({
+                readModel,
+                command,
+                workspaceId: command.workspaceId,
+              });
+        if (workspace) {
+          if (workspace.projectId !== existingThread.projectId) {
+            return yield* invariantError(
+              command.type,
+              `Workspace '${command.workspaceId}' does not belong to thread project '${existingThread.projectId}'.`,
+            );
+          }
+          if (worktreePath !== undefined && worktreePath !== workspace.worktreePath) {
+            return yield* invariantError(
+              command.type,
+              `Workspace '${command.workspaceId}' path does not match thread worktree path.`,
+            );
+          }
+          workspaceId = workspace.id;
+          branch = resolveWorkspaceBranch(workspace, branch);
+          worktreePath = workspace.worktreePath;
+        }
+      } else if (worktreePath !== undefined && worktreePath !== null) {
+        const existingWorkspace = findWorkspaceByProjectAndWorktreePath(
+          readModel,
+          existingThread.projectId,
+          worktreePath,
+        );
+        if (existingWorkspace) {
+          workspaceId = existingWorkspace.id;
+          if (branch !== undefined && branch !== existingWorkspace.branch) {
+            events.push({
+              ...withEventBase({
+                aggregateKind: "workspace",
+                aggregateId: existingWorkspace.id,
+                occurredAt,
+                commandId: command.commandId,
+              }),
+              type: "workspace.meta-updated",
+              payload: {
+                workspaceId: existingWorkspace.id,
+                branch,
+                updatedAt: occurredAt,
+              },
+            });
+          }
+        } else {
+          workspaceId = crypto.randomUUID() as WorkspaceId;
+          events.push({
+            ...withEventBase({
+              aggregateKind: "workspace",
+              aggregateId: workspaceId,
+              occurredAt,
+              commandId: command.commandId,
+            }),
+            type: "workspace.created",
+            payload: {
+              workspaceId,
+              projectId: existingThread.projectId,
+              title: deriveWorkspaceTitle({ branch: branch ?? null, worktreePath }),
+              branch: branch ?? null,
+              worktreePath,
+              createdAt: occurredAt,
+              updatedAt: occurredAt,
+            },
+          });
+        }
+      }
+
+      events.push({
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -257,11 +547,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
             : {}),
-          ...(command.branch !== undefined ? { branch: command.branch } : {}),
-          ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.workspaceId !== undefined || command.worktreePath !== undefined
+            ? { workspaceId }
+            : {}),
+          ...(branch !== undefined ? { branch } : {}),
+          ...(worktreePath !== undefined ? { worktreePath } : {}),
           updatedAt: occurredAt,
         },
-      };
+      });
+      return events.length === 1 ? events[0]! : events;
     }
 
     case "thread.runtime-mode.set": {

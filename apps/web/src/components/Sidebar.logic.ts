@@ -1,5 +1,5 @@
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import type { Thread } from "../types";
+import type { Thread, Workspace } from "../types";
 import { cn } from "../lib/utils";
 import {
   findLatestProposedPlan,
@@ -16,6 +16,7 @@ type SidebarProject = {
   updatedAt?: string | undefined;
 };
 type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt" | "messages">;
+type SidebarWorkspaceInput = Pick<Workspace, "id" | "name" | "branch" | "worktreePath">;
 
 export type ThreadTraversalDirection = "previous" | "next";
 
@@ -278,6 +279,61 @@ export function getVisibleThreadsForProject(input: {
     hasHiddenThreads: true,
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
   };
+}
+
+export interface SidebarWorkspaceSection<
+  TThread extends Pick<Thread, "id" | "workspaceId">,
+  TWorkspace extends SidebarWorkspaceInput,
+> {
+  key: string;
+  workspace: TWorkspace | null;
+  threads: TThread[];
+}
+
+export function groupThreadsForSidebarProject<
+  TThread extends Pick<Thread, "id" | "workspaceId">,
+  TWorkspace extends SidebarWorkspaceInput,
+>(
+  threads: readonly TThread[],
+  workspaces: readonly TWorkspace[],
+): SidebarWorkspaceSection<TThread, TWorkspace>[] {
+  const sections: SidebarWorkspaceSection<TThread, TWorkspace>[] = [];
+  const sectionByKey = new Map<string, SidebarWorkspaceSection<TThread, TWorkspace>>();
+  const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace] as const));
+
+  for (const thread of threads) {
+    const workspace = thread.workspaceId ? (workspaceById.get(thread.workspaceId) ?? null) : null;
+    const key = workspace ? `workspace:${workspace.id}` : "workspace:local";
+    const existing = sectionByKey.get(key);
+    if (existing) {
+      existing.threads.push(thread);
+      continue;
+    }
+
+    const section: SidebarWorkspaceSection<TThread, TWorkspace> = {
+      key,
+      workspace,
+      threads: [thread],
+    };
+    sectionByKey.set(key, section);
+    sections.push(section);
+  }
+
+  return sections;
+}
+
+function basenameOfWorkspacePath(worktreePath: string): string {
+  const normalized = worktreePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const segments = normalized.split("/").filter((segment) => segment.length > 0);
+  return segments.at(-1) ?? worktreePath;
+}
+
+export function deriveDefaultWorkspaceTitle(workspace: SidebarWorkspaceInput): string {
+  return workspace.branch ?? basenameOfWorkspacePath(workspace.worktreePath);
+}
+
+export function isWorkspaceTitleCustomized(workspace: SidebarWorkspaceInput): boolean {
+  return workspace.name !== deriveDefaultWorkspaceTitle(workspace);
 }
 
 function toSortableTimestamp(iso: string | undefined): number | null {

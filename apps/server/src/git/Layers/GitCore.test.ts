@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
@@ -20,6 +21,8 @@ const GitCoreTestLayer = GitCoreLive.pipe(
   Layer.provide(NodeServices.layer),
 );
 const TestLayer = Layer.mergeAll(NodeServices.layer, GitCoreTestLayer);
+const hasJjCli = spawnSync("jj", ["--version"], { stdio: "ignore" }).status === 0;
+const describeJj = hasJjCli ? describe : describe.skip;
 
 function makeTmpDir(
   prefix = "git-test-",
@@ -962,6 +965,79 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect(
+      "creates a worktree from the remote base branch when the local base branch is missing",
+      () =>
+        Effect.gen(function* () {
+          const remote = yield* makeTmpDir();
+          const source = yield* makeTmpDir();
+          yield* git(remote, ["init", "--bare"]);
+
+          yield* initRepoWithCommit(source);
+          const initialBranch = (yield* (yield* GitCore).listBranches({
+            cwd: source,
+          })).branches.find((branch) => branch.current)!.name;
+          yield* git(source, ["remote", "add", "origin", remote]);
+          yield* git(source, ["push", "-u", "origin", initialBranch]);
+          yield* git(source, ["checkout", "-b", "feature/worktree-seed"]);
+          yield* git(source, ["branch", "-D", initialBranch]);
+
+          const wtPath = path.join(source, "wt-remote-default");
+          const result = yield* (yield* GitCore).createWorktree({
+            cwd: source,
+            branch: initialBranch,
+            newBranch: "wt-remote-default",
+            path: wtPath,
+          });
+
+          expect(result.worktree.path).toBe(wtPath);
+          expect(result.worktree.branch).toBe("wt-remote-default");
+          expect(existsSync(path.join(wtPath, "README.md"))).toBe(true);
+          const branchOutput = yield* git(wtPath, ["branch", "--show-current"]);
+          expect(branchOutput).toBe("wt-remote-default");
+
+          yield* (yield* GitCore).removeWorktree({ cwd: source, path: wtPath });
+        }),
+    );
+
+    it.effect(
+      "falls back to the remote advertised default branch when the requested main branch is missing",
+      () =>
+        Effect.gen(function* () {
+          const remote = yield* makeTmpDir();
+          const source = yield* makeTmpDir();
+          yield* git(remote, ["init", "--bare"]);
+
+          yield* git(source, ["init", "--initial-branch=master"]);
+          yield* git(source, ["config", "user.email", "test@test.com"]);
+          yield* git(source, ["config", "user.name", "Test"]);
+          yield* writeTextFile(path.join(source, "README.md"), "# test\n");
+          yield* git(source, ["add", "."]);
+          yield* git(source, ["commit", "-m", "initial commit"]);
+          yield* git(source, ["remote", "add", "origin", remote]);
+          yield* git(source, ["push", "-u", "origin", "master"]);
+          yield* git(source, ["remote", "set-head", "origin", "master"]);
+          yield* git(source, ["checkout", "-b", "feature/worktree-seed"]);
+          yield* git(source, ["branch", "-D", "master"]);
+
+          const wtPath = path.join(source, "wt-remote-head-default");
+          const result = yield* (yield* GitCore).createWorktree({
+            cwd: source,
+            branch: "main",
+            newBranch: "wt-remote-head-default",
+            path: wtPath,
+          });
+
+          expect(result.worktree.path).toBe(wtPath);
+          expect(result.worktree.branch).toBe("wt-remote-head-default");
+          expect(existsSync(path.join(wtPath, "README.md"))).toBe(true);
+          const branchOutput = yield* git(wtPath, ["branch", "--show-current"]);
+          expect(branchOutput).toBe("wt-remote-head-default");
+
+          yield* (yield* GitCore).removeWorktree({ cwd: source, path: wtPath });
+        }),
+    );
+
     it.effect("throws when new branch name already exists", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
@@ -1067,6 +1143,53 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(existsSync(wtPath)).toBe(true);
 
         yield* (yield* GitCore).removeWorktree({ cwd: tmp, path: wtPath, force: true });
+        expect(existsSync(wtPath)).toBe(false);
+      }),
+    );
+  });
+
+  describeJj("jj workspaces", () => {
+    it.effect("creates and removes a workspace in a colocated jj repo with no git HEAD", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* runShellCommand({
+          cwd: tmp,
+          command: "jj git init repo",
+        }).pipe(Effect.orDie);
+
+        const repoDir = path.join(tmp, "repo");
+        yield* writeTextFile(path.join(repoDir, "README.md"), "# test\n");
+        yield* runShellCommand({
+          cwd: repoDir,
+          command:
+            "jj file track README.md && jj commit -m init && git update-ref -d refs/heads/main",
+        }).pipe(Effect.orDie);
+        yield* runShellCommand({
+          cwd: repoDir,
+          command: "dd if=/dev/zero of=big.bin bs=1048576 count=2",
+        }).pipe(Effect.orDie);
+
+        const wtPath = path.join(tmp, "nested", "repo-ws");
+        const core = yield* GitCore;
+        const result = yield* core.createWorktree({
+          cwd: repoDir,
+          branch: "main",
+          newBranch: "feature/jj-workspace",
+          path: wtPath,
+        });
+
+        expect(result.worktree.path).toBe(wtPath);
+        expect(result.worktree.branch).toBe("feature/jj-workspace");
+        expect(existsSync(path.join(wtPath, "README.md"))).toBe(true);
+
+        const status = yield* runShellCommand({
+          cwd: wtPath,
+          command: "jj --ignore-working-copy status",
+        }).pipe(Effect.orDie);
+        expect(status.code).toBe(0);
+        expect(status.stdout).toContain("The working copy has no changes.");
+
+        yield* core.removeWorktree({ cwd: repoDir, path: wtPath });
         expect(existsSync(wtPath)).toBe(false);
       }),
     );

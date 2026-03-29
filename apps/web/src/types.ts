@@ -13,6 +13,7 @@ import type {
   CheckpointRef,
   ProviderInteractionMode,
   RuntimeMode,
+  WorkspaceId,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -88,10 +89,21 @@ export interface Project {
   scripts: ProjectScript[];
 }
 
+export interface Workspace {
+  id: WorkspaceId;
+  projectId: ProjectId;
+  name: string;
+  branch: string | null;
+  worktreePath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Thread {
   id: ThreadId;
   codexThreadId: string | null;
   projectId: ProjectId;
+  workspaceId: WorkspaceId | null;
   title: string;
   modelSelection: ModelSelection;
   runtimeMode: RuntimeMode;

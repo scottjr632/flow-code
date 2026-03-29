@@ -38,10 +38,12 @@ function makeSnapshot(input: {
         deletedAt: null,
       },
     ],
+    workspaces: [],
     threads: [
       {
         id: input.threadId,
         projectId: input.projectId,
+        workspaceId: null,
         title: "Thread",
         modelSelection: {
           provider: "codex",
@@ -178,6 +180,7 @@ describe("CheckpointDiffQueryLive", () => {
             Effect.succeed({
               snapshotSequence: 0,
               projects: [],
+              workspaces: [],
               threads: [],
               updatedAt: "2026-01-01T00:00:00.000Z",
             } satisfies OrchestrationReadModel),

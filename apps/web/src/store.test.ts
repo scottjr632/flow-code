@@ -15,6 +15,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     id: ThreadId.makeUnsafe("thread-1"),
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
+    workspaceId: null,
     title: "Thread",
     modelSelection: {
       provider: "codex",
@@ -52,6 +53,7 @@ function makeState(thread: Thread): AppState {
         scripts: [],
       },
     ],
+    workspaces: [],
     threads: [thread],
     threadsHydrated: true,
   };
@@ -61,6 +63,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
   return {
     id: ThreadId.makeUnsafe("thread-1"),
     projectId: ProjectId.makeUnsafe("project-1"),
+    workspaceId: null,
     title: "Thread",
     modelSelection: {
       provider: "codex",
@@ -103,6 +106,7 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
         scripts: [],
       },
     ],
+    workspaces: [],
     threads: [thread],
   };
 }
@@ -206,6 +210,7 @@ describe("store pure functions", () => {
           scripts: [],
         },
       ],
+      workspaces: [],
       threads: [],
       threadsHydrated: true,
     };
@@ -316,6 +321,7 @@ describe("store read model sync", () => {
           scripts: [],
         },
       ],
+      workspaces: [],
       threads: [],
       threadsHydrated: true,
     };
@@ -339,6 +345,7 @@ describe("store read model sync", () => {
           workspaceRoot: "/tmp/project-3",
         }),
       ],
+      workspaces: [],
       threads: [],
     };
 

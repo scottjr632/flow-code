@@ -3,6 +3,7 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   FolderIcon,
+  GitForkIcon,
   GitPullRequestIcon,
   PlusIcon,
   SettingsIcon,
@@ -43,6 +44,7 @@ import {
   ThreadId,
   type GitStatusResult,
   type ResolvedKeybindingsConfig,
+  type WorkspaceId,
 } from "@t3tools/contracts";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
@@ -105,8 +107,11 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  deriveDefaultWorkspaceTitle,
   getVisibleSidebarThreadIds,
   getVisibleThreadsForProject,
+  groupThreadsForSidebarProject,
+  isWorkspaceTitleCustomized,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
@@ -321,6 +326,7 @@ function SortableProjectItem({
 
 export default function Sidebar() {
   const projects = useStore((store) => store.projects);
+  const workspaces = useStore((store) => store.workspaces);
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
   const toggleProject = useStore((store) => store.toggleProject);
@@ -356,6 +362,8 @@ export default function Sidebar() {
   const addProjectInputRef = useRef<HTMLInputElement | null>(null);
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
+  const [renamingWorkspaceId, setRenamingWorkspaceId] = useState<WorkspaceId | null>(null);
+  const [renamingWorkspaceTitle, setRenamingWorkspaceTitle] = useState("");
   const [hoveredThreadId, setHoveredThreadId] = useState<ThreadId | null>(null);
   const [confirmingArchiveThreadId, setConfirmingArchiveThreadId] = useState<ThreadId | null>(null);
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
@@ -364,6 +372,8 @@ export default function Sidebar() {
   const [showThreadJumpHints, setShowThreadJumpHints] = useState(false);
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
+  const workspaceRenamingCommittedRef = useRef(false);
+  const workspaceRenamingInputRef = useRef<HTMLInputElement | null>(null);
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const suppressProjectClickForContextMenuRef = useRef(false);
@@ -602,6 +612,11 @@ export default function Sidebar() {
     renamingInputRef.current = null;
   }, []);
 
+  const cancelWorkspaceRename = useCallback(() => {
+    setRenamingWorkspaceId(null);
+    workspaceRenamingInputRef.current = null;
+  }, []);
+
   const commitRename = useCallback(
     async (threadId: ThreadId, newTitle: string, originalTitle: string) => {
       const finishRename = () => {
@@ -641,6 +656,53 @@ export default function Sidebar() {
         toastManager.add({
           type: "error",
           title: "Failed to rename thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+      finishRename();
+    },
+    [],
+  );
+
+  const commitWorkspaceRename = useCallback(
+    async (workspaceId: WorkspaceId, newTitle: string, originalTitle: string) => {
+      const finishRename = () => {
+        setRenamingWorkspaceId((current) => {
+          if (current !== workspaceId) return current;
+          workspaceRenamingInputRef.current = null;
+          return null;
+        });
+      };
+
+      const trimmed = newTitle.trim();
+      if (trimmed.length === 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Workspace name cannot be empty",
+        });
+        finishRename();
+        return;
+      }
+      if (trimmed === originalTitle) {
+        finishRename();
+        return;
+      }
+      const api = readNativeApi();
+      if (!api) {
+        finishRename();
+        return;
+      }
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "workspace.meta.update",
+          commandId: newCommandId(),
+          workspaceId,
+          title: trimmed,
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to rename workspace",
           description: error instanceof Error ? error.message : "An error occurred.",
         });
       }
@@ -924,6 +986,46 @@ export default function Sidebar() {
     ],
   );
 
+  const handleWorkspaceContextMenu = useCallback(
+    async (
+      workspace: (typeof workspaces)[number],
+      position: { x: number; y: number },
+      projectId: ProjectId,
+    ) => {
+      const api = readNativeApi();
+      if (!api) return;
+
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "rename", label: "Rename workspace" },
+          { id: "copy-path", label: "Copy worktree path" },
+          { id: "new-session", label: "New session in workspace" },
+        ],
+        position,
+      );
+
+      if (clicked === "rename") {
+        workspaceRenamingCommittedRef.current = false;
+        setRenamingWorkspaceId(workspace.id);
+        setRenamingWorkspaceTitle(workspace.name);
+        return;
+      }
+      if (clicked === "copy-path") {
+        copyPathToClipboard(workspace.worktreePath, { path: workspace.worktreePath });
+        return;
+      }
+      if (clicked === "new-session") {
+        void handleNewThread(projectId, {
+          workspaceId: workspace.id,
+          branch: workspace.branch,
+          worktreePath: workspace.worktreePath,
+          envMode: "worktree",
+        });
+      }
+    },
+    [copyPathToClipboard, handleNewThread],
+  );
+
   const projectDnDSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
@@ -1019,6 +1121,9 @@ export default function Sidebar() {
   const renderedProjects = useMemo(
     () =>
       sortedProjects.map((project) => {
+        const projectWorkspaces = workspaces.filter(
+          (workspace) => workspace.projectId === project.id,
+        );
         const projectThreads = sortThreadsForSidebar(
           visibleThreads.filter((thread) => thread.projectId === project.id),
           appSettings.sidebarThreadSortOrder,
@@ -1050,6 +1155,8 @@ export default function Sidebar() {
         const renderedThreads = pinnedCollapsedThread
           ? [pinnedCollapsedThread]
           : visibleProjectThreads;
+        const workspaceSections = groupThreadsForSidebarProject(renderedThreads, projectWorkspaces);
+        const workspaceCount = projectWorkspaces.length;
 
         return {
           hasHiddenThreads,
@@ -1058,6 +1165,8 @@ export default function Sidebar() {
           projectStatus,
           projectThreads,
           renderedThreads,
+          workspaceCount,
+          workspaceSections,
           shouldShowThreadPanel,
           isThreadListExpanded,
         };
@@ -1067,6 +1176,7 @@ export default function Sidebar() {
       expandedThreadListsByProject,
       routeThreadId,
       sortedProjects,
+      workspaces,
       visibleThreads,
     ],
   );
@@ -1203,6 +1313,8 @@ export default function Sidebar() {
       projectStatus,
       projectThreads,
       renderedThreads,
+      workspaceCount,
+      workspaceSections,
       shouldShowThreadPanel,
       isThreadListExpanded,
     } = renderedProject;
@@ -1448,6 +1560,127 @@ export default function Sidebar() {
       );
     };
 
+    const renderWorkspaceSection = (
+      section: (typeof workspaceSections)[number],
+      options: { showLocalHeader: boolean },
+    ) => {
+      const workspace = section.workspace;
+      const showHeader = workspace !== null || options.showLocalHeader;
+      const showWorkspaceSourceLabel =
+        workspace !== null &&
+        !isWorkspaceTitleCustomized(workspace) &&
+        workspace.branch !== null &&
+        workspace.branch !== workspace.name;
+      return (
+        <div key={section.key} className="space-y-0.5 px-0.5 py-0.5">
+          {showHeader ? (
+            <div
+              className="group/workspace-row flex items-center gap-1.5 px-2 py-1"
+              onContextMenu={(event) => {
+                if (!workspace) return;
+                event.preventDefault();
+                void handleWorkspaceContextMenu(
+                  workspace,
+                  {
+                    x: event.clientX,
+                    y: event.clientY,
+                  },
+                  project.id,
+                );
+              }}
+            >
+              {workspace ? (
+                <GitForkIcon className="size-3 shrink-0 text-muted-foreground/60" />
+              ) : (
+                <FolderIcon className="size-3 shrink-0 text-muted-foreground/60" />
+              )}
+              <div className="min-w-0 flex-1">
+                {workspace && renamingWorkspaceId === workspace.id ? (
+                  <input
+                    ref={(el) => {
+                      if (el && workspaceRenamingInputRef.current !== el) {
+                        workspaceRenamingInputRef.current = el;
+                        el.focus();
+                        el.select();
+                      }
+                    }}
+                    className="min-w-0 w-full truncate rounded border border-ring bg-transparent px-1 py-0 text-[10px] font-medium text-foreground/85 outline-none"
+                    value={renamingWorkspaceTitle}
+                    onChange={(event) => setRenamingWorkspaceTitle(event.target.value)}
+                    onKeyDown={(event) => {
+                      event.stopPropagation();
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        workspaceRenamingCommittedRef.current = true;
+                        void commitWorkspaceRename(
+                          workspace.id,
+                          renamingWorkspaceTitle,
+                          workspace.name,
+                        );
+                      } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        workspaceRenamingCommittedRef.current = true;
+                        cancelWorkspaceRename();
+                      }
+                    }}
+                    onBlur={() => {
+                      if (!workspaceRenamingCommittedRef.current) {
+                        void commitWorkspaceRename(
+                          workspace.id,
+                          renamingWorkspaceTitle,
+                          workspace.name,
+                        );
+                      }
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                ) : (
+                  <div className="truncate text-[10px] font-medium text-muted-foreground/70">
+                    {workspace ? workspace.name : "Local"}
+                  </div>
+                )}
+                {showWorkspaceSourceLabel ? (
+                  <div className="truncate text-[10px] text-muted-foreground/40">
+                    {deriveDefaultWorkspaceTitle(workspace)}
+                  </div>
+                ) : null}
+              </div>
+              {workspace ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        data-thread-selection-safe
+                        aria-label={`Create new session in ${workspace.name}`}
+                        className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/40 opacity-0 transition-opacity group-hover/workspace-row:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void handleNewThread(project.id, {
+                            workspaceId: workspace.id,
+                            branch: workspace.branch,
+                            worktreePath: workspace.worktreePath,
+                            envMode: "worktree",
+                          });
+                        }}
+                      />
+                    }
+                  >
+                    <SquarePenIcon className="size-3" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">New session in workspace</TooltipPopup>
+                </Tooltip>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="ml-3 border-l border-border/40 pl-1.5">
+            {section.threads.map((thread) => renderThreadRow(thread))}
+          </div>
+        </div>
+      );
+    };
+
     return (
       <>
         <div className="group/project-header relative">
@@ -1494,9 +1727,7 @@ export default function Sidebar() {
               />
             )}
             <ProjectFavicon cwd={project.cwd} />
-            <span className="flex-1 truncate text-xs font-medium text-foreground/90">
-              {project.name}
-            </span>
+            <span className="truncate text-xs font-medium text-foreground/90">{project.name}</span>
           </SidebarMenuButton>
           <Tooltip>
             <TooltipTrigger
@@ -1535,7 +1766,14 @@ export default function Sidebar() {
           ref={attachThreadListAutoAnimateRef}
           className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0"
         >
-          {shouldShowThreadPanel && renderedThreads.map((thread) => renderThreadRow(thread))}
+          {shouldShowThreadPanel &&
+            (project.expanded
+              ? workspaceSections.map((section) =>
+                  renderWorkspaceSection(section, {
+                    showLocalHeader: workspaceCount > 0 && section.workspace === null,
+                  }),
+                )
+              : renderedThreads.map((thread) => renderThreadRow(thread)))}
 
           {project.expanded && hasHiddenThreads && !isThreadListExpanded && (
             <SidebarMenuSubItem className="w-full">

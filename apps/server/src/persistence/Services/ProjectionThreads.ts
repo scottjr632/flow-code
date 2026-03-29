@@ -14,6 +14,7 @@ import {
   RuntimeMode,
   ThreadId,
   TurnId,
+  WorkspaceId,
 } from "@t3tools/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
@@ -23,6 +24,7 @@ import type { ProjectionRepositoryError } from "../Errors.ts";
 export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
+  workspaceId: Schema.NullOr(WorkspaceId),
   title: Schema.String,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,

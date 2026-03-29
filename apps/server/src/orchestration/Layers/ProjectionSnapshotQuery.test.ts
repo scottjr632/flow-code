@@ -56,6 +56,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         INSERT INTO projection_threads (
           thread_id,
           project_id,
+          workspace_id,
           title,
           model_selection_json,
           branch,
@@ -68,6 +69,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         VALUES (
           'thread-1',
           'project-1',
+          NULL,
           'Thread 1',
           '{"provider":"codex","model":"gpt-5-codex"}',
           NULL,
@@ -252,10 +254,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           deletedAt: null,
         },
       ]);
+      assert.deepEqual(snapshot.workspaces, []);
       assert.deepEqual(snapshot.threads, [
         {
           id: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
+          workspaceId: null,
           title: "Thread 1",
           modelSelection: {
             provider: "codex",

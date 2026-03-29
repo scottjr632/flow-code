@@ -4,6 +4,7 @@ import {
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
+  OrchestrationWorkspace,
 } from "@t3tools/contracts";
 import { Effect, Schema } from "effect";
 
@@ -13,6 +14,9 @@ import {
   ProjectCreatedPayload,
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
+  WorkspaceCreatedPayload,
+  WorkspaceDeletedPayload,
+  WorkspaceMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
@@ -159,6 +163,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [],
+    workspaces: [],
     threads: [],
     updatedAt: nowIso,
   };
@@ -240,6 +245,74 @@ export function projectEvent(
         })),
       );
 
+    case "workspace.created":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          WorkspaceCreatedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const workspace: OrchestrationWorkspace = yield* decodeForEvent(
+          OrchestrationWorkspace,
+          {
+            id: payload.workspaceId,
+            projectId: payload.projectId,
+            title: payload.title,
+            branch: payload.branch,
+            worktreePath: payload.worktreePath,
+            createdAt: payload.createdAt,
+            updatedAt: payload.updatedAt,
+            deletedAt: null,
+          },
+          event.type,
+          "workspace",
+        );
+        const existing = nextBase.workspaces.find((entry) => entry.id === workspace.id);
+        return {
+          ...nextBase,
+          workspaces: existing
+            ? nextBase.workspaces.map((entry) => (entry.id === workspace.id ? workspace : entry))
+            : [...nextBase.workspaces, workspace],
+        };
+      });
+
+    case "workspace.meta-updated":
+      return decodeForEvent(WorkspaceMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          workspaces: nextBase.workspaces.map((workspace) =>
+            workspace.id === payload.workspaceId
+              ? {
+                  ...workspace,
+                  ...(payload.title !== undefined ? { title: payload.title } : {}),
+                  ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
+                  ...(payload.worktreePath !== undefined
+                    ? { worktreePath: payload.worktreePath }
+                    : {}),
+                  updatedAt: payload.updatedAt,
+                }
+              : workspace,
+          ),
+        })),
+      );
+
+    case "workspace.deleted":
+      return decodeForEvent(WorkspaceDeletedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          workspaces: nextBase.workspaces.map((workspace) =>
+            workspace.id === payload.workspaceId
+              ? {
+                  ...workspace,
+                  deletedAt: payload.deletedAt,
+                  updatedAt: payload.deletedAt,
+                }
+              : workspace,
+          ),
+        })),
+      );
+
     case "thread.created":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -253,6 +326,7 @@ export function projectEvent(
           {
             id: payload.threadId,
             projectId: payload.projectId,
+            workspaceId: payload.workspaceId,
             title: payload.title,
             modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,
@@ -319,6 +393,7 @@ export function projectEvent(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
+            ...(payload.workspaceId !== undefined ? { workspaceId: payload.workspaceId } : {}),
             ...(payload.title !== undefined ? { title: payload.title } : {}),
             ...(payload.modelSelection !== undefined
               ? { modelSelection: payload.modelSelection }

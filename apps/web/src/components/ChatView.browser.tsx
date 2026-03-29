@@ -242,10 +242,12 @@ function createSnapshotForTargetUser(options: {
         deletedAt: null,
       },
     ],
+    workspaces: [],
     threads: [
       {
         id: THREAD_ID,
         projectId: PROJECT_ID,
+        workspaceId: null,
         title: "Browser test thread",
         modelSelection: {
           provider: "codex",
@@ -304,6 +306,7 @@ function addThreadToSnapshot(
       {
         id: threadId,
         projectId: PROJECT_ID,
+        workspaceId: null,
         title: "New thread",
         modelSelection: {
           provider: "codex",
@@ -367,6 +370,7 @@ function setDraftThreadWithoutWorktree(): void {
         createdAt: NOW_ISO,
         runtimeMode: "full-access",
         interactionMode: "default",
+        workspaceId: null,
         branch: null,
         worktreePath: null,
         envMode: "local",
@@ -1238,6 +1242,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           createdAt: NOW_ISO,
           runtimeMode: "full-access",
           interactionMode: "default",
+          workspaceId: null,
           branch: null,
           worktreePath: null,
           envMode: "local",
@@ -1314,6 +1319,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           createdAt: NOW_ISO,
           runtimeMode: "full-access",
           interactionMode: "default",
+          workspaceId: null,
           branch: "feature/draft",
           worktreePath: "/repo/worktrees/feature-draft",
           envMode: "worktree",
@@ -1377,6 +1383,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           createdAt: NOW_ISO,
           runtimeMode: "full-access",
           interactionMode: "default",
+          workspaceId: null,
           branch: null,
           worktreePath: null,
           envMode: "local",

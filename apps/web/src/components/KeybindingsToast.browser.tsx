@@ -87,10 +87,12 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         deletedAt: null,
       },
     ],
+    workspaces: [],
     threads: [
       {
         id: THREAD_ID,
         projectId: PROJECT_ID,
+        workspaceId: null,
         title: "Test thread",
         modelSelection: {
           provider: "codex",

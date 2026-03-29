@@ -3,8 +3,10 @@ import type {
   OrchestrationProject,
   OrchestrationReadModel,
   OrchestrationThread,
+  OrchestrationWorkspace,
   ProjectId,
   ThreadId,
+  WorkspaceId,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 
@@ -38,6 +40,33 @@ export function listThreadsByProjectId(
   return readModel.threads.filter((thread) => thread.projectId === projectId);
 }
 
+export function findWorkspaceById(
+  readModel: OrchestrationReadModel,
+  workspaceId: WorkspaceId,
+): OrchestrationWorkspace | undefined {
+  return readModel.workspaces.find((workspace) => workspace.id === workspaceId);
+}
+
+export function findWorkspaceByProjectAndWorktreePath(
+  readModel: OrchestrationReadModel,
+  projectId: ProjectId,
+  worktreePath: string,
+): OrchestrationWorkspace | undefined {
+  return readModel.workspaces.find(
+    (workspace) =>
+      workspace.projectId === projectId &&
+      workspace.worktreePath === worktreePath &&
+      workspace.deletedAt === null,
+  );
+}
+
+export function listWorkspacesByProjectId(
+  readModel: OrchestrationReadModel,
+  projectId: ProjectId,
+): ReadonlyArray<OrchestrationWorkspace> {
+  return readModel.workspaces.filter((workspace) => workspace.projectId === projectId);
+}
+
 export function requireProject(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;
@@ -67,6 +96,39 @@ export function requireProjectAbsent(input: {
     invariantError(
       input.command.type,
       `Project '${input.projectId}' already exists and cannot be created twice.`,
+    ),
+  );
+}
+
+export function requireWorkspace(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly workspaceId: WorkspaceId;
+}): Effect.Effect<OrchestrationWorkspace, OrchestrationCommandInvariantError> {
+  const workspace = findWorkspaceById(input.readModel, input.workspaceId);
+  if (workspace && workspace.deletedAt === null) {
+    return Effect.succeed(workspace);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Workspace '${input.workspaceId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireWorkspaceAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly workspaceId: WorkspaceId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (!findWorkspaceById(input.readModel, input.workspaceId)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Workspace '${input.workspaceId}' already exists and cannot be created twice.`,
     ),
   );
 }

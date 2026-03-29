@@ -7,13 +7,14 @@ import {
 } from "@t3tools/contracts";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
-import { type ChatMessage, type Project, type Thread } from "./types";
+import { type ChatMessage, type Project, type Thread, type Workspace } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
 
 // ── State ────────────────────────────────────────────────────────────
 
 export interface AppState {
   projects: Project[];
+  workspaces: Workspace[];
   threads: Thread[];
   threadsHydrated: boolean;
 }
@@ -33,6 +34,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 
 const initialState: AppState = {
   projects: [],
+  workspaces: [],
   threads: [],
   threadsHydrated: false,
 };
@@ -238,6 +240,20 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     readModel.projects.filter((project) => project.deletedAt === null),
     state.projects,
   );
+  const workspaces = readModel.workspaces
+    .filter((workspace) => workspace.deletedAt === null)
+    .map(
+      (workspace) =>
+        ({
+          id: workspace.id,
+          projectId: workspace.projectId,
+          name: workspace.title,
+          branch: workspace.branch,
+          worktreePath: workspace.worktreePath,
+          createdAt: workspace.createdAt,
+          updatedAt: workspace.updatedAt,
+        }) satisfies Workspace,
+    );
   const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
   const threads = readModel.threads
     .filter((thread) => thread.deletedAt === null)
@@ -247,6 +263,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         id: thread.id,
         codexThreadId: null,
         projectId: thread.projectId,
+        workspaceId: thread.workspaceId,
         title: thread.title,
         modelSelection: {
           ...thread.modelSelection,
@@ -320,6 +337,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
   return {
     ...state,
     projects,
+    workspaces,
     threads,
     threadsHydrated: true,
   };

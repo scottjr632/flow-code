@@ -135,6 +135,7 @@ describe("decider project scripts", () => {
         payload: {
           threadId: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
+          workspaceId: null,
           title: "Thread",
           modelSelection: {
             provider: "codex",
@@ -244,6 +245,7 @@ describe("decider project scripts", () => {
         payload: {
           threadId: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
+          workspaceId: null,
           title: "Thread",
           modelSelection: {
             provider: "codex",
@@ -326,6 +328,7 @@ describe("decider project scripts", () => {
         payload: {
           threadId: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
+          workspaceId: null,
           title: "Thread",
           modelSelection: {
             provider: "codex",

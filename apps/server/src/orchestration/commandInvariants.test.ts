@@ -51,10 +51,12 @@ const readModel: OrchestrationReadModel = {
       deletedAt: null,
     },
   ],
+  workspaces: [],
   threads: [
     {
       id: ThreadId.makeUnsafe("thread-1"),
       projectId: ProjectId.makeUnsafe("project-a"),
+      workspaceId: null,
       title: "Thread A",
       modelSelection: {
         provider: "codex",
@@ -78,6 +80,7 @@ const readModel: OrchestrationReadModel = {
     {
       id: ThreadId.makeUnsafe("thread-2"),
       projectId: ProjectId.makeUnsafe("project-b"),
+      workspaceId: null,
       title: "Thread B",
       modelSelection: {
         provider: "codex",

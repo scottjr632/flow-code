@@ -27,17 +27,26 @@ export const desktopDir = resolve(__dirname, "..");
 function resolveElectronPackagePaths(require) {
   const electronPackageJsonPath = require.resolve("electron/package.json");
   const electronPackageDir = dirname(electronPackageJsonPath);
+  const electronEntryPath = require.resolve("electron");
   return {
     electronPackageDir,
+    electronEntryPath,
     electronInstallScriptPath: join(electronPackageDir, "install.js"),
     electronPathFilePath: join(electronPackageDir, "path.txt"),
     electronDistDir: join(electronPackageDir, "dist"),
   };
 }
 
-function ensureElectronBinaryInstalled(require) {
-  const { electronPackageDir, electronInstallScriptPath, electronPathFilePath, electronDistDir } =
-    resolveElectronPackagePaths(require);
+function installElectronBinary(require) {
+  const {
+    electronPackageDir,
+    electronEntryPath,
+    electronInstallScriptPath,
+    electronPathFilePath,
+    electronDistDir,
+  } = resolveElectronPackagePaths(require);
+
+  delete require.cache[electronEntryPath];
   if (existsSync(electronPathFilePath) && existsSync(electronDistDir)) {
     return;
   }
@@ -57,8 +66,31 @@ function ensureElectronBinaryInstalled(require) {
   if (!existsSync(electronPathFilePath) || !existsSync(electronDistDir)) {
     throw new Error("Electron install bootstrap completed without producing a runnable binary.");
   }
+  delete require.cache[electronEntryPath];
 }
 
+function resolveInstalledElectronBinary(require) {
+  const { electronPathFilePath, electronDistDir } = resolveElectronPackagePaths(require);
+
+  if (!existsSync(electronPathFilePath) || !existsSync(electronDistDir)) {
+    installElectronBinary(require);
+    return require("electron");
+  }
+
+  try {
+    return require("electron");
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !error.message.includes("Electron failed to install correctly")
+    ) {
+      throw error;
+    }
+
+    installElectronBinary(require);
+    return require("electron");
+  }
+}
 function setPlistString(plistPath, key, value) {
   const replaceResult = spawnSync("plutil", ["-replace", key, "-string", value, plistPath], {
     encoding: "utf8",
@@ -169,8 +201,7 @@ function buildMacLauncher(electronBinaryPath) {
 
 export function resolveElectronPath() {
   const require = createRequire(import.meta.url);
-  ensureElectronBinaryInstalled(require);
-  const electronBinaryPath = require("electron");
+  const electronBinaryPath = resolveInstalledElectronBinary(require);
 
   if (process.platform !== "darwin") {
     return electronBinaryPath;

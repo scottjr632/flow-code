@@ -17,6 +17,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { spawnSync } from "node:child_process";
 
 import { GitCommandError } from "../Errors.ts";
 import {
@@ -61,6 +62,12 @@ interface ExecuteGitOptions {
   maxOutputBytes?: number | undefined;
   truncateOutputAtMaxBytes?: boolean | undefined;
   progress?: ExecuteGitProgress | undefined;
+}
+
+interface ExecuteJjResult {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
 }
 
 function parseBranchAb(value: string): { ahead: number; behind: number } {
@@ -682,6 +689,131 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
     ): Effect.Effect<string, GitCommandError> =>
       executeGit(operation, cwd, args, options).pipe(Effect.map((result) => result.stdout));
 
+    const isJjRepo = (cwd: string): Effect.Effect<boolean, never> =>
+      Effect.gen(function* () {
+        const jjDir = path.join(cwd, ".jj");
+        return yield* fileSystem.exists(jjDir).pipe(Effect.orElseSucceed(() => false));
+      });
+
+    const hasUsableGitHead = (cwd: string): Effect.Effect<boolean, GitCommandError> =>
+      executeGit("GitCore.hasUsableGitHead", cwd, ["rev-parse", "--verify", "HEAD"], {
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+      }).pipe(Effect.map((result) => result.code === 0));
+
+    const resolveWorktreeBackend = (cwd: string): Effect.Effect<"git" | "jj", GitCommandError> =>
+      Effect.gen(function* () {
+        const jjRepo = yield* isJjRepo(cwd);
+        if (!jjRepo) {
+          return "git";
+        }
+
+        const gitHeadAvailable = yield* hasUsableGitHead(cwd).pipe(
+          Effect.catch(() => Effect.succeed(false)),
+        );
+        return gitHeadAvailable ? "git" : "jj";
+      });
+
+    const executeJj = (
+      operation: string,
+      cwd: string,
+      args: readonly string[],
+      options: { allowNonZeroExit?: boolean; fallbackErrorMessage?: string } = {},
+    ): Effect.Effect<ExecuteJjResult, GitCommandError> =>
+      Effect.try({
+        try: () =>
+          spawnSync("jj", args, {
+            cwd,
+            encoding: "utf8",
+            env: process.env,
+            maxBuffer: DEFAULT_MAX_OUTPUT_BYTES,
+          }),
+        catch: (cause) =>
+          new GitCommandError({
+            operation,
+            command: `jj ${args.join(" ")}`,
+            cwd,
+            detail: `jj ${args.join(" ")} failed to spawn: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
+      }).pipe(
+        Effect.flatMap((result) => {
+          const code = result.status ?? 1;
+          const stdout = result.stdout ?? "";
+          const stderr = result.stderr ?? "";
+          if (options.allowNonZeroExit || code === 0) {
+            return Effect.succeed({ code, stdout, stderr } satisfies ExecuteJjResult);
+          }
+          const trimmedStderr = stderr.trim();
+          return Effect.fail(
+            new GitCommandError({
+              operation,
+              command: `jj ${args.join(" ")}`,
+              cwd,
+              detail:
+                trimmedStderr.length > 0
+                  ? trimmedStderr
+                  : (options.fallbackErrorMessage ??
+                    `jj ${args.join(" ")} failed with code ${code}.`),
+            }),
+          );
+        }),
+      );
+
+    const createJjWorkspace = (
+      input: Parameters<GitCoreShape["createWorktree"]>[0],
+      worktreePath: string,
+      targetBranch: string,
+    ) =>
+      Effect.gen(function* () {
+        const workspaceName = path.basename(worktreePath);
+        yield* fileSystem.makeDirectory(path.dirname(worktreePath), { recursive: true }).pipe(
+          Effect.mapError(
+            (error) =>
+              new GitCommandError({
+                operation: "GitCore.createWorktree.jjWorkspaceMkdir",
+                command: `mkdir -p ${path.dirname(worktreePath)}`,
+                cwd: input.cwd,
+                detail:
+                  error instanceof Error
+                    ? `Failed to create jj workspace parent directory ${path.dirname(worktreePath)}: ${error.message}`
+                    : `Failed to create jj workspace parent directory ${path.dirname(worktreePath)}.`,
+              }),
+          ),
+        );
+        yield* executeJj(
+          "GitCore.createWorktree.jjWorkspaceAdd",
+          input.cwd,
+          [
+            "--config",
+            'snapshot.auto-track="none()"',
+            "workspace",
+            "add",
+            "--name",
+            workspaceName,
+            "-r",
+            "@",
+            worktreePath,
+          ],
+          { fallbackErrorMessage: "jj workspace add failed" },
+        );
+
+        if (input.newBranch) {
+          yield* executeJj(
+            "GitCore.createWorktree.jjBookmarkCreate",
+            worktreePath,
+            ["--ignore-working-copy", "bookmark", "create", "-r", "@", input.newBranch],
+            { fallbackErrorMessage: "jj bookmark create failed" },
+          );
+        }
+
+        return {
+          worktree: {
+            path: worktreePath,
+            branch: targetBranch,
+          },
+        };
+      });
+
     const branchExists = (cwd: string, branch: string): Effect.Effect<boolean, GitCommandError> =>
       executeGit(
         "GitCore.branchExists",
@@ -717,6 +849,49 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
           ["branch", "-m", "--", desiredBranch],
           `Could not find an available branch name for '${desiredBranch}'.`,
         );
+      });
+
+    const resolveWorktreeStartPoint = (
+      cwd: string,
+      branch: string,
+    ): Effect.Effect<string, GitCommandError> =>
+      Effect.gen(function* () {
+        if (yield* branchExists(cwd, branch)) {
+          return branch;
+        }
+
+        const remoteNames = yield* listRemoteNames(cwd).pipe(
+          Effect.catch(() => Effect.succeed([] as ReadonlyArray<string>)),
+        );
+        const parsedRemoteRef = parseRemoteRefWithRemoteNames(branch, remoteNames);
+        if (
+          parsedRemoteRef &&
+          (yield* remoteBranchExists(cwd, parsedRemoteRef.remoteName, parsedRemoteRef.localBranch))
+        ) {
+          return parsedRemoteRef.remoteRef;
+        }
+
+        const primaryRemoteName = yield* resolvePrimaryRemoteName(cwd).pipe(
+          Effect.catch(() => Effect.succeed(null)),
+        );
+        if (primaryRemoteName && (yield* remoteBranchExists(cwd, primaryRemoteName, branch))) {
+          return `${primaryRemoteName}/${branch}`;
+        }
+
+        if (
+          primaryRemoteName &&
+          (branch === DEFAULT_BASE_BRANCH_CANDIDATES[0] ||
+            branch === DEFAULT_BASE_BRANCH_CANDIDATES[1])
+        ) {
+          const defaultBranch = yield* resolveDefaultBranchName(cwd, primaryRemoteName).pipe(
+            Effect.catch(() => Effect.succeed(null)),
+          );
+          if (defaultBranch && (yield* remoteBranchExists(cwd, primaryRemoteName, defaultBranch))) {
+            return `${primaryRemoteName}/${defaultBranch}`;
+          }
+        }
+
+        return branch;
       });
 
     const resolveCurrentUpstream = (
@@ -1638,9 +1813,13 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
         const sanitizedBranch = targetBranch.replace(/\//g, "-");
         const repoName = path.basename(input.cwd);
         const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+        if ((yield* resolveWorktreeBackend(input.cwd)) === "jj") {
+          return yield* createJjWorkspace(input, worktreePath, targetBranch);
+        }
+        const startPoint = yield* resolveWorktreeStartPoint(input.cwd, input.branch);
         const args = input.newBranch
-          ? ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch]
-          : ["worktree", "add", worktreePath, input.branch];
+          ? ["worktree", "add", "-b", input.newBranch, worktreePath, startPoint]
+          : ["worktree", "add", worktreePath, startPoint];
 
         yield* executeGit("GitCore.createWorktree", input.cwd, args, {
           fallbackErrorMessage: "git worktree add failed",
@@ -1704,6 +1883,39 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
 
     const removeWorktree: GitCoreShape["removeWorktree"] = (input) =>
       Effect.gen(function* () {
+        if (
+          (yield* resolveWorktreeBackend(input.path).pipe(
+            Effect.catch(() => Effect.succeed("git" as const)),
+          )) === "jj"
+        ) {
+          const workspaceName = path.basename(input.path);
+          yield* executeJj(
+            "GitCore.removeWorktree.jjWorkspaceForget",
+            input.path,
+            ["--ignore-working-copy", "workspace", "forget", workspaceName],
+            { fallbackErrorMessage: "jj workspace forget failed" },
+          );
+          yield* fileSystem
+            .remove(input.path, {
+              recursive: true,
+              force: true,
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new GitCommandError({
+                    operation: "GitCore.removeWorktree.jjWorkspaceDelete",
+                    command: `rm -rf ${input.path}`,
+                    cwd: input.cwd,
+                    detail:
+                      error instanceof Error
+                        ? `Failed to remove jj workspace path ${input.path}: ${error.message}`
+                        : `Failed to remove jj workspace path ${input.path}.`,
+                  }),
+              ),
+            );
+          return;
+        }
         const args = ["worktree", "remove"];
         if (input.force) {
           args.push("--force");

@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveDefaultWorkspaceTitle,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
+  groupThreadsForSidebarProject,
   hasUnseenCompletion,
+  isWorkspaceTitleCustomized,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
@@ -22,6 +25,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   type Project,
   type Thread,
+  type Workspace,
 } from "../types";
 
 function makeLatestTurn(overrides?: {
@@ -452,6 +456,105 @@ describe("getVisibleThreadsForProject", () => {
   });
 });
 
+describe("groupThreadsForSidebarProject", () => {
+  it("groups threads into workspace sections while preserving thread order", () => {
+    const workspaces = [
+      makeWorkspace({
+        id: "workspace-b" as never,
+        name: "feature/b",
+      }),
+      makeWorkspace({
+        id: "workspace-a" as never,
+        name: "feature/a",
+      }),
+    ];
+    const threads = [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-3"),
+        workspaceId: workspaces[0]!.id,
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        workspaceId: workspaces[1]!.id,
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        workspaceId: workspaces[0]!.id,
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-local"),
+        workspaceId: null,
+      }),
+    ];
+
+    const grouped = groupThreadsForSidebarProject(threads, workspaces);
+
+    expect(grouped.map((section) => section.key)).toEqual([
+      "workspace:workspace-b",
+      "workspace:workspace-a",
+      "workspace:local",
+    ]);
+    expect(grouped[0]?.threads.map((thread) => thread.id)).toEqual([
+      ThreadId.makeUnsafe("thread-3"),
+      ThreadId.makeUnsafe("thread-1"),
+    ]);
+    expect(grouped[1]?.workspace?.name).toBe("feature/a");
+    expect(grouped[2]?.workspace).toBeNull();
+  });
+
+  it("falls back to a local section when a thread references a missing workspace", () => {
+    const grouped = groupThreadsForSidebarProject(
+      [
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-1"),
+          workspaceId: "workspace-missing" as never,
+        }),
+      ],
+      [],
+    );
+
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]?.workspace).toBeNull();
+    expect(grouped[0]?.threads.map((thread) => thread.id)).toEqual([
+      ThreadId.makeUnsafe("thread-1"),
+    ]);
+  });
+});
+
+describe("workspace title helpers", () => {
+  it("uses the branch as the default workspace title when present", () => {
+    const workspace = makeWorkspace({
+      name: "feature/a",
+      branch: "feature/a",
+      worktreePath: "/tmp/project/.t3/worktrees/feature-a",
+    });
+
+    expect(deriveDefaultWorkspaceTitle(workspace)).toBe("feature/a");
+    expect(isWorkspaceTitleCustomized(workspace)).toBe(false);
+  });
+
+  it("falls back to the worktree directory when no branch exists", () => {
+    const workspace = makeWorkspace({
+      name: "feature-a",
+      branch: null,
+      worktreePath: "/tmp/project/.t3/worktrees/feature-a",
+    });
+
+    expect(deriveDefaultWorkspaceTitle(workspace)).toBe("feature-a");
+    expect(isWorkspaceTitleCustomized(workspace)).toBe(false);
+  });
+
+  it("treats a renamed workspace as customized", () => {
+    const workspace = makeWorkspace({
+      name: "Release prep",
+      branch: "feature/a",
+      worktreePath: "/tmp/project/.t3/worktrees/feature-a",
+    });
+
+    expect(isWorkspaceTitleCustomized(workspace)).toBe(true);
+  });
+});
+
 function makeProject(overrides: Partial<Project> = {}): Project {
   const { defaultModelSelection, ...rest } = overrides;
   return {
@@ -476,6 +579,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     id: ThreadId.makeUnsafe("thread-1"),
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
+    workspaceId: null,
     title: "Thread",
     modelSelection: {
       provider: "codex",
@@ -496,6 +600,19 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     worktreePath: null,
     turnDiffSummaries: [],
     activities: [],
+    ...overrides,
+  };
+}
+
+function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
+  return {
+    id: "workspace-1" as never,
+    projectId: ProjectId.makeUnsafe("project-1"),
+    name: "feature/a",
+    branch: "feature/a",
+    worktreePath: "/tmp/project/.t3/worktrees/feature-a",
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
     ...overrides,
   };
 }
