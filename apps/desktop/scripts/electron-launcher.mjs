@@ -24,6 +24,41 @@ const LAUNCHER_VERSION = 1;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const desktopDir = resolve(__dirname, "..");
 
+function resolveElectronPackagePaths(require) {
+  const electronPackageJsonPath = require.resolve("electron/package.json");
+  const electronPackageDir = dirname(electronPackageJsonPath);
+  return {
+    electronPackageDir,
+    electronInstallScriptPath: join(electronPackageDir, "install.js"),
+    electronPathFilePath: join(electronPackageDir, "path.txt"),
+    electronDistDir: join(electronPackageDir, "dist"),
+  };
+}
+
+function ensureElectronBinaryInstalled(require) {
+  const { electronPackageDir, electronInstallScriptPath, electronPathFilePath, electronDistDir } =
+    resolveElectronPackagePaths(require);
+  if (existsSync(electronPathFilePath) && existsSync(electronDistDir)) {
+    return;
+  }
+
+  const installResult = spawnSync(process.execPath, [electronInstallScriptPath], {
+    cwd: electronPackageDir,
+    stdio: "inherit",
+    env: process.env,
+  });
+
+  if (installResult.status !== 0) {
+    throw new Error(
+      `Electron install bootstrap failed with code ${installResult.status ?? "unknown"}.`,
+    );
+  }
+
+  if (!existsSync(electronPathFilePath) || !existsSync(electronDistDir)) {
+    throw new Error("Electron install bootstrap completed without producing a runnable binary.");
+  }
+}
+
 function setPlistString(plistPath, key, value) {
   const replaceResult = spawnSync("plutil", ["-replace", key, "-string", value, plistPath], {
     encoding: "utf8",
@@ -134,6 +169,7 @@ function buildMacLauncher(electronBinaryPath) {
 
 export function resolveElectronPath() {
   const require = createRequire(import.meta.url);
+  ensureElectronBinaryInstalled(require);
   const electronBinaryPath = require("electron");
 
   if (process.platform !== "darwin") {

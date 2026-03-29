@@ -62,27 +62,33 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
-    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
-        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-1.5">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:gap-2">
+        <SidebarTrigger className="size-6.5 shrink-0 md:hidden" />
         <h2
-          className="min-w-0 shrink truncate text-sm font-medium text-foreground"
+          className="min-w-0 shrink truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground sm:text-sm"
           title={activeThreadTitle}
         >
           {activeThreadTitle}
         </h2>
         {activeProjectName && (
-          <Badge variant="outline" className="min-w-0 shrink overflow-hidden">
+          <Badge
+            variant="outline"
+            className="min-w-0 shrink overflow-hidden border-border/65 bg-muted/12 px-2 py-0 font-medium text-[11px] text-muted-foreground shadow-none"
+          >
             <span className="min-w-0 truncate">{activeProjectName}</span>
           </Badge>
         )}
         {activeProjectName && !isGitRepo && (
-          <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
+          <Badge
+            variant="outline"
+            className="shrink-0 border-amber-600/30 bg-amber-500/6 px-1.5 py-0 text-[9px] uppercase tracking-[0.08em] text-amber-700 shadow-none"
+          >
             No Git
           </Badge>
         )}
       </div>
-      <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
+      <div className="flex shrink-0 items-center justify-end gap-1.5 @3xl/header-actions:gap-2">
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
@@ -109,7 +115,7 @@ export const ChatHeader = memo(function ChatHeader({
                 className="shrink-0"
                 pressed={terminalOpen}
                 onPressedChange={onToggleTerminal}
-                aria-label="Toggle terminal drawer"
+                aria-label="Toggle terminal tab"
                 variant="outline"
                 size="xs"
                 disabled={!terminalAvailable}
@@ -122,8 +128,8 @@ export const ChatHeader = memo(function ChatHeader({
             {!terminalAvailable
               ? "Terminal is unavailable until this thread has an active project."
               : terminalToggleShortcutLabel
-                ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
-                : "Toggle terminal drawer"}
+                ? `Toggle terminal tab (${terminalToggleShortcutLabel})`
+                : "Toggle terminal tab"}
           </TooltipPopup>
         </Tooltip>
         <Tooltip>
@@ -133,10 +139,10 @@ export const ChatHeader = memo(function ChatHeader({
                 className="shrink-0"
                 pressed={diffOpen}
                 onPressedChange={onToggleDiff}
-                aria-label="Toggle diff panel"
+                aria-label="Toggle review tab"
                 variant="outline"
                 size="xs"
-                disabled={!activeProjectName}
+                disabled={!isGitRepo}
               >
                 <DiffIcon className="size-3" />
               </Toggle>
@@ -144,10 +150,12 @@ export const ChatHeader = memo(function ChatHeader({
           />
           <TooltipPopup side="bottom">
             {!activeProjectName
-              ? "Diff panel is unavailable until this thread has an active project."
-              : diffToggleShortcutLabel
-                ? `Toggle diff panel (${diffToggleShortcutLabel})`
-                : "Toggle diff panel"}
+              ? "Review tab is unavailable until this thread has an active project."
+              : !isGitRepo
+                ? "Review tab is unavailable because this project is not a git repository."
+                : diffToggleShortcutLabel
+                  ? `Toggle review tab (${diffToggleShortcutLabel})`
+                  : "Toggle review tab"}
           </TooltipPopup>
         </Tooltip>
       </div>

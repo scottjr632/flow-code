@@ -27,6 +27,10 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readNativeApi } from "~/nativeApi";
+import {
+  dispatchWorkspaceCommandPaletteOpen,
+  isWorkspaceCommandPaletteShortcut,
+} from "../workspaceCommandPaletteShortcuts";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -343,6 +347,13 @@ function TerminalViewport({
     };
 
     terminal.attachCustomKeyEventHandler((event) => {
+      if (isWorkspaceCommandPaletteShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        dispatchWorkspaceCommandPaletteOpen();
+        return false;
+      }
+
       const navigationData = terminalNavigationShortcutData(event);
       if (navigationData !== null) {
         event.preventDefault();
@@ -647,7 +658,7 @@ interface ThreadTerminalDrawerProps {
   threadId: ThreadId;
   cwd: string;
   runtimeEnv?: Record<string, string>;
-  height: number;
+  height?: number;
   terminalIds: string[];
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
@@ -662,6 +673,7 @@ interface ThreadTerminalDrawerProps {
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  variant?: "drawer" | "panel";
 }
 
 interface TerminalActionButtonProps {
@@ -697,7 +709,7 @@ export default function ThreadTerminalDrawer({
   threadId,
   cwd,
   runtimeEnv,
-  height,
+  height = DEFAULT_THREAD_TERMINAL_HEIGHT,
   terminalIds,
   activeTerminalId,
   terminalGroups,
@@ -712,11 +724,16 @@ export default function ThreadTerminalDrawer({
   onCloseTerminal,
   onHeightChange,
   onAddTerminalContext,
+  variant = "drawer",
 }: ThreadTerminalDrawerProps) {
-  const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
+  const isDrawer = variant === "drawer";
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [drawerHeight, setDrawerHeight] = useState(() =>
+    isDrawer ? clampDrawerHeight(height) : height,
+  );
   const [resizeEpoch, setResizeEpoch] = useState(0);
   const drawerHeightRef = useRef(drawerHeight);
-  const lastSyncedHeightRef = useRef(clampDrawerHeight(height));
+  const lastSyncedHeightRef = useRef(isDrawer ? clampDrawerHeight(height) : height);
   const onHeightChangeRef = useRef(onHeightChange);
   const resizeStateRef = useRef<{
     pointerId: number;
@@ -809,10 +826,10 @@ export default function ThreadTerminalDrawer({
     return indexByTerminal >= 0 ? indexByTerminal : 0;
   }, [activeTerminalGroupId, resolvedActiveTerminalId, resolvedTerminalGroups]);
 
-  const visibleTerminalIds = resolvedTerminalGroups[resolvedActiveGroupIndex]?.terminalIds ?? [
-    resolvedActiveTerminalId,
-  ];
-  const hasTerminalSidebar = normalizedTerminalIds.length > 1;
+  const visibleTerminalIds = isDrawer
+    ? (resolvedTerminalGroups[resolvedActiveGroupIndex]?.terminalIds ?? [resolvedActiveTerminalId])
+    : normalizedTerminalIds;
+  const hasTerminalSidebar = isDrawer && normalizedTerminalIds.length > 1;
   const isSplitView = visibleTerminalIds.length > 1;
   const showGroupHeaders =
     resolvedTerminalGroups.length > 1 ||
@@ -852,49 +869,76 @@ export default function ThreadTerminalDrawer({
     drawerHeightRef.current = drawerHeight;
   }, [drawerHeight]);
 
-  const syncHeight = useCallback((nextHeight: number) => {
-    const clampedHeight = clampDrawerHeight(nextHeight);
-    if (lastSyncedHeightRef.current === clampedHeight) return;
-    lastSyncedHeightRef.current = clampedHeight;
-    onHeightChangeRef.current(clampedHeight);
-  }, []);
+  const syncHeight = useCallback(
+    (nextHeight: number) => {
+      if (!isDrawer) {
+        return;
+      }
+      const clampedHeight = clampDrawerHeight(nextHeight);
+      if (lastSyncedHeightRef.current === clampedHeight) return;
+      lastSyncedHeightRef.current = clampedHeight;
+      onHeightChangeRef.current(clampedHeight);
+    },
+    [isDrawer],
+  );
 
   useEffect(() => {
+    if (!isDrawer) {
+      setDrawerHeight(height);
+      drawerHeightRef.current = height;
+      lastSyncedHeightRef.current = height;
+      return;
+    }
     const clampedHeight = clampDrawerHeight(height);
     setDrawerHeight(clampedHeight);
     drawerHeightRef.current = clampedHeight;
     lastSyncedHeightRef.current = clampedHeight;
-  }, [height, threadId]);
+  }, [height, isDrawer, threadId]);
 
-  const handleResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    didResizeDuringDragRef.current = false;
-    resizeStateRef.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startHeight: drawerHeightRef.current,
-    };
-  }, []);
+  const handleResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!isDrawer) {
+        return;
+      }
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      didResizeDuringDragRef.current = false;
+      resizeStateRef.current = {
+        pointerId: event.pointerId,
+        startY: event.clientY,
+        startHeight: drawerHeightRef.current,
+      };
+    },
+    [isDrawer],
+  );
 
-  const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const resizeState = resizeStateRef.current;
-    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    const clampedHeight = clampDrawerHeight(
-      resizeState.startHeight + (resizeState.startY - event.clientY),
-    );
-    if (clampedHeight === drawerHeightRef.current) {
-      return;
-    }
-    didResizeDuringDragRef.current = true;
-    drawerHeightRef.current = clampedHeight;
-    setDrawerHeight(clampedHeight);
-  }, []);
+  const handleResizePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!isDrawer) {
+        return;
+      }
+      const resizeState = resizeStateRef.current;
+      if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      const clampedHeight = clampDrawerHeight(
+        resizeState.startHeight + (resizeState.startY - event.clientY),
+      );
+      if (clampedHeight === drawerHeightRef.current) {
+        return;
+      }
+      didResizeDuringDragRef.current = true;
+      drawerHeightRef.current = clampedHeight;
+      setDrawerHeight(clampedHeight);
+    },
+    [isDrawer],
+  );
 
   const handleResizePointerEnd = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!isDrawer) {
+        return;
+      }
       const resizeState = resizeStateRef.current;
       if (!resizeState || resizeState.pointerId !== event.pointerId) return;
       resizeStateRef.current = null;
@@ -907,19 +951,21 @@ export default function ThreadTerminalDrawer({
       syncHeight(drawerHeightRef.current);
       setResizeEpoch((value) => value + 1);
     },
-    [syncHeight],
+    [isDrawer, syncHeight],
   );
 
   useEffect(() => {
     const onWindowResize = () => {
-      const clampedHeight = clampDrawerHeight(drawerHeightRef.current);
-      const changed = clampedHeight !== drawerHeightRef.current;
-      if (changed) {
-        setDrawerHeight(clampedHeight);
-        drawerHeightRef.current = clampedHeight;
-      }
-      if (!resizeStateRef.current) {
-        syncHeight(clampedHeight);
+      if (isDrawer) {
+        const clampedHeight = clampDrawerHeight(drawerHeightRef.current);
+        const changed = clampedHeight !== drawerHeightRef.current;
+        if (changed) {
+          setDrawerHeight(clampedHeight);
+          drawerHeightRef.current = clampedHeight;
+        }
+        if (!resizeStateRef.current) {
+          syncHeight(clampedHeight);
+        }
       }
       setResizeEpoch((value) => value + 1);
     };
@@ -927,7 +973,27 @@ export default function ThreadTerminalDrawer({
     return () => {
       window.removeEventListener("resize", onWindowResize);
     };
-  }, [syncHeight]);
+  }, [isDrawer, syncHeight]);
+
+  useEffect(() => {
+    if (isDrawer) {
+      return;
+    }
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const rootElement = rootRef.current;
+    if (!rootElement) {
+      return;
+    }
+    const resizeObserver = new ResizeObserver(() => {
+      setResizeEpoch((value) => value + 1);
+    });
+    resizeObserver.observe(rootElement);
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [isDrawer]);
 
   useEffect(() => {
     return () => {
@@ -937,19 +1003,28 @@ export default function ThreadTerminalDrawer({
 
   return (
     <aside
-      className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
-      style={{ height: `${drawerHeight}px` }}
+      ref={rootRef}
+      className={`thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden bg-background ${
+        isDrawer ? "border-t border-border/80" : "h-full flex-1 bg-transparent"
+      }`}
+      style={isDrawer ? { height: `${drawerHeight}px` } : undefined}
     >
-      <div
-        className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
-        onPointerDown={handleResizePointerDown}
-        onPointerMove={handleResizePointerMove}
-        onPointerUp={handleResizePointerEnd}
-        onPointerCancel={handleResizePointerEnd}
-      />
+      {isDrawer ? (
+        <div
+          className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerEnd}
+          onPointerCancel={handleResizePointerEnd}
+        />
+      ) : null}
 
       {!hasTerminalSidebar && (
-        <div className="pointer-events-none absolute right-2 top-2 z-20">
+        <div
+          className={`pointer-events-none z-20 ${
+            isDrawer ? "absolute right-2 top-2" : "absolute right-2 top-2"
+          }`}
+        >
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
             <TerminalActionButton
               className={`p-1 text-foreground/90 transition-colors ${
@@ -983,7 +1058,11 @@ export default function ThreadTerminalDrawer({
       )}
 
       <div className="min-h-0 w-full flex-1">
-        <div className={`flex h-full min-h-0 ${hasTerminalSidebar ? "gap-1.5" : ""}`}>
+        <div
+          className={`flex h-full min-h-0 ${hasTerminalSidebar ? "gap-1.5" : ""} ${
+            isDrawer ? "" : hasTerminalSidebar ? "p-1" : "p-1 pt-8"
+          }`}
+        >
           <div className="min-w-0 flex-1">
             {isSplitView ? (
               <div
@@ -1004,7 +1083,7 @@ export default function ThreadTerminalDrawer({
                       }
                     }}
                   >
-                    <div className="h-full p-1">
+                    <div className="h-full p-0.5">
                       <TerminalViewport
                         threadId={threadId}
                         terminalId={terminalId}
@@ -1016,14 +1095,14 @@ export default function ThreadTerminalDrawer({
                         focusRequestId={focusRequestId}
                         autoFocus={terminalId === resolvedActiveTerminalId}
                         resizeEpoch={resizeEpoch}
-                        drawerHeight={drawerHeight}
+                        drawerHeight={drawerHeightRef.current}
                       />
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="h-full p-1">
+              <div className="h-full p-0.5">
                 <TerminalViewport
                   key={resolvedActiveTerminalId}
                   threadId={threadId}
@@ -1036,7 +1115,7 @@ export default function ThreadTerminalDrawer({
                   focusRequestId={focusRequestId}
                   autoFocus
                   resizeEpoch={resizeEpoch}
-                  drawerHeight={drawerHeight}
+                  drawerHeight={drawerHeightRef.current}
                 />
               </div>
             )}

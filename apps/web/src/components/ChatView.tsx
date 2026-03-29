@@ -84,6 +84,7 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
+import { ThreadDiffWorkspace } from "./ThreadDiffWorkspace";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   BotIcon,
@@ -94,6 +95,9 @@ import {
   ListTodoIcon,
   LockIcon,
   LockOpenIcon,
+  MessageSquareTextIcon,
+  PlusIcon,
+  TerminalSquareIcon,
   XIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -123,6 +127,7 @@ import {
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { findTerminalGroupByTerminalId, terminalGroupIdForTerminal } from "../terminalGroups";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -147,8 +152,24 @@ import {
 import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import {
+  buildTerminalWorkspaceTabId,
+  buildWorkspaceTabs,
+  isTerminalWorkspaceTabId,
+  resolveWorkspaceTabId,
+  type WorkspaceTabId,
+} from "../workspaceTabs";
+import {
+  isWorkspaceCommandPaletteShortcut,
+  OPEN_WORKSPACE_COMMAND_PALETTE_EVENT,
+} from "../workspaceCommandPaletteShortcuts";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import {
+  WorkspaceCommandPalette,
+  type WorkspaceCommandPaletteItem,
+} from "./WorkspaceCommandPalette";
+import { WorkspaceTabBar } from "./WorkspaceTabBar";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
@@ -356,6 +377,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     useState<Record<string, number>>({});
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
+  const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState<WorkspaceTabId>("chat");
+  const [isWorkspaceCommandPaletteOpen, setIsWorkspaceCommandPaletteOpen] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -524,6 +547,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+  const workspaceTabs = useMemo(
+    () =>
+      buildWorkspaceTabs({
+        diffOpen,
+        terminalOpen: terminalState.terminalOpen,
+        terminalGroups: terminalState.terminalGroups,
+      }),
+    [diffOpen, terminalState.terminalGroups, terminalState.terminalOpen],
+  );
+  const resolvedWorkspaceTabId = resolveWorkspaceTabId(activeWorkspaceTabId, workspaceTabs);
+  const activeWorkspaceTab = workspaceTabs.find((tab) => tab.id === resolvedWorkspaceTabId);
+  const activeTerminalWorkspaceTab =
+    activeWorkspaceTab?.kind === "terminal" ? activeWorkspaceTab : null;
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -542,6 +578,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const closePullRequestDialog = useCallback(() => {
     setPullRequestDialogState(null);
   }, []);
+
+  useEffect(() => {
+    if (resolvedWorkspaceTabId !== activeWorkspaceTabId) {
+      setActiveWorkspaceTabId(resolvedWorkspaceTabId);
+    }
+  }, [activeWorkspaceTabId, resolvedWorkspaceTabId]);
 
   const openOrReuseProjectDraftThread = useCallback(
     async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
@@ -1224,6 +1266,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [keybindings, nonTerminalShortcutLabelOptions],
   );
   const onToggleDiff = useCallback(() => {
+    if (!diffOpen) {
+      setActiveWorkspaceTabId("diff");
+    } else if (resolvedWorkspaceTabId === "diff") {
+      setActiveWorkspaceTabId("chat");
+    }
     void navigate({
       to: "/$threadId",
       params: { threadId },
@@ -1233,7 +1280,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
       },
     });
-  }, [diffOpen, navigate, threadId]);
+  }, [diffOpen, navigate, resolvedWorkspaceTabId, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -1248,6 +1295,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
       group.terminalIds.includes(terminalState.activeTerminalId),
     ) ??
     null;
+  const workspaceTerminalTabIdForGroup = useCallback(
+    (groupId: string) => buildTerminalWorkspaceTabId(groupId),
+    [],
+  );
+  const workspaceTerminalTabIdForTerminal = useCallback(
+    (terminalId: string) => {
+      const groupId =
+        findTerminalGroupByTerminalId(terminalState.terminalGroups, terminalId)?.id ??
+        terminalGroupIdForTerminal(terminalId);
+      return buildTerminalWorkspaceTabId(groupId);
+    },
+    [terminalState.terminalGroups],
+  );
+  const firstTerminalWorkspaceTabId = useMemo(
+    () => workspaceTabs.find((tab) => tab.kind === "terminal")?.id ?? null,
+    [workspaceTabs],
+  );
   const hasReachedSplitLimit =
     (activeTerminalGroup?.terminalIds.length ?? 0) >= MAX_TERMINALS_PER_GROUP;
   const setThreadError = useCallback(
@@ -1336,33 +1400,63 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadId) return;
+    if (terminalState.terminalOpen && activeWorkspaceTab?.kind === "terminal") {
+      setActiveWorkspaceTabId(diffOpen ? "diff" : "chat");
+    } else if (!terminalState.terminalOpen) {
+      setActiveWorkspaceTabId(
+        firstTerminalWorkspaceTabId ??
+          workspaceTerminalTabIdForGroup(terminalState.activeTerminalGroupId),
+      );
+    }
     setTerminalOpen(!terminalState.terminalOpen);
-  }, [activeThreadId, setTerminalOpen, terminalState.terminalOpen]);
+  }, [
+    activeThreadId,
+    activeWorkspaceTab?.kind,
+    diffOpen,
+    firstTerminalWorkspaceTabId,
+    setTerminalOpen,
+    terminalState.activeTerminalGroupId,
+    terminalState.terminalOpen,
+    workspaceTerminalTabIdForGroup,
+  ]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedSplitLimit) return;
     const terminalId = `terminal-${randomUUID()}`;
     storeSplitTerminal(activeThreadId, terminalId);
+    setActiveWorkspaceTabId(workspaceTerminalTabIdForGroup(terminalState.activeTerminalGroupId));
     setTerminalFocusRequestId((value) => value + 1);
-  }, [activeThreadId, hasReachedSplitLimit, storeSplitTerminal]);
+  }, [
+    activeThreadId,
+    hasReachedSplitLimit,
+    storeSplitTerminal,
+    terminalState.activeTerminalGroupId,
+    workspaceTerminalTabIdForGroup,
+  ]);
   const createNewTerminal = useCallback(() => {
     if (!activeThreadId) return;
     const terminalId = `terminal-${randomUUID()}`;
     storeNewTerminal(activeThreadId, terminalId);
+    setActiveWorkspaceTabId(buildTerminalWorkspaceTabId(terminalGroupIdForTerminal(terminalId)));
     setTerminalFocusRequestId((value) => value + 1);
   }, [activeThreadId, storeNewTerminal]);
   const activateTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadId) return;
       storeSetActiveTerminal(activeThreadId, terminalId);
+      setActiveWorkspaceTabId(workspaceTerminalTabIdForTerminal(terminalId));
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeThreadId, storeSetActiveTerminal],
+    [activeThreadId, storeSetActiveTerminal, workspaceTerminalTabIdForTerminal],
   );
   const closeTerminal = useCallback(
     (terminalId: string) => {
       const api = readNativeApi();
       if (!activeThreadId || !api) return;
-      const isFinalTerminal = terminalState.terminalIds.length <= 1;
+      const latestTerminalState = selectThreadTerminalState(
+        useTerminalStateStore.getState().terminalStateByThreadId,
+        activeThreadId,
+      );
+      const isFinalTerminal = latestTerminalState.terminalIds.length <= 1;
       const fallbackExitWrite = () =>
         api.terminal
           .write({ threadId: activeThreadId, terminalId, data: "exit\n" })
@@ -1384,9 +1478,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         void fallbackExitWrite();
       }
       storeCloseTerminal(activeThreadId, terminalId);
+      if (isFinalTerminal && activeWorkspaceTab?.kind === "terminal") {
+        setActiveWorkspaceTabId(diffOpen ? "diff" : "chat");
+      }
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeThreadId, storeCloseTerminal, terminalState.terminalIds.length],
+    [activeThreadId, activeWorkspaceTab?.kind, diffOpen, storeCloseTerminal],
   );
   const runProjectScript = useCallback(
     async (
@@ -1422,8 +1519,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setTerminalOpen(true);
       if (shouldCreateNewTerminal) {
         storeNewTerminal(activeThreadId, targetTerminalId);
+        setActiveWorkspaceTabId(
+          buildTerminalWorkspaceTabId(terminalGroupIdForTerminal(targetTerminalId)),
+        );
       } else {
         storeSetActiveTerminal(activeThreadId, targetTerminalId);
+        setActiveWorkspaceTabId(workspaceTerminalTabIdForTerminal(targetTerminalId));
       }
       setTerminalFocusRequestId((value) => value + 1);
 
@@ -1477,6 +1578,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       terminalState.activeTerminalId,
       terminalState.runningTerminalIds,
       terminalState.terminalIds,
+      workspaceTerminalTabIdForTerminal,
     ],
   );
 
@@ -2242,8 +2344,37 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, focusComposer, terminalState.terminalOpen]);
 
   useEffect(() => {
+    const openPalette = () => {
+      setIsWorkspaceCommandPaletteOpen(true);
+    };
+
+    const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) {
+        return;
+      }
+      if (!isWorkspaceCommandPaletteShortcut(event)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      openPalette();
+    };
+
+    const onOpenPalette = () => {
+      openPalette();
+    };
+
+    window.addEventListener("keydown", onWindowKeyDown);
+    window.addEventListener(OPEN_WORKSPACE_COMMAND_PALETTE_EVENT, onOpenPalette);
+    return () => {
+      window.removeEventListener("keydown", onWindowKeyDown);
+      window.removeEventListener(OPEN_WORKSPACE_COMMAND_PALETTE_EVENT, onOpenPalette);
+    };
+  }, []);
+
+  useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (!activeThreadId || event.defaultPrevented) return;
+      if (!activeThreadId || event.defaultPrevented || isWorkspaceCommandPaletteOpen) return;
       const shortcutContext = {
         terminalFocus: isTerminalFocused(),
         terminalOpen: Boolean(terminalState.terminalOpen),
@@ -2313,6 +2444,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThreadId,
     closeTerminal,
     createNewTerminal,
+    isWorkspaceCommandPaletteOpen,
     setTerminalOpen,
     runProjectScript,
     splitTerminal,
@@ -3562,6 +3694,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const expandedImageItem = expandedImage ? expandedImage.images[expandedImage.index] : null;
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
+      setActiveWorkspaceTabId("diff");
       void navigate({
         to: "/$threadId",
         params: { threadId },
@@ -3582,6 +3715,180 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     void onRevertToTurnCount(targetTurnCount);
   };
+  const isChatWorkspaceActive = activeWorkspaceTab?.kind === "chat" || !activeWorkspaceTab;
+  const openReviewWorkspace = useCallback(() => {
+    if (!isGitRepo) {
+      return;
+    }
+    if (diffOpen) {
+      setActiveWorkspaceTabId("diff");
+      return;
+    }
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return { ...rest, diff: "1" };
+      },
+    });
+    setActiveWorkspaceTabId("diff");
+  }, [diffOpen, isGitRepo, navigate, threadId]);
+  const selectWorkspaceTab = useCallback(
+    (tabId: WorkspaceTabId) => {
+      if (!isTerminalWorkspaceTabId(tabId)) {
+        setActiveWorkspaceTabId(tabId);
+        return;
+      }
+
+      const targetTab = workspaceTabs.find((tab) => tab.kind === "terminal" && tab.id === tabId);
+      if (!targetTab || targetTab.kind !== "terminal") {
+        setActiveWorkspaceTabId(tabId);
+        return;
+      }
+
+      activateTerminal(targetTab.primaryTerminalId);
+    },
+    [activateTerminal, workspaceTabs],
+  );
+  const createTerminalWorkspace = useCallback(() => {
+    if (!activeProject) {
+      return;
+    }
+    if (!terminalState.terminalOpen) {
+      setTerminalOpen(true);
+    }
+    createNewTerminal();
+  }, [activeProject, createNewTerminal, setTerminalOpen, terminalState.terminalOpen]);
+  const closeWorkspaceTab = useCallback(
+    (tabId: WorkspaceTabId) => {
+      if (tabId === "diff") {
+        if (diffOpen) {
+          onToggleDiff();
+        }
+        return;
+      }
+      if (!isTerminalWorkspaceTabId(tabId) || !terminalState.terminalOpen) {
+        return;
+      }
+
+      const targetTab = workspaceTabs.find((tab) => tab.kind === "terminal" && tab.id === tabId);
+      if (!targetTab || targetTab.kind !== "terminal") {
+        return;
+      }
+
+      if (resolvedWorkspaceTabId === tabId) {
+        const fallbackTabId =
+          workspaceTabs.find((tab) => tab.id !== tabId)?.id ?? (diffOpen ? "diff" : "chat");
+        setActiveWorkspaceTabId(fallbackTabId);
+      }
+
+      targetTab.terminalIds.forEach((terminalId) => {
+        closeTerminal(terminalId);
+      });
+    },
+    [
+      closeTerminal,
+      diffOpen,
+      onToggleDiff,
+      resolvedWorkspaceTabId,
+      terminalState.terminalOpen,
+      workspaceTabs,
+    ],
+  );
+  const workspaceCommandPaletteItems = useMemo<WorkspaceCommandPaletteItem[]>(() => {
+    const items: WorkspaceCommandPaletteItem[] = [];
+
+    if (activeProject) {
+      items.push({
+        id: "action:new-terminal",
+        group: "actions",
+        title: "New terminal",
+        subtitle: activeProject.name,
+        keywords: "create terminal shell tab",
+        icon: PlusIcon,
+        ...(newTerminalShortcutLabel ? { shortcut: newTerminalShortcutLabel } : {}),
+        onSelect: () => {
+          if (!terminalState.terminalOpen) {
+            setTerminalOpen(true);
+          }
+          createNewTerminal();
+        },
+      });
+    }
+
+    workspaceTabs.forEach((tab) => {
+      if (tab.kind !== "terminal") {
+        return;
+      }
+
+      const isCurrentTerminalTab = resolvedWorkspaceTabId === tab.id;
+      items.push({
+        id: `switch:${tab.id}`,
+        group: "terminals",
+        title: tab.title,
+        subtitle: isCurrentTerminalTab
+          ? "Current terminal tab"
+          : tab.terminalIds.length > 1
+            ? `${tab.terminalIds.length} split panes`
+            : "Terminal tab",
+        keywords: `terminal shell ${tab.title}`,
+        icon: TerminalSquareIcon,
+        onSelect: () => {
+          if (!terminalState.terminalOpen) {
+            setTerminalOpen(true);
+          }
+          activateTerminal(tab.primaryTerminalId);
+        },
+      });
+    });
+
+    const paletteThreads = activeThread
+      ? [activeThread, ...threads.filter((thread) => thread.id !== activeThread.id)]
+      : threads;
+    const projectNameById = new Map(projects.map((project) => [project.id, project.name] as const));
+
+    paletteThreads
+      .filter((thread) => thread.archivedAt === null)
+      .forEach((thread) => {
+        const isCurrentThread = thread.id === activeThread?.id;
+        const projectName = projectNameById.get(thread.projectId);
+        items.push({
+          id: `thread:${thread.id}`,
+          group: "sessions",
+          title: thread.title,
+          subtitle: [projectName, isCurrentThread ? "Current session" : null]
+            .filter(Boolean)
+            .join(" · "),
+          keywords: `${thread.title} ${projectName ?? ""}`.trim(),
+          icon: MessageSquareTextIcon,
+          onSelect: () => {
+            if (isCurrentThread) {
+              return;
+            }
+            void navigate({
+              to: "/$threadId",
+              params: { threadId: thread.id },
+            });
+          },
+        });
+      });
+
+    return items;
+  }, [
+    activeProject,
+    activeThread,
+    activateTerminal,
+    createNewTerminal,
+    navigate,
+    newTerminalShortcutLabel,
+    projects,
+    resolvedWorkspaceTabId,
+    setTerminalOpen,
+    terminalState.terminalOpen,
+    threads,
+    workspaceTabs,
+  ]);
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -3611,695 +3918,714 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
-      {/* Top bar */}
-      <header
-        className={cn(
-          "border-b border-border px-3 sm:px-5",
-          isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
-        )}
-      >
-        <ChatHeader
-          activeThreadId={activeThread.id}
-          activeThreadTitle={activeThread.title}
-          activeProjectName={activeProject?.name}
-          isGitRepo={isGitRepo}
-          openInCwd={gitCwd}
-          activeProjectScripts={activeProject?.scripts}
-          preferredScriptId={
-            activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
-          }
-          keybindings={keybindings}
-          availableEditors={availableEditors}
-          terminalAvailable={activeProject !== undefined}
-          terminalOpen={terminalState.terminalOpen}
-          terminalToggleShortcutLabel={terminalToggleShortcutLabel}
-          diffToggleShortcutLabel={diffPanelShortcutLabel}
-          gitCwd={gitCwd}
-          diffOpen={diffOpen}
-          onRunProjectScript={(script) => {
-            void runProjectScript(script);
-          }}
-          onAddProjectScript={saveProjectScript}
-          onUpdateProjectScript={updateProjectScript}
-          onDeleteProjectScript={deleteProjectScript}
-          onToggleTerminal={toggleTerminalVisibility}
-          onToggleDiff={onToggleDiff}
-        />
-      </header>
+      <div className="border-b border-border/70 bg-[linear-gradient(180deg,color-mix(in_srgb,var(--card)_82%,transparent),color-mix(in_srgb,var(--background)_92%,transparent))]">
+        <header
+          className={cn(
+            "px-3 sm:px-5",
+            isElectron ? "drag-region flex h-[46px] items-center" : "py-1.5 sm:py-2",
+          )}
+        >
+          <ChatHeader
+            activeThreadId={activeThread.id}
+            activeThreadTitle={activeThread.title}
+            activeProjectName={activeProject?.name}
+            isGitRepo={isGitRepo}
+            openInCwd={gitCwd}
+            activeProjectScripts={activeProject?.scripts}
+            preferredScriptId={
+              activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+            }
+            keybindings={keybindings}
+            availableEditors={availableEditors}
+            terminalAvailable={activeProject !== undefined}
+            terminalOpen={terminalState.terminalOpen}
+            terminalToggleShortcutLabel={terminalToggleShortcutLabel}
+            diffToggleShortcutLabel={diffPanelShortcutLabel}
+            gitCwd={gitCwd}
+            diffOpen={diffOpen}
+            onRunProjectScript={(script) => {
+              void runProjectScript(script);
+            }}
+            onAddProjectScript={saveProjectScript}
+            onUpdateProjectScript={updateProjectScript}
+            onDeleteProjectScript={deleteProjectScript}
+            onToggleTerminal={toggleTerminalVisibility}
+            onToggleDiff={onToggleDiff}
+          />
+        </header>
 
-      {/* Error banner */}
+        <WorkspaceTabBar
+          tabs={workspaceTabs}
+          activeTabId={resolvedWorkspaceTabId}
+          onSelectTab={selectWorkspaceTab}
+          onCloseTab={closeWorkspaceTab}
+          canCreateTerminal={activeProject !== undefined}
+          canOpenReview={isGitRepo}
+          onCreateTerminal={createTerminalWorkspace}
+          onOpenReview={openReviewWorkspace}
+        />
+      </div>
+
       <ProviderStatusBanner status={activeProviderStatus} />
       <ThreadErrorBanner
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
-      {/* Main content area with optional plan sidebar */}
+      <WorkspaceCommandPalette
+        open={isWorkspaceCommandPaletteOpen}
+        onOpenChange={setIsWorkspaceCommandPaletteOpen}
+        items={workspaceCommandPaletteItems}
+      />
       <div className="flex min-h-0 min-w-0 flex-1">
-        {/* Chat column */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {/* Messages Wrapper */}
-          <div className="relative flex min-h-0 flex-1 flex-col">
-            {/* Messages */}
-            <div
-              ref={setMessagesScrollContainerRef}
-              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
-              onScroll={onMessagesScroll}
-              onClickCapture={onMessagesClickCapture}
-              onWheel={onMessagesWheel}
-              onPointerDown={onMessagesPointerDown}
-              onPointerUp={onMessagesPointerUp}
-              onPointerCancel={onMessagesPointerCancel}
-              onTouchStart={onMessagesTouchStart}
-              onTouchMove={onMessagesTouchMove}
-              onTouchEnd={onMessagesTouchEnd}
-              onTouchCancel={onMessagesTouchEnd}
-            >
-              <MessagesTimeline
-                key={activeThread.id}
-                hasMessages={timelineEntries.length > 0}
-                isWorking={isWorking}
-                activeTurnInProgress={isWorking || !latestTurnSettled}
-                activeTurnStartedAt={activeWorkStartedAt}
-                scrollContainer={messagesScrollElement}
-                timelineEntries={timelineEntries}
-                completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-                completionSummary={completionSummary}
-                turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-                nowIso={nowIso}
-                expandedWorkGroups={expandedWorkGroups}
-                onToggleWorkGroup={onToggleWorkGroup}
-                onOpenTurnDiff={onOpenTurnDiff}
-                revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-                onRevertUserMessage={onRevertUserMessage}
-                isRevertingCheckpoint={isRevertingCheckpoint}
-                onImageExpand={onExpandTimelineImage}
-                markdownCwd={gitCwd ?? undefined}
-                resolvedTheme={resolvedTheme}
-                timestampFormat={timestampFormat}
-                workspaceRoot={activeProject?.cwd ?? undefined}
-              />
-            </div>
-
-            {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
-            {showScrollToBottom && (
-              <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
-                <button
-                  type="button"
-                  onClick={() => scrollMessagesToBottom("smooth")}
-                  className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
-                >
-                  <ChevronDownIcon className="size-3.5" />
-                  Scroll to bottom
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Input bar */}
-          <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
-            <form
-              ref={composerFormRef}
-              onSubmit={onSend}
-              className="mx-auto w-full min-w-0 max-w-3xl"
-              data-chat-composer-form="true"
-            >
-              <div
-                className={cn(
-                  "group rounded-[22px] p-px transition-colors duration-200",
-                  composerProviderState.composerFrameClassName,
-                )}
-                onDragEnter={onComposerDragEnter}
-                onDragOver={onComposerDragOver}
-                onDragLeave={onComposerDragLeave}
-                onDrop={onComposerDrop}
-              >
+        {isChatWorkspaceActive ? (
+          <>
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <div className="relative flex min-h-0 flex-1 flex-col">
                 <div
-                  className={cn(
-                    "rounded-[20px] border bg-card transition-colors duration-200 has-focus-visible:border-ring/45",
-                    isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
-                    composerProviderState.composerSurfaceClassName,
-                  )}
+                  ref={setMessagesScrollContainerRef}
+                  className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pb-3 pt-0 sm:px-5 sm:pb-4 sm:pt-0"
+                  onScroll={onMessagesScroll}
+                  onClickCapture={onMessagesClickCapture}
+                  onWheel={onMessagesWheel}
+                  onPointerDown={onMessagesPointerDown}
+                  onPointerUp={onMessagesPointerUp}
+                  onPointerCancel={onMessagesPointerCancel}
+                  onTouchStart={onMessagesTouchStart}
+                  onTouchMove={onMessagesTouchMove}
+                  onTouchEnd={onMessagesTouchEnd}
+                  onTouchCancel={onMessagesTouchEnd}
                 >
-                  {activePendingApproval ? (
-                    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
-                      <ComposerPendingApprovalPanel
-                        approval={activePendingApproval}
-                        pendingCount={pendingApprovals.length}
-                      />
-                    </div>
-                  ) : pendingUserInputs.length > 0 ? (
-                    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
-                      <ComposerPendingUserInputPanel
-                        pendingUserInputs={pendingUserInputs}
-                        respondingRequestIds={respondingRequestIds}
-                        answers={activePendingDraftAnswers}
-                        questionIndex={activePendingQuestionIndex}
-                        onSelectOption={onSelectActivePendingUserInputOption}
-                        onAdvance={onAdvanceActivePendingUserInput}
-                      />
-                    </div>
-                  ) : showPlanFollowUpPrompt && activeProposedPlan ? (
-                    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
-                      <ComposerPlanFollowUpBanner
-                        key={activeProposedPlan.id}
-                        planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
-                      />
-                    </div>
-                  ) : null}
+                  <MessagesTimeline
+                    key={activeThread.id}
+                    hasMessages={timelineEntries.length > 0}
+                    isWorking={isWorking}
+                    activeTurnInProgress={isWorking || !latestTurnSettled}
+                    activeTurnStartedAt={activeWorkStartedAt}
+                    scrollContainer={messagesScrollElement}
+                    timelineEntries={timelineEntries}
+                    completionDividerBeforeEntryId={completionDividerBeforeEntryId}
+                    completionSummary={completionSummary}
+                    turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+                    nowIso={nowIso}
+                    expandedWorkGroups={expandedWorkGroups}
+                    onToggleWorkGroup={onToggleWorkGroup}
+                    onOpenTurnDiff={onOpenTurnDiff}
+                    revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+                    onRevertUserMessage={onRevertUserMessage}
+                    isRevertingCheckpoint={isRevertingCheckpoint}
+                    onImageExpand={onExpandTimelineImage}
+                    markdownCwd={gitCwd ?? undefined}
+                    resolvedTheme={resolvedTheme}
+                    timestampFormat={timestampFormat}
+                    workspaceRoot={activeProject?.cwd ?? undefined}
+                  />
+                </div>
+
+                {showScrollToBottom && (
+                  <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
+                    <button
+                      type="button"
+                      onClick={() => scrollMessagesToBottom("smooth")}
+                      className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
+                    >
+                      <ChevronDownIcon className="size-3.5" />
+                      Scroll to bottom
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div
+                className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}
+              >
+                <form
+                  ref={composerFormRef}
+                  onSubmit={onSend}
+                  className="mx-auto w-full min-w-0 max-w-3xl"
+                  data-chat-composer-form="true"
+                >
                   <div
                     className={cn(
-                      "relative px-3 pb-2 sm:px-4",
-                      hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
+                      "group rounded-[22px] p-px transition-colors duration-200",
+                      composerProviderState.composerFrameClassName,
                     )}
+                    onDragEnter={onComposerDragEnter}
+                    onDragOver={onComposerDragOver}
+                    onDragLeave={onComposerDragLeave}
+                    onDrop={onComposerDrop}
                   >
-                    {composerMenuOpen && !isComposerApprovalState && (
-                      <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
-                        <ComposerCommandMenu
-                          items={composerMenuItems}
-                          resolvedTheme={resolvedTheme}
-                          isLoading={isComposerMenuLoading}
-                          triggerKind={composerTriggerKind}
-                          activeItemId={activeComposerMenuItem?.id ?? null}
-                          onHighlightedItemChange={onComposerMenuItemHighlighted}
-                          onSelect={onSelectComposerItem}
-                        />
-                      </div>
-                    )}
-
-                    {!isComposerApprovalState &&
-                      pendingUserInputs.length === 0 &&
-                      composerImages.length > 0 && (
-                        <div className="mb-3 flex flex-wrap gap-2">
-                          {composerImages.map((image) => (
-                            <div
-                              key={image.id}
-                              className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                            >
-                              {image.previewUrl ? (
-                                <button
-                                  type="button"
-                                  className="h-full w-full cursor-zoom-in"
-                                  aria-label={`Preview ${image.name}`}
-                                  onClick={() => {
-                                    const preview = buildExpandedImagePreview(
-                                      composerImages,
-                                      image.id,
-                                    );
-                                    if (!preview) return;
-                                    setExpandedImage(preview);
-                                  }}
-                                >
-                                  <img
-                                    src={image.previewUrl}
-                                    alt={image.name}
-                                    className="h-full w-full object-cover"
-                                  />
-                                </button>
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
-                                  {image.name}
-                                </div>
-                              )}
-                              {nonPersistedComposerImageIdSet.has(image.id) && (
-                                <Tooltip>
-                                  <TooltipTrigger
-                                    render={
-                                      <span
-                                        role="img"
-                                        aria-label="Draft attachment may not persist"
-                                        className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
-                                      >
-                                        <CircleAlertIcon className="size-3" />
-                                      </span>
-                                    }
-                                  />
-                                  <TooltipPopup
-                                    side="top"
-                                    className="max-w-64 whitespace-normal leading-tight"
-                                  >
-                                    Draft attachment could not be saved locally and may be lost on
-                                    navigation.
-                                  </TooltipPopup>
-                                </Tooltip>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-                                onClick={() => removeComposerImage(image.id)}
-                                aria-label={`Remove ${image.name}`}
-                              >
-                                <XIcon />
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    {!isComposerApprovalState &&
-                      pendingUserInputs.length === 0 &&
-                      composerDiffComments.length > 0 && (
-                        <ComposerPendingDiffComments
-                          comments={composerDiffComments}
-                          className="mb-3"
-                          onRemove={removeComposerDiffCommentFromDraft}
-                        />
-                      )}
-                    <ComposerPromptEditor
-                      ref={composerEditorRef}
-                      value={
-                        isComposerApprovalState
-                          ? ""
-                          : activePendingProgress
-                            ? activePendingProgress.customAnswer
-                            : prompt
-                      }
-                      cursor={composerCursor}
-                      terminalContexts={
-                        !isComposerApprovalState && pendingUserInputs.length === 0
-                          ? composerTerminalContexts
-                          : []
-                      }
-                      onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
-                      onChange={onPromptChange}
-                      onCommandKeyDown={onComposerCommandKey}
-                      onPaste={onComposerPaste}
-                      placeholder={
-                        isComposerApprovalState
-                          ? (activePendingApproval?.detail ??
-                            "Resolve this approval request to continue")
-                          : activePendingProgress
-                            ? "Type your own answer, or leave this blank to use the selected option"
-                            : showPlanFollowUpPrompt && activeProposedPlan
-                              ? "Add feedback to refine the plan, or leave this blank to implement it"
-                              : phase === "disconnected"
-                                ? "Ask for follow-up changes or attach images"
-                                : "Ask anything, @tag files/folders, or use / to show available commands"
-                      }
-                      disabled={isConnecting || isComposerApprovalState}
-                    />
-                  </div>
-
-                  {/* Bottom toolbar */}
-                  {activePendingApproval ? (
-                    <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
-                      <ComposerPendingApprovalActions
-                        requestId={activePendingApproval.requestId}
-                        isResponding={respondingRequestIds.includes(
-                          activePendingApproval.requestId,
-                        )}
-                        onRespondToApproval={onRespondToApproval}
-                      />
-                    </div>
-                  ) : (
                     <div
-                      data-chat-composer-footer="true"
                       className={cn(
-                        "flex items-center justify-between px-2.5 pb-2.5 sm:px-3 sm:pb-3",
-                        isComposerFooterCompact
-                          ? "gap-1.5"
-                          : "flex-wrap gap-2 sm:flex-nowrap sm:gap-0",
+                        "rounded-[20px] border bg-card transition-colors duration-200 has-focus-visible:border-ring/45",
+                        isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
+                        composerProviderState.composerSurfaceClassName,
                       )}
                     >
+                      {activePendingApproval ? (
+                        <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                          <ComposerPendingApprovalPanel
+                            approval={activePendingApproval}
+                            pendingCount={pendingApprovals.length}
+                          />
+                        </div>
+                      ) : pendingUserInputs.length > 0 ? (
+                        <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                          <ComposerPendingUserInputPanel
+                            pendingUserInputs={pendingUserInputs}
+                            respondingRequestIds={respondingRequestIds}
+                            answers={activePendingDraftAnswers}
+                            questionIndex={activePendingQuestionIndex}
+                            onSelectOption={onSelectActivePendingUserInputOption}
+                            onAdvance={onAdvanceActivePendingUserInput}
+                          />
+                        </div>
+                      ) : showPlanFollowUpPrompt && activeProposedPlan ? (
+                        <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                          <ComposerPlanFollowUpBanner
+                            key={activeProposedPlan.id}
+                            planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
+                          />
+                        </div>
+                      ) : null}
                       <div
                         className={cn(
-                          "flex min-w-0 flex-1 items-center",
-                          isComposerFooterCompact
-                            ? "gap-1 overflow-hidden"
-                            : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible",
+                          "relative px-3 pb-2 sm:px-4",
+                          hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
                         )}
                       >
-                        {/* Provider/model picker */}
-                        <ProviderModelPicker
-                          compact={isComposerFooterCompact}
-                          provider={selectedProvider}
-                          model={selectedModelForPickerWithCustomFallback}
-                          lockedProvider={lockedProvider}
-                          providers={providerStatuses}
-                          modelOptionsByProvider={modelOptionsByProvider}
-                          {...(composerProviderState.modelPickerIconClassName
-                            ? {
-                                activeProviderIconClassName:
-                                  composerProviderState.modelPickerIconClassName,
-                              }
-                            : {})}
-                          onProviderModelChange={onProviderModelSelect}
-                        />
-
-                        {isComposerFooterCompact ? (
-                          <CompactComposerControlsMenu
-                            activePlan={Boolean(
-                              activePlan || sidebarProposedPlan || planSidebarOpen,
-                            )}
-                            interactionMode={interactionMode}
-                            planSidebarOpen={planSidebarOpen}
-                            runtimeMode={runtimeMode}
-                            traitsMenuContent={providerTraitsMenuContent}
-                            onToggleInteractionMode={toggleInteractionMode}
-                            onTogglePlanSidebar={togglePlanSidebar}
-                            onToggleRuntimeMode={toggleRuntimeMode}
-                          />
-                        ) : (
-                          <>
-                            {providerTraitsPicker ? (
-                              <>
-                                <Separator
-                                  orientation="vertical"
-                                  className="mx-0.5 hidden h-4 sm:block"
-                                />
-                                {providerTraitsPicker}
-                              </>
-                            ) : null}
-
-                            <Separator
-                              orientation="vertical"
-                              className="mx-0.5 hidden h-4 sm:block"
+                        {composerMenuOpen && !isComposerApprovalState && (
+                          <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
+                            <ComposerCommandMenu
+                              items={composerMenuItems}
+                              resolvedTheme={resolvedTheme}
+                              isLoading={isComposerMenuLoading}
+                              triggerKind={composerTriggerKind}
+                              activeItemId={activeComposerMenuItem?.id ?? null}
+                              onHighlightedItemChange={onComposerMenuItemHighlighted}
+                              onSelect={onSelectComposerItem}
                             />
-
-                            <Button
-                              variant="ghost"
-                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                              size="sm"
-                              type="button"
-                              onClick={toggleInteractionMode}
-                              title={
-                                interactionMode === "plan"
-                                  ? "Plan mode — click to return to normal chat mode"
-                                  : "Default mode — click to enter plan mode"
-                              }
-                            >
-                              <BotIcon />
-                              <span className="sr-only sm:not-sr-only">
-                                {interactionMode === "plan" ? "Plan" : "Chat"}
-                              </span>
-                            </Button>
-
-                            <Separator
-                              orientation="vertical"
-                              className="mx-0.5 hidden h-4 sm:block"
-                            />
-
-                            <Button
-                              variant="ghost"
-                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                              size="sm"
-                              type="button"
-                              onClick={() =>
-                                void handleRuntimeModeChange(
-                                  runtimeMode === "full-access"
-                                    ? "approval-required"
-                                    : "full-access",
-                                )
-                              }
-                              title={
-                                runtimeMode === "full-access"
-                                  ? "Full access — click to require approvals"
-                                  : "Approval required — click for full access"
-                              }
-                            >
-                              {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
-                              <span className="sr-only sm:not-sr-only">
-                                {runtimeMode === "full-access" ? "Full access" : "Supervised"}
-                              </span>
-                            </Button>
-
-                            {activePlan || sidebarProposedPlan || planSidebarOpen ? (
-                              <>
-                                <Separator
-                                  orientation="vertical"
-                                  className="mx-0.5 hidden h-4 sm:block"
-                                />
-                                <Button
-                                  variant="ghost"
-                                  className={cn(
-                                    "shrink-0 whitespace-nowrap px-2 sm:px-3",
-                                    planSidebarOpen
-                                      ? "text-blue-400 hover:text-blue-300"
-                                      : "text-muted-foreground/70 hover:text-foreground/80",
-                                  )}
-                                  size="sm"
-                                  type="button"
-                                  onClick={togglePlanSidebar}
-                                  title={
-                                    planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"
-                                  }
-                                >
-                                  <ListTodoIcon />
-                                  <span className="sr-only sm:not-sr-only">Plan</span>
-                                </Button>
-                              </>
-                            ) : null}
-                          </>
+                          </div>
                         )}
+
+                        {!isComposerApprovalState &&
+                          pendingUserInputs.length === 0 &&
+                          composerImages.length > 0 && (
+                            <div className="mb-3 flex flex-wrap gap-2">
+                              {composerImages.map((image) => (
+                                <div
+                                  key={image.id}
+                                  className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+                                >
+                                  {image.previewUrl ? (
+                                    <button
+                                      type="button"
+                                      className="h-full w-full cursor-zoom-in"
+                                      aria-label={`Preview ${image.name}`}
+                                      onClick={() => {
+                                        const preview = buildExpandedImagePreview(
+                                          composerImages,
+                                          image.id,
+                                        );
+                                        if (!preview) return;
+                                        setExpandedImage(preview);
+                                      }}
+                                    >
+                                      <img
+                                        src={image.previewUrl}
+                                        alt={image.name}
+                                        className="h-full w-full object-cover"
+                                      />
+                                    </button>
+                                  ) : (
+                                    <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                                      {image.name}
+                                    </div>
+                                  )}
+                                  {nonPersistedComposerImageIdSet.has(image.id) && (
+                                    <Tooltip>
+                                      <TooltipTrigger
+                                        render={
+                                          <span
+                                            role="img"
+                                            aria-label="Draft attachment may not persist"
+                                            className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
+                                          >
+                                            <CircleAlertIcon className="size-3" />
+                                          </span>
+                                        }
+                                      />
+                                      <TooltipPopup
+                                        side="top"
+                                        className="max-w-64 whitespace-normal leading-tight"
+                                      >
+                                        Draft attachment could not be saved locally and may be lost
+                                        on navigation.
+                                      </TooltipPopup>
+                                    </Tooltip>
+                                  )}
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                                    onClick={() => removeComposerImage(image.id)}
+                                    aria-label={`Remove ${image.name}`}
+                                  >
+                                    <XIcon />
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        {!isComposerApprovalState &&
+                          pendingUserInputs.length === 0 &&
+                          composerDiffComments.length > 0 && (
+                            <ComposerPendingDiffComments
+                              comments={composerDiffComments}
+                              className="mb-3"
+                              onRemove={removeComposerDiffCommentFromDraft}
+                            />
+                          )}
+                        <ComposerPromptEditor
+                          ref={composerEditorRef}
+                          value={
+                            isComposerApprovalState
+                              ? ""
+                              : activePendingProgress
+                                ? activePendingProgress.customAnswer
+                                : prompt
+                          }
+                          cursor={composerCursor}
+                          terminalContexts={
+                            !isComposerApprovalState && pendingUserInputs.length === 0
+                              ? composerTerminalContexts
+                              : []
+                          }
+                          onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
+                          onChange={onPromptChange}
+                          onCommandKeyDown={onComposerCommandKey}
+                          onPaste={onComposerPaste}
+                          placeholder={
+                            isComposerApprovalState
+                              ? (activePendingApproval?.detail ??
+                                "Resolve this approval request to continue")
+                              : activePendingProgress
+                                ? "Type your own answer, or leave this blank to use the selected option"
+                                : showPlanFollowUpPrompt && activeProposedPlan
+                                  ? "Add feedback to refine the plan, or leave this blank to implement it"
+                                  : phase === "disconnected"
+                                    ? "Ask for follow-up changes or attach images"
+                                    : "Ask anything, @tag files/folders, or use / to show available commands"
+                          }
+                          disabled={isConnecting || isComposerApprovalState}
+                        />
                       </div>
 
-                      {/* Right side: send / stop button */}
-                      <div
-                        data-chat-composer-actions="right"
-                        className="flex shrink-0 items-center gap-2"
-                      >
-                        {activeContextWindow ? (
-                          <ContextWindowMeter usage={activeContextWindow} />
-                        ) : null}
-                        {isPreparingWorktree ? (
-                          <span className="text-muted-foreground/70 text-xs">
-                            Preparing worktree...
-                          </span>
-                        ) : null}
-                        {activePendingProgress ? (
-                          <div className="flex items-center gap-2">
-                            {activePendingProgress.questionIndex > 0 ? (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="rounded-full"
-                                onClick={onPreviousActivePendingUserInputQuestion}
-                                disabled={activePendingIsResponding}
-                              >
-                                Previous
-                              </Button>
-                            ) : null}
-                            <Button
-                              type="submit"
-                              size="sm"
-                              className="rounded-full px-4"
-                              disabled={
-                                activePendingIsResponding ||
-                                (activePendingProgress.isLastQuestion
-                                  ? !activePendingResolvedAnswers
-                                  : !activePendingProgress.canAdvance)
-                              }
-                            >
-                              {activePendingIsResponding
-                                ? "Submitting..."
-                                : activePendingProgress.isLastQuestion
-                                  ? "Submit answers"
-                                  : "Next question"}
-                            </Button>
-                          </div>
-                        ) : phase === "running" ? (
-                          <button
-                            type="button"
-                            className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
-                            onClick={() => void onInterrupt()}
-                            aria-label="Stop generation"
+                      {activePendingApproval ? (
+                        <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
+                          <ComposerPendingApprovalActions
+                            requestId={activePendingApproval.requestId}
+                            isResponding={respondingRequestIds.includes(
+                              activePendingApproval.requestId,
+                            )}
+                            onRespondToApproval={onRespondToApproval}
+                          />
+                        </div>
+                      ) : (
+                        <div
+                          data-chat-composer-footer="true"
+                          className={cn(
+                            "flex items-center justify-between px-2.5 pb-2.5 sm:px-3 sm:pb-3",
+                            isComposerFooterCompact
+                              ? "gap-1.5"
+                              : "flex-wrap gap-2 sm:flex-nowrap sm:gap-0",
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              "flex min-w-0 flex-1 items-center",
+                              isComposerFooterCompact
+                                ? "gap-1 overflow-hidden"
+                                : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible",
+                            )}
                           >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 12 12"
-                              fill="currentColor"
-                              aria-hidden="true"
-                            >
-                              <rect x="2" y="2" width="8" height="8" rx="1.5" />
-                            </svg>
-                          </button>
-                        ) : pendingUserInputs.length === 0 ? (
-                          showPlanFollowUpPrompt ? (
-                            prompt.trim().length > 0 ? (
-                              <Button
-                                type="submit"
-                                size="sm"
-                                className="h-9 rounded-full px-4 sm:h-8"
-                                disabled={isSendBusy || isConnecting}
-                              >
-                                {isConnecting || isSendBusy ? "Sending..." : "Refine"}
-                              </Button>
+                            <ProviderModelPicker
+                              compact={isComposerFooterCompact}
+                              provider={selectedProvider}
+                              model={selectedModelForPickerWithCustomFallback}
+                              lockedProvider={lockedProvider}
+                              providers={providerStatuses}
+                              modelOptionsByProvider={modelOptionsByProvider}
+                              {...(composerProviderState.modelPickerIconClassName
+                                ? {
+                                    activeProviderIconClassName:
+                                      composerProviderState.modelPickerIconClassName,
+                                  }
+                                : {})}
+                              onProviderModelChange={onProviderModelSelect}
+                            />
+
+                            {isComposerFooterCompact ? (
+                              <CompactComposerControlsMenu
+                                activePlan={Boolean(
+                                  activePlan || sidebarProposedPlan || planSidebarOpen,
+                                )}
+                                interactionMode={interactionMode}
+                                planSidebarOpen={planSidebarOpen}
+                                runtimeMode={runtimeMode}
+                                traitsMenuContent={providerTraitsMenuContent}
+                                onToggleInteractionMode={toggleInteractionMode}
+                                onTogglePlanSidebar={togglePlanSidebar}
+                                onToggleRuntimeMode={toggleRuntimeMode}
+                              />
                             ) : (
-                              <div className="flex items-center">
+                              <>
+                                {providerTraitsPicker ? (
+                                  <>
+                                    <Separator
+                                      orientation="vertical"
+                                      className="mx-0.5 hidden h-4 sm:block"
+                                    />
+                                    {providerTraitsPicker}
+                                  </>
+                                ) : null}
+
+                                <Separator
+                                  orientation="vertical"
+                                  className="mx-0.5 hidden h-4 sm:block"
+                                />
+
+                                <Button
+                                  variant="ghost"
+                                  className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                                  size="sm"
+                                  type="button"
+                                  onClick={toggleInteractionMode}
+                                  title={
+                                    interactionMode === "plan"
+                                      ? "Plan mode — click to return to normal chat mode"
+                                      : "Default mode — click to enter plan mode"
+                                  }
+                                >
+                                  <BotIcon />
+                                  <span className="sr-only sm:not-sr-only">
+                                    {interactionMode === "plan" ? "Plan" : "Chat"}
+                                  </span>
+                                </Button>
+
+                                <Separator
+                                  orientation="vertical"
+                                  className="mx-0.5 hidden h-4 sm:block"
+                                />
+
+                                <Button
+                                  variant="ghost"
+                                  className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                                  size="sm"
+                                  type="button"
+                                  onClick={() =>
+                                    void handleRuntimeModeChange(
+                                      runtimeMode === "full-access"
+                                        ? "approval-required"
+                                        : "full-access",
+                                    )
+                                  }
+                                  title={
+                                    runtimeMode === "full-access"
+                                      ? "Full access — click to require approvals"
+                                      : "Approval required — click for full access"
+                                  }
+                                >
+                                  {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
+                                  <span className="sr-only sm:not-sr-only">
+                                    {runtimeMode === "full-access" ? "Full access" : "Supervised"}
+                                  </span>
+                                </Button>
+
+                                {activePlan || sidebarProposedPlan || planSidebarOpen ? (
+                                  <>
+                                    <Separator
+                                      orientation="vertical"
+                                      className="mx-0.5 hidden h-4 sm:block"
+                                    />
+                                    <Button
+                                      variant="ghost"
+                                      className={cn(
+                                        "shrink-0 whitespace-nowrap px-2 sm:px-3",
+                                        planSidebarOpen
+                                          ? "text-blue-400 hover:text-blue-300"
+                                          : "text-muted-foreground/70 hover:text-foreground/80",
+                                      )}
+                                      size="sm"
+                                      type="button"
+                                      onClick={togglePlanSidebar}
+                                      title={
+                                        planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"
+                                      }
+                                    >
+                                      <ListTodoIcon />
+                                      <span className="sr-only sm:not-sr-only">Plan</span>
+                                    </Button>
+                                  </>
+                                ) : null}
+                              </>
+                            )}
+                          </div>
+
+                          <div
+                            data-chat-composer-actions="right"
+                            className="flex shrink-0 items-center gap-2"
+                          >
+                            {activeContextWindow ? (
+                              <ContextWindowMeter usage={activeContextWindow} />
+                            ) : null}
+                            {isPreparingWorktree ? (
+                              <span className="text-muted-foreground/70 text-xs">
+                                Preparing worktree...
+                              </span>
+                            ) : null}
+                            {activePendingProgress ? (
+                              <div className="flex items-center gap-2">
+                                {activePendingProgress.questionIndex > 0 ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="rounded-full"
+                                    onClick={onPreviousActivePendingUserInputQuestion}
+                                    disabled={activePendingIsResponding}
+                                  >
+                                    Previous
+                                  </Button>
+                                ) : null}
                                 <Button
                                   type="submit"
                                   size="sm"
-                                  className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
-                                  disabled={isSendBusy || isConnecting}
+                                  className="rounded-full px-4"
+                                  disabled={
+                                    activePendingIsResponding ||
+                                    (activePendingProgress.isLastQuestion
+                                      ? !activePendingResolvedAnswers
+                                      : !activePendingProgress.canAdvance)
+                                  }
                                 >
-                                  {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+                                  {activePendingIsResponding
+                                    ? "Submitting..."
+                                    : activePendingProgress.isLastQuestion
+                                      ? "Submit answers"
+                                      : "Next question"}
                                 </Button>
-                                <Menu>
-                                  <MenuTrigger
-                                    render={
-                                      <Button
-                                        size="sm"
-                                        variant="default"
-                                        className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
-                                        aria-label="Implementation actions"
-                                        disabled={isSendBusy || isConnecting}
-                                      />
-                                    }
-                                  >
-                                    <ChevronDownIcon className="size-3.5" />
-                                  </MenuTrigger>
-                                  <MenuPopup align="end" side="top">
-                                    <MenuItem
-                                      disabled={isSendBusy || isConnecting}
-                                      onClick={() => void onImplementPlanInNewThread()}
-                                    >
-                                      Implement in a new thread
-                                    </MenuItem>
-                                  </MenuPopup>
-                                </Menu>
                               </div>
-                            )
-                          ) : (
-                            <button
-                              type="submit"
-                              className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
-                              disabled={
-                                isSendBusy || isConnecting || !composerSendState.hasSendableContent
-                              }
-                              aria-label={
-                                isConnecting
-                                  ? "Connecting"
-                                  : isPreparingWorktree
-                                    ? "Preparing worktree"
-                                    : isSendBusy
-                                      ? "Sending"
-                                      : "Send message"
-                              }
-                            >
-                              {isConnecting || isSendBusy ? (
+                            ) : phase === "running" ? (
+                              <button
+                                type="button"
+                                className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+                                onClick={() => void onInterrupt()}
+                                aria-label="Stop generation"
+                              >
                                 <svg
-                                  width="14"
-                                  height="14"
-                                  viewBox="0 0 14 14"
-                                  fill="none"
-                                  className="animate-spin"
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 12 12"
+                                  fill="currentColor"
                                   aria-hidden="true"
                                 >
-                                  <circle
-                                    cx="7"
-                                    cy="7"
-                                    r="5.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    strokeLinecap="round"
-                                    strokeDasharray="20 12"
-                                  />
+                                  <rect x="2" y="2" width="8" height="8" rx="1.5" />
                                 </svg>
+                              </button>
+                            ) : pendingUserInputs.length === 0 ? (
+                              showPlanFollowUpPrompt ? (
+                                prompt.trim().length > 0 ? (
+                                  <Button
+                                    type="submit"
+                                    size="sm"
+                                    className="h-9 rounded-full px-4 sm:h-8"
+                                    disabled={isSendBusy || isConnecting}
+                                  >
+                                    {isConnecting || isSendBusy ? "Sending..." : "Refine"}
+                                  </Button>
+                                ) : (
+                                  <div className="flex items-center">
+                                    <Button
+                                      type="submit"
+                                      size="sm"
+                                      className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
+                                      disabled={isSendBusy || isConnecting}
+                                    >
+                                      {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+                                    </Button>
+                                    <Menu>
+                                      <MenuTrigger
+                                        render={
+                                          <Button
+                                            size="sm"
+                                            variant="default"
+                                            className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
+                                            aria-label="Implementation actions"
+                                            disabled={isSendBusy || isConnecting}
+                                          />
+                                        }
+                                      >
+                                        <ChevronDownIcon className="size-3.5" />
+                                      </MenuTrigger>
+                                      <MenuPopup align="end" side="top">
+                                        <MenuItem
+                                          disabled={isSendBusy || isConnecting}
+                                          onClick={() => void onImplementPlanInNewThread()}
+                                        >
+                                          Implement in a new thread
+                                        </MenuItem>
+                                      </MenuPopup>
+                                    </Menu>
+                                  </div>
+                                )
                               ) : (
-                                <svg
-                                  width="14"
-                                  height="14"
-                                  viewBox="0 0 14 14"
-                                  fill="none"
-                                  aria-hidden="true"
+                                <button
+                                  type="submit"
+                                  className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
+                                  disabled={
+                                    isSendBusy ||
+                                    isConnecting ||
+                                    !composerSendState.hasSendableContent
+                                  }
+                                  aria-label={
+                                    isConnecting
+                                      ? "Connecting"
+                                      : isPreparingWorktree
+                                        ? "Preparing worktree"
+                                        : isSendBusy
+                                          ? "Sending"
+                                          : "Send message"
+                                  }
                                 >
-                                  <path
-                                    d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.8"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                </svg>
-                              )}
-                            </button>
-                          )
-                        ) : null}
-                      </div>
+                                  {isConnecting || isSendBusy ? (
+                                    <svg
+                                      width="14"
+                                      height="14"
+                                      viewBox="0 0 14 14"
+                                      fill="none"
+                                      className="animate-spin"
+                                      aria-hidden="true"
+                                    >
+                                      <circle
+                                        cx="7"
+                                        cy="7"
+                                        r="5.5"
+                                        stroke="currentColor"
+                                        strokeWidth="1.5"
+                                        strokeLinecap="round"
+                                        strokeDasharray="20 12"
+                                      />
+                                    </svg>
+                                  ) : (
+                                    <svg
+                                      width="14"
+                                      height="14"
+                                      viewBox="0 0 14 14"
+                                      fill="none"
+                                      aria-hidden="true"
+                                    >
+                                      <path
+                                        d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+                                        stroke="currentColor"
+                                        strokeWidth="1.8"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                    </svg>
+                                  )}
+                                </button>
+                              )
+                            ) : null}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  </div>
+                </form>
               </div>
-            </form>
+
+              {isGitRepo && (
+                <BranchToolbar
+                  threadId={activeThread.id}
+                  onEnvModeChange={onEnvModeChange}
+                  envLocked={envLocked}
+                  onComposerFocusRequest={scheduleComposerFocus}
+                  {...(canCheckoutPullRequestIntoThread
+                    ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                    : {})}
+                />
+              )}
+              {pullRequestDialogState ? (
+                <PullRequestThreadDialog
+                  key={pullRequestDialogState.key}
+                  open
+                  cwd={activeProject?.cwd ?? null}
+                  initialReference={pullRequestDialogState.initialReference}
+                  onOpenChange={(open) => {
+                    if (!open) {
+                      closePullRequestDialog();
+                    }
+                  }}
+                  onPrepared={handlePreparedPullRequestThread}
+                />
+              ) : null}
+            </div>
+
+            {planSidebarOpen ? (
+              <PlanSidebar
+                activePlan={activePlan}
+                activeProposedPlan={sidebarProposedPlan}
+                markdownCwd={gitCwd ?? undefined}
+                workspaceRoot={activeProject?.cwd ?? undefined}
+                timestampFormat={timestampFormat}
+                onClose={() => {
+                  setPlanSidebarOpen(false);
+                  const turnKey = activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? null;
+                  if (turnKey) {
+                    planSidebarDismissedForTurnRef.current = turnKey;
+                  }
+                }}
+              />
+            ) : null}
+          </>
+        ) : activeWorkspaceTab?.kind === "diff" ? (
+          <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            <ThreadDiffWorkspace mode="sheet" />
           </div>
-
-          {isGitRepo && (
-            <BranchToolbar
+        ) : activeTerminalWorkspaceTab && activeProject ? (
+          <div className="min-h-0 min-w-0 flex-1 px-3 pb-3 pt-0 sm:px-5 sm:pb-5 sm:pt-0">
+            <ThreadTerminalDrawer
+              key={`${activeThread.id}:${activeTerminalWorkspaceTab.terminalGroupId}`}
+              variant="panel"
               threadId={activeThread.id}
-              onEnvModeChange={onEnvModeChange}
-              envLocked={envLocked}
-              onComposerFocusRequest={scheduleComposerFocus}
-              {...(canCheckoutPullRequestIntoThread
-                ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                : {})}
-            />
-          )}
-          {pullRequestDialogState ? (
-            <PullRequestThreadDialog
-              key={pullRequestDialogState.key}
-              open
-              cwd={activeProject?.cwd ?? null}
-              initialReference={pullRequestDialogState.initialReference}
-              onOpenChange={(open) => {
-                if (!open) {
-                  closePullRequestDialog();
-                }
-              }}
-              onPrepared={handlePreparedPullRequestThread}
-            />
-          ) : null}
-        </div>
-        {/* end chat column */}
-
-        {/* Plan sidebar */}
-        {planSidebarOpen ? (
-          <PlanSidebar
-            activePlan={activePlan}
-            activeProposedPlan={sidebarProposedPlan}
-            markdownCwd={gitCwd ?? undefined}
-            workspaceRoot={activeProject?.cwd ?? undefined}
-            timestampFormat={timestampFormat}
-            onClose={() => {
-              setPlanSidebarOpen(false);
-              // Track that the user explicitly dismissed for this turn so auto-open won't fight them.
-              const turnKey = activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? null;
-              if (turnKey) {
-                planSidebarDismissedForTurnRef.current = turnKey;
+              cwd={gitCwd ?? activeProject.cwd}
+              runtimeEnv={threadTerminalRuntimeEnv}
+              terminalIds={activeTerminalWorkspaceTab.terminalIds}
+              activeTerminalId={
+                activeTerminalWorkspaceTab.terminalIds.includes(terminalState.activeTerminalId)
+                  ? terminalState.activeTerminalId
+                  : activeTerminalWorkspaceTab.primaryTerminalId
               }
-            }}
-          />
+              terminalGroups={[
+                {
+                  id: activeTerminalWorkspaceTab.terminalGroupId,
+                  terminalIds: activeTerminalWorkspaceTab.terminalIds,
+                },
+              ]}
+              activeTerminalGroupId={activeTerminalWorkspaceTab.terminalGroupId}
+              focusRequestId={terminalFocusRequestId}
+              onSplitTerminal={splitTerminal}
+              onNewTerminal={createNewTerminal}
+              splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+              newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+              closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+              onActiveTerminalChange={activateTerminal}
+              onCloseTerminal={closeTerminal}
+              onHeightChange={setTerminalHeight}
+              onAddTerminalContext={addTerminalContextToDraft}
+            />
+          </div>
         ) : null}
       </div>
-      {/* end horizontal flex container */}
-
-      {(() => {
-        if (!terminalState.terminalOpen || !activeProject) {
-          return null;
-        }
-        return (
-          <ThreadTerminalDrawer
-            key={activeThread.id}
-            threadId={activeThread.id}
-            cwd={gitCwd ?? activeProject.cwd}
-            runtimeEnv={threadTerminalRuntimeEnv}
-            height={terminalState.terminalHeight}
-            terminalIds={terminalState.terminalIds}
-            activeTerminalId={terminalState.activeTerminalId}
-            terminalGroups={terminalState.terminalGroups}
-            activeTerminalGroupId={terminalState.activeTerminalGroupId}
-            focusRequestId={terminalFocusRequestId}
-            onSplitTerminal={splitTerminal}
-            onNewTerminal={createNewTerminal}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            onActiveTerminalChange={activateTerminal}
-            onCloseTerminal={closeTerminal}
-            onHeightChange={setTerminalHeight}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />
-        );
-      })()}
 
       {expandedImage && expandedImageItem && (
         <div

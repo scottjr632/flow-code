@@ -9,6 +9,7 @@ import type { ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
+import { terminalGroupIdForTerminal } from "./terminalGroups";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -46,10 +47,6 @@ function normalizeRunningTerminalIds(
   return [...new Set(runningTerminalIds)]
     .map((id) => id.trim())
     .filter((id) => id.length > 0 && validTerminalIdSet.has(id));
-}
-
-function fallbackGroupId(terminalId: string): string {
-  return `group-${terminalId}`;
 }
 
 function assignUniqueGroupId(baseId: string, usedGroupIds: Set<string>): string {
@@ -96,7 +93,7 @@ function normalizeTerminalGroups(
     const baseGroupId =
       group.id.trim().length > 0
         ? group.id.trim()
-        : fallbackGroupId(groupTerminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID);
+        : terminalGroupIdForTerminal(groupTerminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID);
     nextGroups.push({
       id: assignUniqueGroupId(baseGroupId, usedGroupIds),
       terminalIds: groupTerminalIds,
@@ -106,7 +103,7 @@ function normalizeTerminalGroups(
   for (const terminalId of terminalIds) {
     if (assignedTerminalIds.has(terminalId)) continue;
     nextGroups.push({
-      id: assignUniqueGroupId(fallbackGroupId(terminalId), usedGroupIds),
+      id: assignUniqueGroupId(terminalGroupIdForTerminal(terminalId), usedGroupIds),
       terminalIds: [terminalId],
     });
   }
@@ -114,7 +111,7 @@ function normalizeTerminalGroups(
   if (nextGroups.length === 0) {
     return [
       {
-        id: fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
+        id: terminalGroupIdForTerminal(DEFAULT_THREAD_TERMINAL_ID),
         terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
       },
     ];
@@ -163,11 +160,11 @@ const DEFAULT_THREAD_TERMINAL_STATE: ThreadTerminalState = Object.freeze({
   activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
   terminalGroups: [
     {
-      id: fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
+      id: terminalGroupIdForTerminal(DEFAULT_THREAD_TERMINAL_ID),
       terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
     },
   ],
-  activeTerminalGroupId: fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
+  activeTerminalGroupId: terminalGroupIdForTerminal(DEFAULT_THREAD_TERMINAL_ID),
 });
 
 function createDefaultThreadTerminalState(): ThreadTerminalState {
@@ -213,7 +210,7 @@ function normalizeThreadTerminalState(state: ThreadTerminalState): ThreadTermina
       activeGroupIdFromState ??
       activeGroupIdFromTerminal ??
       terminalGroups[0]?.id ??
-      fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
+      terminalGroupIdForTerminal(DEFAULT_THREAD_TERMINAL_ID),
   };
   return threadTerminalStateEqual(state, normalized) ? state : normalized;
 }
@@ -262,7 +259,7 @@ function upsertTerminalIntoGroups(
 
   if (mode === "new") {
     const usedGroupIds = new Set(terminalGroups.map((group) => group.id));
-    const nextGroupId = assignUniqueGroupId(fallbackGroupId(terminalId), usedGroupIds);
+    const nextGroupId = assignUniqueGroupId(terminalGroupIdForTerminal(terminalId), usedGroupIds);
     terminalGroups.push({ id: nextGroupId, terminalIds: [terminalId] });
     return normalizeThreadTerminalState({
       ...normalized,
@@ -283,7 +280,7 @@ function upsertTerminalIntoGroups(
   if (activeGroupIndex < 0) {
     const usedGroupIds = new Set(terminalGroups.map((group) => group.id));
     const nextGroupId = assignUniqueGroupId(
-      fallbackGroupId(normalized.activeTerminalId),
+      terminalGroupIdForTerminal(normalized.activeTerminalId),
       usedGroupIds,
     );
     terminalGroups.push({ id: nextGroupId, terminalIds: [normalized.activeTerminalId] });
@@ -397,7 +394,7 @@ function closeThreadTerminal(state: ThreadTerminalState, terminalId: string): Th
   const nextActiveTerminalGroupId =
     terminalGroups.find((group) => group.terminalIds.includes(nextActiveTerminalId))?.id ??
     terminalGroups[0]?.id ??
-    fallbackGroupId(nextActiveTerminalId);
+    terminalGroupIdForTerminal(nextActiveTerminalId);
 
   return normalizeThreadTerminalState({
     terminalOpen: normalized.terminalOpen,
