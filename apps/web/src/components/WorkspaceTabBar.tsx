@@ -49,7 +49,7 @@ export function WorkspaceTabBar({
               >
                 <button
                   type="button"
-                  className="inline-flex min-w-0 cursor-pointer items-center gap-1.5"
+                  className="-m-1 inline-flex min-h-7 min-w-0 cursor-pointer items-center gap-1.5 rounded-[inherit] px-1 py-1"
                   onClick={() => onSelectTab(tab.id)}
                   aria-current={isActive ? "page" : undefined}
                 >
@@ -60,7 +60,7 @@ export function WorkspaceTabBar({
                 {tab.closeable ? (
                   <button
                     type="button"
-                    className="inline-flex size-3.5 cursor-pointer items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+                    className="-m-1 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
                     onClick={() => onCloseTab(tab.id)}
                     aria-label={`Close ${tab.title}`}
                   >
