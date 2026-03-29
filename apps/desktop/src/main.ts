@@ -28,6 +28,7 @@ import { autoUpdater } from "electron-updater";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
+import { resolveDesktopMenuActionForInput } from "./menuActionShortcuts";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
@@ -593,6 +594,16 @@ function configureApplicationMenu(): void {
           accelerator: "CmdOrCtrl+,",
           click: () => dispatchMenuAction("open-settings"),
         },
+        {
+          label: "Next Session",
+          accelerator: "Ctrl+Tab",
+          click: () => dispatchMenuAction("thread-next"),
+        },
+        {
+          label: "Previous Session",
+          accelerator: "Ctrl+Shift+Tab",
+          click: () => dispatchMenuAction("thread-previous"),
+        },
         { type: "separator" },
         { role: "services" },
         { type: "separator" },
@@ -616,6 +627,16 @@ function configureApplicationMenu(): void {
                 label: "Settings...",
                 accelerator: "CmdOrCtrl+,",
                 click: () => dispatchMenuAction("open-settings"),
+              },
+              {
+                label: "Next Session",
+                accelerator: "Ctrl+Tab",
+                click: () => dispatchMenuAction("thread-next"),
+              },
+              {
+                label: "Previous Session",
+                accelerator: "Ctrl+Shift+Tab",
+                click: () => dispatchMenuAction("thread-previous"),
               },
               { type: "separator" as const },
             ]),
@@ -1345,6 +1366,16 @@ function createWindow(): BrowserWindow {
       void shell.openExternal(externalUrl);
     }
     return { action: "deny" };
+  });
+
+  window.webContents.on("before-input-event", (event, input) => {
+    const menuAction = resolveDesktopMenuActionForInput(input);
+    if (!menuAction) {
+      return;
+    }
+
+    event.preventDefault();
+    dispatchMenuAction(menuAction);
   });
 
   window.on("page-title-updated", (event) => {

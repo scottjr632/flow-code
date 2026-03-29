@@ -2,15 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   deriveDefaultWorkspaceTitle,
-  getVisibleSidebarThreadIds,
-  resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
+  getThreadIdsForKeyboardTraversal,
+  getThreadIdsByMostRecentVisit,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   groupThreadsForSidebarProject,
   hasUnseenCompletion,
   isWorkspaceTitleCustomized,
   isContextMenuPointerDown,
+  resolveThreadKeyboardTraversal,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -103,76 +104,155 @@ describe("resolveSidebarNewThreadEnvMode", () => {
   });
 });
 
-describe("resolveAdjacentThreadId", () => {
-  it("resolves adjacent thread ids in ordered sidebar traversal", () => {
-    const threads = [
+describe("resolveThreadKeyboardTraversal", () => {
+  it("switches to the most recently visited other thread on a new traversal", () => {
+    const threadIds = [
       ThreadId.makeUnsafe("thread-1"),
       ThreadId.makeUnsafe("thread-2"),
       ThreadId.makeUnsafe("thread-3"),
     ];
 
-    expect(
-      resolveAdjacentThreadId({
-        threadIds: threads,
-        currentThreadId: threads[1] ?? null,
-        direction: "previous",
-      }),
-    ).toBe(threads[0]);
-    expect(
-      resolveAdjacentThreadId({
-        threadIds: threads,
-        currentThreadId: threads[1] ?? null,
-        direction: "next",
-      }),
-    ).toBe(threads[2]);
-    expect(
-      resolveAdjacentThreadId({
-        threadIds: threads,
-        currentThreadId: null,
-        direction: "next",
-      }),
-    ).toBe(threads[0]);
-    expect(
-      resolveAdjacentThreadId({
-        threadIds: threads,
-        currentThreadId: null,
-        direction: "previous",
-      }),
-    ).toBe(threads[2]);
-    expect(
-      resolveAdjacentThreadId({
-        threadIds: threads,
-        currentThreadId: threads[0] ?? null,
-        direction: "previous",
-      }),
-    ).toBeNull();
+    const targetThreadId = resolveThreadKeyboardTraversal({
+      threadIds,
+      currentThreadId: threadIds[0] ?? null,
+      direction: "next",
+    });
+
+    expect(targetThreadId).toBe(threadIds[1]);
+  });
+
+  it("recomputes against live mru order on every traversal", () => {
+    const firstTarget = resolveThreadKeyboardTraversal({
+      threadIds: [
+        ThreadId.makeUnsafe("thread-1"),
+        ThreadId.makeUnsafe("thread-2"),
+        ThreadId.makeUnsafe("thread-3"),
+      ],
+      currentThreadId: ThreadId.makeUnsafe("thread-1"),
+      direction: "next",
+    });
+
+    expect(firstTarget).toBe(ThreadId.makeUnsafe("thread-2"));
+
+    const secondTarget = resolveThreadKeyboardTraversal({
+      threadIds: [
+        ThreadId.makeUnsafe("thread-2"),
+        ThreadId.makeUnsafe("thread-1"),
+        ThreadId.makeUnsafe("thread-3"),
+      ],
+      currentThreadId: ThreadId.makeUnsafe("thread-2"),
+      direction: "next",
+    });
+
+    expect(secondTarget).toBe(ThreadId.makeUnsafe("thread-1"));
+  });
+
+  it("cycles backwards when reversing traversal direction", () => {
+    const threadIds = [
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-3"),
+    ];
+
+    const traversal = resolveThreadKeyboardTraversal({
+      threadIds,
+      currentThreadId: threadIds[0] ?? null,
+      direction: "previous",
+    });
+
+    expect(traversal).toBe(threadIds[2]);
+  });
+
+  it("returns null when there is no other thread to visit", () => {
+    const onlyThreadId = ThreadId.makeUnsafe("thread-1");
+
+    const traversal = resolveThreadKeyboardTraversal({
+      threadIds: [onlyThreadId],
+      currentThreadId: onlyThreadId,
+      direction: "next",
+    });
+
+    expect(traversal).toBeNull();
   });
 });
 
-describe("getVisibleSidebarThreadIds", () => {
-  it("returns only the rendered visible thread order across projects", () => {
-    expect(
-      getVisibleSidebarThreadIds([
-        {
-          renderedThreads: [
-            { id: ThreadId.makeUnsafe("thread-12") },
-            { id: ThreadId.makeUnsafe("thread-11") },
-            { id: ThreadId.makeUnsafe("thread-10") },
-          ],
-        },
-        {
-          renderedThreads: [
-            { id: ThreadId.makeUnsafe("thread-8") },
-            { id: ThreadId.makeUnsafe("thread-6") },
-          ],
-        },
-      ]),
-    ).toEqual([
-      ThreadId.makeUnsafe("thread-12"),
-      ThreadId.makeUnsafe("thread-11"),
-      ThreadId.makeUnsafe("thread-10"),
-      ThreadId.makeUnsafe("thread-8"),
-      ThreadId.makeUnsafe("thread-6"),
+describe("getThreadIdsByMostRecentVisit", () => {
+  it("orders threads by lastVisitedAt before falling back to update timestamps", () => {
+    const threadIds = getThreadIdsByMostRecentVisit([
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        updatedAt: "2026-03-09T10:10:00.000Z",
+        lastVisitedAt: "2026-03-09T10:20:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        updatedAt: "2026-03-09T10:30:00.000Z",
+        lastVisitedAt: "2026-03-09T10:15:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-3"),
+        updatedAt: "2026-03-09T10:25:00.000Z",
+      }),
+    ]);
+
+    expect(threadIds).toEqual([
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-3"),
+    ]);
+  });
+
+  it("uses createdAt and id ordering when visit timestamps are unavailable", () => {
+    const threadIds = getThreadIdsByMostRecentVisit([
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: undefined,
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        createdAt: "" as never,
+        updatedAt: undefined,
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-3"),
+        createdAt: "2026-03-09T10:05:00.000Z",
+        updatedAt: undefined,
+      }),
+    ]);
+
+    expect(threadIds).toEqual([
+      ThreadId.makeUnsafe("thread-3"),
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-2"),
+    ]);
+  });
+});
+
+describe("getThreadIdsForKeyboardTraversal", () => {
+  it("prefers explicit MRU order over timestamp fallback", () => {
+    const threadIds = getThreadIdsForKeyboardTraversal(
+      [
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-1"),
+          lastVisitedAt: "2026-03-09T10:20:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-2"),
+          lastVisitedAt: "2026-03-09T10:10:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-3"),
+          lastVisitedAt: "2026-03-09T10:15:00.000Z",
+        }),
+      ],
+      [ThreadId.makeUnsafe("thread-2"), ThreadId.makeUnsafe("thread-1")],
+    );
+
+    expect(threadIds).toEqual([
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-3"),
     ]);
   });
 });

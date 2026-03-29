@@ -29,6 +29,11 @@ import {
 const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMetadata);
+const IGNORED_LEGACY_EVENT_TYPES = new Set([
+  "workspace.created",
+  "workspace.meta-updated",
+  "workspace.deleted",
+]);
 
 const AppendEventRequestSchema = Schema.Struct({
   eventId: EventId,
@@ -50,6 +55,20 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
   type: OrchestrationEventType,
   aggregateKind: OrchestrationAggregateKind,
   aggregateId: Schema.Union([ProjectId, WorkspaceId, ThreadId]),
+  occurredAt: IsoDateTime,
+  commandId: Schema.NullOr(CommandId),
+  causationEventId: Schema.NullOr(EventId),
+  correlationId: Schema.NullOr(CommandId),
+  payload: UnknownFromJsonString,
+  metadata: EventMetadataFromJsonString,
+});
+
+const OrchestrationEventReplayRowSchema = Schema.Struct({
+  sequence: NonNegativeInt,
+  eventId: EventId,
+  type: Schema.String,
+  aggregateKind: Schema.String,
+  aggregateId: Schema.String,
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -92,6 +111,12 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
     Schema.isSchemaError(cause)
       ? toPersistenceDecodeError(decodeOperation)(cause)
       : toPersistenceSqlError(sqlOperation)(cause);
+}
+
+function shouldIgnoreLegacyReplayRow(
+  row: Schema.Schema.Type<typeof OrchestrationEventReplayRowSchema>,
+) {
+  return row.aggregateKind === "workspace" || IGNORED_LEGACY_EVENT_TYPES.has(row.type);
 }
 
 const makeEventStore = Effect.gen(function* () {
@@ -157,7 +182,7 @@ const makeEventStore = Effect.gen(function* () {
 
   const readEventRowsFromSequence = SqlSchema.findAll({
     Request: ReadFromSequenceRequestSchema,
-    Result: OrchestrationEventPersistedRowSchema,
+    Result: OrchestrationEventReplayRowSchema,
     execute: (request) =>
       sql`
         SELECT
@@ -231,27 +256,34 @@ const makeEventStore = Effect.gen(function* () {
           ),
           Effect.flatMap((rows) =>
             Effect.forEach(rows, (row) =>
-              decodeEvent(row).pipe(
-                Effect.mapError(
-                  toPersistenceDecodeError("OrchestrationEventStore.readFromSequence:rowToEvent"),
-                ),
-              ),
+              shouldIgnoreLegacyReplayRow(row)
+                ? Effect.succeed(null)
+                : decodeEvent(row).pipe(
+                    Effect.mapError(
+                      toPersistenceDecodeError(
+                        "OrchestrationEventStore.readFromSequence:rowToEvent",
+                      ),
+                    ),
+                  ),
+            ).pipe(
+              Effect.map((events) => ({
+                events: events.filter((event): event is OrchestrationEvent => event !== null),
+                rowCount: rows.length,
+                lastSequence: rows.at(-1)?.sequence ?? null,
+              })),
             ),
           ),
         ),
       ).pipe(
-        Stream.flatMap((events) => {
-          if (events.length === 0) {
+        Stream.flatMap(({ events, lastSequence, rowCount }) => {
+          if (rowCount === 0 || lastSequence === null) {
             return Stream.empty;
           }
           const nextRemaining = remaining - events.length;
           if (nextRemaining <= 0) {
             return Stream.fromIterable(events);
           }
-          return Stream.concat(
-            Stream.fromIterable(events),
-            readPage(events[events.length - 1]!.sequence, nextRemaining),
-          );
+          return Stream.concat(Stream.fromIterable(events), readPage(lastSequence, nextRemaining));
         }),
       );
 

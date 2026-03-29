@@ -17,6 +17,7 @@ export interface AppState {
   workspaces: Workspace[];
   threads: Thread[];
   threadsHydrated: boolean;
+  threadMruIds?: ThreadId[];
 }
 
 const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
@@ -37,9 +38,11 @@ const initialState: AppState = {
   workspaces: [],
   threads: [],
   threadsHydrated: false,
+  threadMruIds: [],
 };
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
+const persistedThreadMruIds: ThreadId[] = [];
 
 // ── Persist helpers ──────────────────────────────────────────────────
 
@@ -51,9 +54,11 @@ function readPersistedState(): AppState {
     const parsed = JSON.parse(raw) as {
       expandedProjectCwds?: string[];
       projectOrderCwds?: string[];
+      threadMruIds?: string[];
     };
     persistedExpandedProjectCwds.clear();
     persistedProjectOrderCwds.length = 0;
+    persistedThreadMruIds.length = 0;
     for (const cwd of parsed.expandedProjectCwds ?? []) {
       if (typeof cwd === "string" && cwd.length > 0) {
         persistedExpandedProjectCwds.add(cwd);
@@ -62,6 +67,14 @@ function readPersistedState(): AppState {
     for (const cwd of parsed.projectOrderCwds ?? []) {
       if (typeof cwd === "string" && cwd.length > 0 && !persistedProjectOrderCwds.includes(cwd)) {
         persistedProjectOrderCwds.push(cwd);
+      }
+    }
+    for (const threadId of parsed.threadMruIds ?? []) {
+      if (typeof threadId === "string" && threadId.length > 0) {
+        const resolvedThreadId = ThreadId.makeUnsafe(threadId);
+        if (!persistedThreadMruIds.includes(resolvedThreadId)) {
+          persistedThreadMruIds.push(resolvedThreadId);
+        }
       }
     }
     return { ...initialState };
@@ -82,6 +95,7 @@ function persistState(state: AppState): void {
           .filter((project) => project.expanded)
           .map((project) => project.cwd),
         projectOrderCwds: state.projects.map((project) => project.cwd),
+        threadMruIds: state.threadMruIds ?? [],
       }),
     );
     if (!legacyKeysCleanedUp) {
@@ -111,6 +125,54 @@ function updateThread(
     return updated;
   });
   return changed ? next : threads;
+}
+
+function moveThreadIdToFront(
+  threadIds: readonly ThreadId[] | undefined,
+  threadId: ThreadId,
+): ThreadId[] {
+  const nextThreadIds = (threadIds ?? []).filter((entry) => entry !== threadId);
+  nextThreadIds.unshift(threadId);
+  return nextThreadIds;
+}
+
+function toSortableTimestamp(iso: string | undefined): number {
+  if (!iso) return Number.NEGATIVE_INFINITY;
+  const timestamp = Date.parse(iso);
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function getThreadFallbackRecency(thread: Thread): number {
+  return toSortableTimestamp(thread.lastVisitedAt ?? thread.updatedAt ?? thread.createdAt);
+}
+
+function reconcileThreadMruIds(
+  threadMruIds: readonly ThreadId[] | undefined,
+  threads: readonly Thread[],
+): ThreadId[] {
+  const availableThreadIds = new Set(threads.map((thread) => thread.id));
+  const nextThreadMruIds: ThreadId[] = [];
+
+  for (const threadId of threadMruIds ?? []) {
+    if (availableThreadIds.has(threadId) && !nextThreadMruIds.includes(threadId)) {
+      nextThreadMruIds.push(threadId);
+    }
+  }
+
+  const missingThreadIds = threads
+    .filter((thread) => !nextThreadMruIds.includes(thread.id))
+    .toSorted((left, right) => {
+      const rightTimestamp = getThreadFallbackRecency(right);
+      const leftTimestamp = getThreadFallbackRecency(left);
+      if (rightTimestamp !== leftTimestamp) {
+        return rightTimestamp > leftTimestamp ? 1 : -1;
+      }
+      return right.id.localeCompare(left.id);
+    })
+    .map((thread) => thread.id);
+
+  nextThreadMruIds.push(...missingThreadIds);
+  return nextThreadMruIds;
 }
 
 function mapProjectsFromReadModel(
@@ -340,6 +402,12 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     workspaces,
     threads,
     threadsHydrated: true,
+    threadMruIds: reconcileThreadMruIds(
+      state.threadMruIds && state.threadMruIds.length > 0
+        ? state.threadMruIds
+        : persistedThreadMruIds,
+      threads,
+    ),
   };
 }
 
@@ -361,7 +429,14 @@ export function markThreadVisited(
     }
     return { ...thread, lastVisitedAt: at };
   });
-  return threads === state.threads ? state : { ...state, threads };
+  if (threads === state.threads && state.threadMruIds?.[0] === threadId) {
+    return state;
+  }
+  return {
+    ...state,
+    threads,
+    threadMruIds: moveThreadIdToFront(state.threadMruIds, threadId),
+  };
 }
 
 export function markThreadUnread(state: AppState, threadId: ThreadId): AppState {

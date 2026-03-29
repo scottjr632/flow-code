@@ -661,6 +661,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThread?.id) return;
+    markThreadVisited(activeThread.id);
+  }, [activeThread?.id, markThreadVisited]);
+
+  useEffect(() => {
+    if (!activeThread?.id) return;
     if (!latestTurnSettled) return;
     if (!activeLatestTurn?.completedAt) return;
     const turnCompletedAt = Date.parse(activeLatestTurn.completedAt);

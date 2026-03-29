@@ -108,14 +108,14 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
   deriveDefaultWorkspaceTitle,
-  getVisibleSidebarThreadIds,
+  getThreadIdsForKeyboardTraversal,
   getVisibleThreadsForProject,
   groupThreadsForSidebarProject,
   isWorkspaceTitleCustomized,
-  resolveAdjacentThreadId,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
+  resolveThreadKeyboardTraversal,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -328,6 +328,7 @@ export default function Sidebar() {
   const projects = useStore((store) => store.projects);
   const workspaces = useStore((store) => store.workspaces);
   const threads = useStore((store) => store.threads);
+  const threadMruIds = useStore((store) => store.threadMruIds ?? []);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
   const toggleProject = useStore((store) => store.toggleProject);
   const reorderProjects = useStore((store) => store.reorderProjects);
@@ -1211,9 +1212,9 @@ export default function Sidebar() {
     }
     return mapping;
   }, [keybindings, sidebarShortcutLabelOptions, threadJumpCommandById]);
-  const orderedSidebarThreadIds = useMemo(
-    () => getVisibleSidebarThreadIds(renderedProjects),
-    [renderedProjects],
+  const threadTraversalIds = useMemo(
+    () => getThreadIdsForKeyboardTraversal(visibleThreads, threadMruIds),
+    [threadMruIds, visibleThreads],
   );
 
   useEffect(() => {
@@ -1240,8 +1241,8 @@ export default function Sidebar() {
       });
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
-        const targetThreadId = resolveAdjacentThreadId({
-          threadIds: orderedSidebarThreadIds,
+        const targetThreadId = resolveThreadKeyboardTraversal({
+          threadIds: threadTraversalIds,
           currentThreadId: routeThreadId,
           direction: traversalDirection,
         });
@@ -1295,10 +1296,10 @@ export default function Sidebar() {
   }, [
     keybindings,
     navigateToThread,
-    orderedSidebarThreadIds,
     platform,
     routeTerminalOpen,
     routeThreadId,
+    threadTraversalIds,
     threadJumpThreadIds,
   ]);
 

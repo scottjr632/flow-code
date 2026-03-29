@@ -7,7 +7,13 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
+import {
+  markThreadUnread,
+  markThreadVisited,
+  reorderProjects,
+  syncServerReadModel,
+  type AppState,
+} from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -131,6 +137,55 @@ function makeReadModelProject(
 }
 
 describe("store pure functions", () => {
+  it("markThreadVisited records a newer visit timestamp for the active thread", () => {
+    const initialState = makeState(
+      makeThread({
+        lastVisitedAt: "2026-02-25T12:30:00.000Z",
+      }),
+    );
+
+    const next = markThreadVisited(
+      initialState,
+      ThreadId.makeUnsafe("thread-1"),
+      "2026-02-25T12:35:00.000Z",
+    );
+
+    expect(next.threads[0]?.lastVisitedAt).toBe("2026-02-25T12:35:00.000Z");
+    expect(next.threadMruIds).toEqual([ThreadId.makeUnsafe("thread-1")]);
+  });
+
+  it("markThreadVisited moves the thread to the front of the MRU stack", () => {
+    const initialState: AppState = {
+      ...makeState(
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-1"),
+        }),
+      ),
+      threads: [
+        makeThread({ id: ThreadId.makeUnsafe("thread-1") }),
+        makeThread({ id: ThreadId.makeUnsafe("thread-2") }),
+        makeThread({ id: ThreadId.makeUnsafe("thread-3") }),
+      ],
+      threadMruIds: [
+        ThreadId.makeUnsafe("thread-3"),
+        ThreadId.makeUnsafe("thread-1"),
+        ThreadId.makeUnsafe("thread-2"),
+      ],
+    };
+
+    const next = markThreadVisited(
+      initialState,
+      ThreadId.makeUnsafe("thread-2"),
+      "2026-02-25T12:35:00.000Z",
+    );
+
+    expect(next.threadMruIds).toEqual([
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-3"),
+      ThreadId.makeUnsafe("thread-1"),
+    ]);
+  });
+
   it("markThreadUnread moves lastVisitedAt before completion for a completed thread", () => {
     const latestTurnCompletedAt = "2026-02-25T12:30:00.000Z";
     const initialState = makeState(
@@ -236,6 +291,43 @@ describe("store read model sync", () => {
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.threads[0]?.modelSelection.model).toBe("claude-opus-4-6");
+  });
+
+  it("preserves explicit MRU order when syncing the read model", () => {
+    const initialState: AppState = {
+      ...makeState(makeThread({ id: ThreadId.makeUnsafe("thread-1") })),
+      threads: [
+        makeThread({ id: ThreadId.makeUnsafe("thread-1") }),
+        makeThread({ id: ThreadId.makeUnsafe("thread-2") }),
+      ],
+      threadMruIds: [ThreadId.makeUnsafe("thread-2"), ThreadId.makeUnsafe("thread-1")],
+    };
+    const readModel: OrchestrationReadModel = {
+      snapshotSequence: 1,
+      updatedAt: "2026-02-27T00:00:00.000Z",
+      projects: [
+        makeReadModelProject({
+          id: ProjectId.makeUnsafe("project-1"),
+        }),
+      ],
+      workspaces: [],
+      threads: [
+        makeReadModelThread({
+          id: ThreadId.makeUnsafe("thread-1"),
+        }),
+        makeReadModelThread({
+          id: ThreadId.makeUnsafe("thread-2"),
+          updatedAt: "2026-02-27T00:10:00.000Z",
+        }),
+      ],
+    };
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threadMruIds).toEqual([
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-1"),
+    ]);
   });
 
   it("resolves claude aliases when session provider is claudeAgent", () => {

@@ -116,4 +116,78 @@ layer("OrchestrationEventStore", (it) => {
       }
     }),
   );
+
+  it.effect("ignores legacy workspace events during replay", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          ${EventId.makeUnsafe("evt-store-legacy-workspace")},
+          ${"workspace"},
+          ${ProjectId.makeUnsafe("project-legacy-workspace")},
+          ${0},
+          ${"workspace.created"},
+          ${now},
+          ${CommandId.makeUnsafe("cmd-store-legacy-workspace")},
+          ${null},
+          ${null},
+          ${"server"},
+          ${JSON.stringify({
+            workspaceId: "workspace-legacy",
+            projectId: ProjectId.makeUnsafe("project-roundtrip"),
+            title: "Legacy Workspace",
+            branch: "main",
+            worktreePath: "/tmp/project-roundtrip",
+            createdAt: now,
+            updatedAt: now,
+          })},
+          ${"{}"}
+        )
+      `;
+
+      yield* eventStore.append({
+        type: "project.created",
+        eventId: EventId.makeUnsafe("evt-store-valid-after-legacy"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.makeUnsafe("project-roundtrip"),
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-store-valid-after-legacy"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-store-valid-after-legacy"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.makeUnsafe("project-roundtrip"),
+          title: "Roundtrip Project",
+          workspaceRoot: "/tmp/project-roundtrip",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const replayed = yield* Stream.runCollect(eventStore.readFromSequence(0, 10)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+      assert.equal(replayed.length, 1);
+      assert.equal(replayed[0]?.type, "project.created");
+    }),
+  );
 });

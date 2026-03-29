@@ -17,6 +17,7 @@ type SidebarProject = {
 };
 type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt" | "messages">;
 type SidebarWorkspaceInput = Pick<Workspace, "id" | "name" | "branch" | "worktreePath">;
+type ThreadTraversalInput = Pick<Thread, "id" | "createdAt" | "updatedAt" | "lastVisitedAt">;
 
 export type ThreadTraversalDirection = "previous" | "next";
 
@@ -70,22 +71,74 @@ export function resolveSidebarNewThreadEnvMode(input: {
   return input.requestedEnvMode ?? input.defaultEnvMode;
 }
 
-export function getVisibleSidebarThreadIds<TThreadId>(
-  renderedProjects: readonly {
-    renderedThreads: readonly {
-      id: TThreadId;
-    }[];
-  }[],
-): TThreadId[] {
-  return renderedProjects.flatMap((renderedProject) =>
-    renderedProject.renderedThreads.map((thread) => thread.id),
-  );
+function getThreadTraversalKey(thread: ThreadTraversalInput): {
+  hasVisited: boolean;
+  timestamp: number;
+} {
+  const lastVisitedAt = toSortableTimestamp(thread.lastVisitedAt);
+  if (lastVisitedAt !== null) {
+    return {
+      hasVisited: true,
+      timestamp: lastVisitedAt,
+    };
+  }
+
+  return {
+    hasVisited: false,
+    timestamp:
+      toSortableTimestamp(thread.updatedAt ?? thread.createdAt) ?? Number.NEGATIVE_INFINITY,
+  };
 }
 
-export function resolveAdjacentThreadId<T>(input: {
+export function getThreadIdsByMostRecentVisit<
+  T extends Pick<Thread, "id" | "createdAt" | "updatedAt" | "lastVisitedAt">,
+>(threads: readonly T[]): T["id"][] {
+  return threads
+    .toSorted((left, right) => {
+      const rightKey = getThreadTraversalKey(right);
+      const leftKey = getThreadTraversalKey(left);
+      if (rightKey.hasVisited !== leftKey.hasVisited) {
+        return rightKey.hasVisited ? 1 : -1;
+      }
+      const rightTimestamp = rightKey.timestamp;
+      const leftTimestamp = leftKey.timestamp;
+      const byTimestamp =
+        rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
+      if (byTimestamp !== 0) return byTimestamp;
+      return right.id.localeCompare(left.id);
+    })
+    .map((thread) => thread.id);
+}
+
+export function getThreadIdsForKeyboardTraversal<
+  T extends Pick<Thread, "id" | "createdAt" | "updatedAt" | "lastVisitedAt">,
+>(threads: readonly T[], threadMruIds?: readonly T["id"][]): T["id"][] {
+  const fallbackThreadIds = getThreadIdsByMostRecentVisit(threads);
+  if (!threadMruIds || threadMruIds.length === 0) {
+    return fallbackThreadIds;
+  }
+
+  const availableThreadIds = new Set(fallbackThreadIds);
+  const orderedThreadIds: T["id"][] = [];
+  for (const threadId of threadMruIds) {
+    if (availableThreadIds.has(threadId) && !orderedThreadIds.includes(threadId)) {
+      orderedThreadIds.push(threadId);
+    }
+  }
+
+  for (const threadId of fallbackThreadIds) {
+    if (!orderedThreadIds.includes(threadId)) {
+      orderedThreadIds.push(threadId);
+    }
+  }
+
+  return orderedThreadIds;
+}
+
+export function resolveThreadKeyboardTraversal<T>(input: {
+  direction: ThreadTraversalDirection;
   threadIds: readonly T[];
   currentThreadId: T | null;
-  direction: ThreadTraversalDirection;
 }): T | null {
   const { currentThreadId, direction, threadIds } = input;
 
@@ -93,20 +146,18 @@ export function resolveAdjacentThreadId<T>(input: {
     return null;
   }
 
-  if (currentThreadId === null) {
-    return direction === "previous" ? (threadIds.at(-1) ?? null) : (threadIds[0] ?? null);
-  }
-
-  const currentIndex = threadIds.indexOf(currentThreadId);
-  if (currentIndex === -1) {
+  if (threadIds.length === 1 && currentThreadId === threadIds[0]) {
     return null;
   }
 
-  if (direction === "previous") {
-    return currentIndex > 0 ? (threadIds[currentIndex - 1] ?? null) : null;
-  }
+  const currentIndex = threadIds.indexOf(currentThreadId as T);
+  const seedIndex = currentIndex === -1 ? (direction === "next" ? -1 : 0) : currentIndex;
+  const activeIndex =
+    direction === "next"
+      ? (seedIndex + 1) % threadIds.length
+      : (seedIndex - 1 + threadIds.length) % threadIds.length;
 
-  return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
+  return threadIds[activeIndex] ?? null;
 }
 
 export function isContextMenuPointerDown(input: {
