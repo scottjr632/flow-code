@@ -1,8 +1,9 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { Outlet, createFileRoute } from "@tanstack/react-router";
+import { Outlet, createFileRoute, useLocation } from "@tanstack/react-router";
 import { useEffect } from "react";
 
+import { shouldBypassChatRouteShortcut } from "../chatRouteShortcuts";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -17,6 +18,7 @@ import { resolveExistingWorkspaceContext } from "~/workspaceContext";
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 
 function ChatRouteGlobalShortcuts() {
+  const pathname = useLocation({ select: (location) => location.pathname });
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadIdsSize = useThreadSelectionStore((state) => state.selectedThreadIds.size);
   const { activeDraftThread, activeThread, handleNewThread, projects, routeThreadId } =
@@ -50,6 +52,10 @@ function ChatRouteGlobalShortcuts() {
           terminalOpen,
         },
       });
+
+      if (shouldBypassChatRouteShortcut(pathname, command)) {
+        return;
+      }
 
       if (command === "chat.newLocal") {
         event.preventDefault();
@@ -89,6 +95,7 @@ function ChatRouteGlobalShortcuts() {
     clearSelection,
     handleNewThread,
     keybindings,
+    pathname,
     projects,
     selectedThreadIdsSize,
     terminalOpen,

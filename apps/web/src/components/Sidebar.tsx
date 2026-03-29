@@ -5,6 +5,7 @@ import {
   FolderIcon,
   GitForkIcon,
   GitPullRequestIcon,
+  LaptopIcon,
   PlusIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -20,7 +21,6 @@ import {
   useRef,
   useState,
   type MutableRefObject,
-  type MouseEvent,
   type PointerEvent,
 } from "react";
 import {
@@ -41,9 +41,9 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
+  type GitStatusResult,
   ProjectId,
   ThreadId,
-  type GitStatusResult,
   type ResolvedKeybindingsConfig,
   type WorkspaceId,
 } from "@t3tools/contracts";
@@ -124,6 +124,7 @@ import {
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
+import { AppLogo } from "./AppLogo";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -140,6 +141,7 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   duration: 180,
   easing: "ease-out",
 } as const;
+
 interface TerminalStatusIndicator {
   label: "Terminal process running";
   colorClass: string;
@@ -196,22 +198,6 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
     };
   }
   return null;
-}
-
-function T3Wordmark() {
-  return (
-    <svg
-      aria-label="T3"
-      className="h-2.5 w-auto shrink-0 text-foreground"
-      viewBox="15.5309 37 94.3941 56.96"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path
-        d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
 }
 
 type SortableProjectHandleProps = Pick<
@@ -343,8 +329,8 @@ export default function Sidebar({
   const projects = useStore((store) => store.projects);
   const workspaces = useStore((store) => store.workspaces);
   const threads = useStore((store) => store.threads);
-  const threadMruIds = useStore((store) => store.threadMruIds ?? []);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
+  const threadMruIds = useStore((store) => store.threadMruIds ?? []);
   const toggleProject = useStore((store) => store.toggleProject);
   const reorderProjects = useStore((store) => store.reorderProjects);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
@@ -361,7 +347,8 @@ export default function Sidebar({
   const appSettings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useHandleNewThread();
-  const { archiveThread, deleteThread, confirmAndDeleteWorkspace } = useThreadActions();
+  const { archiveThread, deleteThread, confirmAndDeleteWorkspace, confirmAndArchiveWorkspace } =
+    useThreadActions();
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
@@ -391,6 +378,12 @@ export default function Sidebar({
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<ReadonlySet<WorkspaceId>>(
     () => new Set(),
   );
+  const [collapsedLocalSections, setCollapsedLocalSections] = useState<ReadonlySet<ProjectId>>(
+    () => new Set(),
+  );
+  const [collapsedWorkspaceSections, setCollapsedWorkspaceSections] = useState<
+    ReadonlySet<ProjectId>
+  >(() => new Set());
   const toggleWorkspaceExpanded = useCallback((workspaceId: WorkspaceId) => {
     setExpandedWorkspaceIds((current) => {
       const next = new Set(current);
@@ -476,7 +469,7 @@ export default function Sidebar({
       }
     }
 
-    const map = new Map<ThreadId, ThreadPr>();
+    const map = new Map<ThreadId, GitStatusResult["pr"]>();
     for (const target of threadGitTargets) {
       const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
       const branchMatches =
@@ -486,41 +479,17 @@ export default function Sidebar({
     return map;
   }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
 
-  const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const api = readNativeApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Link opening is unavailable.",
+  const openNewThreadPage = useCallback(
+    (options?: { projectId?: ProjectId; envMode?: "local" | "worktree" }) => {
+      void navigate({
+        to: "/",
+        search: {
+          ...(options?.projectId ? { projectId: options.projectId } : {}),
+          ...(options?.envMode ? { envMode: options.envMode } : {}),
+        },
       });
-      return;
-    }
-
-    void api.shell.openExternal(prUrl).catch((error) => {
-      toastManager.add({
-        type: "error",
-        title: "Unable to open PR link",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
-    });
-  }, []);
-
-  const attemptArchiveThread = useCallback(
-    async (threadId: ThreadId) => {
-      try {
-        await archiveThread(threadId);
-      } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Failed to archive thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        });
-      }
     },
-    [archiveThread],
+    [navigate],
   );
 
   const focusMostRecentThreadForProject = useCallback(
@@ -640,6 +609,43 @@ export default function Sidebar({
     setAddingProject((prev) => !prev);
   };
 
+  const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const api = readNativeApi();
+    if (!api) {
+      toastManager.add({
+        type: "error",
+        title: "Link opening is unavailable.",
+      });
+      return;
+    }
+
+    void api.shell.openExternal(prUrl).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to open PR link",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    });
+  }, []);
+
+  const attemptArchiveThread = useCallback(
+    async (threadId: ThreadId) => {
+      try {
+        await archiveThread(threadId);
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to archive thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+    },
+    [archiveThread],
+  );
+
   const cancelRename = useCallback(() => {
     setRenamingThreadId(null);
     renamingInputRef.current = null;
@@ -744,24 +750,6 @@ export default function Sidebar({
     [],
   );
 
-  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
-    threadId: ThreadId;
-  }>({
-    onCopy: (ctx) => {
-      toastManager.add({
-        type: "success",
-        title: "Thread ID copied",
-        description: ctx.threadId,
-      });
-    },
-    onError: (error) => {
-      toastManager.add({
-        type: "error",
-        title: "Failed to copy thread ID",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
-    },
-  });
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{
     path: string;
   }>({
@@ -780,11 +768,29 @@ export default function Sidebar({
       });
     },
   });
+  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
+    threadId: ThreadId;
+  }>({
+    onCopy: (ctx) => {
+      toastManager.add({
+        type: "success",
+        title: "Thread ID copied",
+        description: ctx.threadId,
+      });
+    },
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Failed to copy thread ID",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    },
+  });
   const handleThreadContextMenu = useCallback(
     async (threadId: ThreadId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
-      const thread = threads.find((t) => t.id === threadId);
+      const thread = threads.find((entry) => entry.id === threadId);
       if (!thread) return;
       const threadWorkspacePath =
         thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null;
@@ -805,7 +811,6 @@ export default function Sidebar({
         renamingCommittedRef.current = false;
         return;
       }
-
       if (clicked === "mark-unread") {
         markThreadUnread(threadId);
         return;
@@ -827,6 +832,7 @@ export default function Sidebar({
         return;
       }
       if (clicked !== "delete") return;
+
       if (appSettings.confirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
           [
@@ -838,6 +844,7 @@ export default function Sidebar({
           return;
         }
       }
+
       await deleteThread(threadId);
     },
     [
@@ -904,7 +911,11 @@ export default function Sidebar({
   );
 
   const handleThreadClick = useCallback(
-    (event: MouseEvent, threadId: ThreadId, orderedProjectThreadIds: readonly ThreadId[]) => {
+    (
+      event: React.MouseEvent<HTMLElement>,
+      threadId: ThreadId,
+      orderedProjectThreadIds: readonly ThreadId[],
+    ) => {
       const isMac = isMacPlatform(navigator.platform);
       const isModClick = isMac ? event.metaKey : event.ctrlKey;
       const isShiftClick = event.shiftKey;
@@ -921,7 +932,6 @@ export default function Sidebar({
         return;
       }
 
-      // Plain click — clear selection, set anchor for future shift-clicks, and navigate
       if (selectedThreadIds.size > 0) {
         clearSelection();
       }
@@ -940,19 +950,14 @@ export default function Sidebar({
       toggleThreadSelection,
     ],
   );
-
   const navigateToThread = useCallback(
     (threadId: ThreadId) => {
-      if (selectedThreadIds.size > 0) {
-        clearSelection();
-      }
-      setSelectionAnchor(threadId);
       void navigate({
         to: "/$threadId",
         params: { threadId },
       });
     },
-    [clearSelection, navigate, selectedThreadIds.size, setSelectionAnchor],
+    [navigate],
   );
 
   const handleProjectContextMenu = useCallback(
@@ -1033,6 +1038,7 @@ export default function Sidebar({
           { id: "rename", label: "Rename workspace" },
           { id: "copy-path", label: "Copy worktree path" },
           { id: "new-session", label: "New session in workspace" },
+          { id: "archive", label: "Archive workspace" },
           { id: "delete", label: "Delete workspace", destructive: true },
         ],
         position,
@@ -1057,6 +1063,18 @@ export default function Sidebar({
         });
         return;
       }
+      if (clicked === "archive") {
+        try {
+          await confirmAndArchiveWorkspace(workspace.id);
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Failed to archive workspace",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+        return;
+      }
       if (clicked === "delete") {
         try {
           await confirmAndDeleteWorkspace(workspace.id);
@@ -1069,7 +1087,7 @@ export default function Sidebar({
         }
       }
     },
-    [confirmAndDeleteWorkspace, copyPathToClipboard, handleNewThread],
+    [confirmAndArchiveWorkspace, confirmAndDeleteWorkspace, copyPathToClipboard, handleNewThread],
   );
 
   const projectDnDSensors = useSensors(
@@ -1283,6 +1301,10 @@ export default function Sidebar({
       visibleThreads,
     ],
   );
+  const threadTraversalIds = useMemo(
+    () => getThreadIdsForKeyboardTraversal(visibleThreads, threadMruIds, routeThreadId),
+    [routeThreadId, threadMruIds, visibleThreads],
+  );
   const threadJumpCommandById = useMemo(() => {
     const mapping = new Map<ThreadId, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
     let visibleThreadIndex = 0;
@@ -1324,10 +1346,6 @@ export default function Sidebar({
     }
     return mapping;
   }, [keybindings, sidebarShortcutLabelOptions, threadJumpCommandById]);
-  const threadTraversalIds = useMemo(
-    () => getThreadIdsForKeyboardTraversal(visibleThreads, threadMruIds, routeThreadId),
-    [routeThreadId, threadMruIds, visibleThreads],
-  );
 
   useEffect(() => {
     const getShortcutContext = () => ({
@@ -1519,7 +1537,7 @@ export default function Sidebar({
             }}
           >
             <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-              {prStatus && (
+              {prStatus ? (
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -1537,8 +1555,8 @@ export default function Sidebar({
                   />
                   <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
                 </Tooltip>
-              )}
-              {threadStatus && (
+              ) : null}
+              {threadStatus ? (
                 <span
                   className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
                 >
@@ -1549,7 +1567,7 @@ export default function Sidebar({
                   />
                   <span className="hidden md:inline">{threadStatus.label}</span>
                 </span>
-              )}
+              ) : null}
               {renamingThreadId === thread.id ? (
                 <input
                   ref={(el) => {
@@ -1559,17 +1577,17 @@ export default function Sidebar({
                       el.select();
                     }
                   }}
-                  className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
+                  className="min-w-0 flex-1 truncate rounded border border-ring bg-transparent px-0.5 text-xs outline-none"
                   value={renamingTitle}
-                  onChange={(e) => setRenamingTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    e.stopPropagation();
-                    if (e.key === "Enter") {
-                      e.preventDefault();
+                  onChange={(event) => setRenamingTitle(event.target.value)}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                    if (event.key === "Enter") {
+                      event.preventDefault();
                       renamingCommittedRef.current = true;
                       void commitRename(thread.id, renamingTitle, thread.title);
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
                       renamingCommittedRef.current = true;
                       cancelRename();
                     }
@@ -1579,14 +1597,14 @@ export default function Sidebar({
                       void commitRename(thread.id, renamingTitle, thread.title);
                     }
                   }}
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
                 />
               ) : (
                 <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
               )}
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-1.5">
-              {terminalStatus && (
+              {terminalStatus ? (
                 <span
                   role="img"
                   aria-label={terminalStatus.label}
@@ -1597,7 +1615,7 @@ export default function Sidebar({
                     className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
                   />
                 </span>
-              )}
+              ) : null}
               <div className="flex min-w-12 justify-end">
                 {confirmingArchiveThreadId === thread.id && !isThreadRunning ? (
                   <button
@@ -1715,10 +1733,10 @@ export default function Sidebar({
             render={<div role="button" tabIndex={0} />}
             size="sm"
             isActive={isActive}
-            className={resolveThreadRowClassName({
+            className={`${resolveThreadRowClassName({
               isActive,
               isSelected: false,
-            })}
+            })} rounded-md`}
             onClick={(event) => {
               event.preventDefault();
               if (!isWorkspaceExpanded && !isActive && latestThread) {
@@ -1763,9 +1781,7 @@ export default function Sidebar({
                   />
                   <span className="hidden md:inline">{status.label}</span>
                 </span>
-              ) : (
-                <GitForkIcon className="size-3 shrink-0 text-muted-foreground/50" />
-              )}
+              ) : null}
               {renamingWorkspaceId === workspace.id ? (
                 <input
                   ref={(el) => {
@@ -1806,11 +1822,11 @@ export default function Sidebar({
                   onClick={(event) => event.stopPropagation()}
                 />
               ) : (
-                <span className="min-w-0 flex-1 truncate text-xs">{displayTitle}</span>
+                <span className="min-w-0 flex-1 truncate text-xs font-medium">{displayTitle}</span>
               )}
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-1.5">
-              {!isWorkspaceExpanded && hasRunningTerminal && (
+              {!isWorkspaceExpanded && hasRunningTerminal ? (
                 <span
                   role="img"
                   aria-label="Terminal process running"
@@ -1819,7 +1835,7 @@ export default function Sidebar({
                 >
                   <TerminalIcon className="size-3 animate-pulse" />
                 </span>
-              )}
+              ) : null}
               <div className="flex min-w-12 justify-end">
                 <span
                   className={`text-[10px] ${
@@ -1834,14 +1850,114 @@ export default function Sidebar({
             </div>
           </SidebarMenuSubButton>
 
-          {isWorkspaceExpanded && workspaceThreads.length > 0 && (
+          {isWorkspaceExpanded && workspaceThreads.length > 0 ? (
             <SidebarMenuSub className="mx-0 my-0 w-full gap-0.5 border-l border-border/40 px-1.5 py-0.5">
               {workspaceThreads.map((thread) => renderThreadRow(thread))}
             </SidebarMenuSub>
-          )}
+          ) : null}
         </SidebarMenuSubItem>
       );
     };
+
+    const isLocalCollapsed = collapsedLocalSections.has(project.id);
+    const toggleLocalCollapsed = () => {
+      setCollapsedLocalSections((current) => {
+        const next = new Set(current);
+        if (next.has(project.id)) {
+          next.delete(project.id);
+        } else {
+          next.add(project.id);
+        }
+        return next;
+      });
+    };
+
+    const renderLocalSectionHeader = () => (
+      <SidebarMenuSubItem className="w-full">
+        <div className="group/local-header flex h-6 items-center justify-between px-2">
+          <button
+            type="button"
+            className="flex cursor-pointer items-center gap-1.5"
+            onClick={toggleLocalCollapsed}
+          >
+            <ChevronRightIcon
+              className={`size-3 text-muted-foreground/50 transition-transform duration-150 ${
+                isLocalCollapsed ? "" : "rotate-90"
+              }`}
+            />
+            <LaptopIcon className="size-3 text-muted-foreground/50" />
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/50">
+              Local
+            </span>
+          </button>
+          <button
+            type="button"
+            aria-label="New local thread"
+            className="inline-flex size-4 cursor-pointer items-center justify-center rounded text-muted-foreground/40 opacity-0 transition-all hover:text-foreground group-hover/local-header:opacity-100"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openNewThreadPage({
+                projectId: project.id,
+                envMode: "local",
+              });
+            }}
+          >
+            <PlusIcon className="size-3" />
+          </button>
+        </div>
+      </SidebarMenuSubItem>
+    );
+
+    const isWorkspacesCollapsed = collapsedWorkspaceSections.has(project.id);
+    const toggleWorkspacesCollapsed = () => {
+      setCollapsedWorkspaceSections((current) => {
+        const next = new Set(current);
+        if (next.has(project.id)) {
+          next.delete(project.id);
+        } else {
+          next.add(project.id);
+        }
+        return next;
+      });
+    };
+
+    const workspaceSectionHeader = (
+      <SidebarMenuSubItem className="w-full">
+        <div className="group/workspace-header flex h-6 items-center justify-between px-2">
+          <button
+            type="button"
+            className="flex cursor-pointer items-center gap-1.5"
+            onClick={toggleWorkspacesCollapsed}
+          >
+            <ChevronRightIcon
+              className={`size-3 text-muted-foreground/50 transition-transform duration-150 ${
+                isWorkspacesCollapsed ? "" : "rotate-90"
+              }`}
+            />
+            <GitForkIcon className="size-3 text-muted-foreground/50" />
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/50">
+              Workspaces
+            </span>
+          </button>
+          <button
+            type="button"
+            aria-label="New workspace thread"
+            className="inline-flex size-4 cursor-pointer items-center justify-center rounded text-muted-foreground/40 opacity-0 transition-all hover:text-foreground group-hover/workspace-header:opacity-100"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openNewThreadPage({
+                projectId: project.id,
+                envMode: "worktree",
+              });
+            }}
+          >
+            <PlusIcon className="size-3" />
+          </button>
+        </div>
+      </SidebarMenuSubItem>
+    );
 
     return (
       <>
@@ -1907,7 +2023,8 @@ export default function Sidebar({
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    void handleNewThread(project.id, {
+                    openNewThreadPage({
+                      projectId: project.id,
                       envMode: "local",
                     });
                   }}
@@ -1926,48 +2043,72 @@ export default function Sidebar({
           ref={attachThreadListAutoAnimateRef}
           className="mx-1 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1.5 py-0"
         >
-          {shouldShowThreadPanel &&
-            (project.expanded ? (
+          {shouldShowThreadPanel ? (
+            project.expanded ? (
               <>
-                {renderedWorkspaceRows.map((workspaceRow) => renderWorkspaceRow(workspaceRow))}
-                {renderedThreads.map((thread) => renderThreadRow(thread))}
+                {renderedThreads.length > 0 ? (
+                  <>
+                    {renderedWorkspaceRows.length > 0 ? renderLocalSectionHeader() : null}
+                    {!isLocalCollapsed
+                      ? renderedThreads.map((thread) => renderThreadRow(thread))
+                      : null}
+                  </>
+                ) : null}
+
+                {!isLocalCollapsed &&
+                project.expanded &&
+                hasHiddenThreads &&
+                !isThreadListExpanded ? (
+                  <SidebarMenuSubItem className="w-full">
+                    <SidebarMenuSubButton
+                      render={<button type="button" />}
+                      data-thread-selection-safe
+                      size="sm"
+                      className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                      onClick={() => {
+                        expandThreadListForProject(project.id);
+                      }}
+                    >
+                      <span>Show more</span>
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
+                ) : null}
+                {!isLocalCollapsed &&
+                project.expanded &&
+                hasHiddenThreads &&
+                isThreadListExpanded ? (
+                  <SidebarMenuSubItem className="w-full">
+                    <SidebarMenuSubButton
+                      render={<button type="button" />}
+                      data-thread-selection-safe
+                      size="sm"
+                      className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                      onClick={() => {
+                        collapseThreadListForProject(project.id);
+                      }}
+                    >
+                      <span>Show less</span>
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
+                ) : null}
+
+                {renderedWorkspaceRows.length > 0 ? (
+                  <>
+                    {workspaceSectionHeader}
+                    {!isWorkspacesCollapsed
+                      ? renderedWorkspaceRows.map((workspaceRow) =>
+                          renderWorkspaceRow(workspaceRow),
+                        )
+                      : null}
+                  </>
+                ) : null}
               </>
             ) : renderedWorkspaceRows.length > 0 ? (
               renderedWorkspaceRows.map((workspaceRow) => renderWorkspaceRow(workspaceRow))
             ) : (
               renderedThreads.map((thread) => renderThreadRow(thread))
-            ))}
-
-          {project.expanded && hasHiddenThreads && !isThreadListExpanded && (
-            <SidebarMenuSubItem className="w-full">
-              <SidebarMenuSubButton
-                render={<button type="button" />}
-                data-thread-selection-safe
-                size="sm"
-                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                onClick={() => {
-                  expandThreadListForProject(project.id);
-                }}
-              >
-                <span>Show more</span>
-              </SidebarMenuSubButton>
-            </SidebarMenuSubItem>
-          )}
-          {project.expanded && hasHiddenThreads && isThreadListExpanded && (
-            <SidebarMenuSubItem className="w-full">
-              <SidebarMenuSubButton
-                render={<button type="button" />}
-                data-thread-selection-safe
-                size="sm"
-                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                onClick={() => {
-                  collapseThreadListForProject(project.id);
-                }}
-              >
-                <span>Show less</span>
-              </SidebarMenuSubButton>
-            </SidebarMenuSubItem>
-          )}
+            )
+          ) : null}
         </SidebarMenuSub>
       </>
     );
@@ -1987,7 +2128,6 @@ export default function Sidebar({
         return;
       }
       if (suppressProjectClickAfterDragRef.current) {
-        // Consume the synthetic click emitted after a drag release.
         suppressProjectClickAfterDragRef.current = false;
         event.preventDefault();
         event.stopPropagation();
@@ -2160,10 +2300,10 @@ export default function Sidebar({
       <Tooltip>
         <TooltipTrigger
           render={
-            <div className="flex min-w-0 flex-1 items-center gap-1 ml-1 cursor-pointer">
-              <T3Wordmark />
+            <div className="ml-1 flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+              <AppLogo decorative className="size-5 rounded-md" />
               <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
-                Code
+                Flow
               </span>
               <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
                 {APP_STAGE_LABEL}
@@ -2178,6 +2318,22 @@ export default function Sidebar({
     </div>
   );
 
+  const globalNewThreadButton = (
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      className="h-8 w-full justify-start gap-1.5 rounded-lg px-2.5 text-sm font-medium"
+      onClick={() => {
+        openNewThreadPage();
+      }}
+      data-testid="global-new-thread-button"
+    >
+      <SquarePenIcon className="size-3.5" />
+      New thread
+    </Button>
+  );
+
   return (
     <>
       {isElectron ? (
@@ -2186,7 +2342,7 @@ export default function Sidebar({
         </SidebarHeader>
       ) : (
         <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
-          {wordmark}
+          <div className="flex w-full items-center gap-2">{wordmark}</div>
         </SidebarHeader>
       )}
 
@@ -2218,6 +2374,7 @@ export default function Sidebar({
                 </Alert>
               </SidebarGroup>
             ) : null}
+            <SidebarGroup className="px-2 pt-2 pb-1">{globalNewThreadButton}</SidebarGroup>
             <SidebarGroup className="px-2 py-2">
               <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
                 <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">

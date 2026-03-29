@@ -5,8 +5,6 @@ import {
   getFallbackThreadIdAfterDelete,
   getThreadIdsForKeyboardTraversal,
   getThreadIdsByMostRecentVisit,
-  getVisibleSidebarThreadIds,
-  getVisibleThreadsForProject,
   getProjectSortTimestamp,
   groupThreadsForSidebarProject,
   hasUnseenCompletion,
@@ -18,7 +16,6 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
-  shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
   sortWorkspacesForSidebar,
@@ -57,34 +54,6 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(true);
-  });
-});
-
-describe("shouldClearThreadSelectionOnMouseDown", () => {
-  it("preserves selection for thread items", () => {
-    const child = {
-      closest: (selector: string) =>
-        selector.includes("[data-thread-item]") ? ({} as Element) : null,
-    } as unknown as HTMLElement;
-
-    expect(shouldClearThreadSelectionOnMouseDown(child)).toBe(false);
-  });
-
-  it("preserves selection for thread list toggle controls", () => {
-    const selectionSafe = {
-      closest: (selector: string) =>
-        selector.includes("[data-thread-selection-safe]") ? ({} as Element) : null,
-    } as unknown as HTMLElement;
-
-    expect(shouldClearThreadSelectionOnMouseDown(selectionSafe)).toBe(false);
-  });
-
-  it("clears selection for unrelated sidebar clicks", () => {
-    const unrelated = {
-      closest: () => null,
-    } as unknown as HTMLElement;
-
-    expect(shouldClearThreadSelectionOnMouseDown(unrelated)).toBe(true);
   });
 });
 
@@ -355,63 +324,6 @@ describe("resolveAdjacentThreadId", () => {
   });
 });
 
-describe("getVisibleSidebarThreadIds", () => {
-  it("returns only the rendered visible thread order across projects", () => {
-    expect(
-      getVisibleSidebarThreadIds([
-        {
-          renderedThreads: [
-            { id: ThreadId.makeUnsafe("thread-12") },
-            { id: ThreadId.makeUnsafe("thread-11") },
-            { id: ThreadId.makeUnsafe("thread-10") },
-          ],
-          renderedWorkspaceRows: [],
-        },
-        {
-          renderedThreads: [
-            { id: ThreadId.makeUnsafe("thread-8") },
-            { id: ThreadId.makeUnsafe("thread-6") },
-          ],
-          renderedWorkspaceRows: [],
-        },
-      ]),
-    ).toEqual([
-      ThreadId.makeUnsafe("thread-12"),
-      ThreadId.makeUnsafe("thread-11"),
-      ThreadId.makeUnsafe("thread-10"),
-      ThreadId.makeUnsafe("thread-8"),
-      ThreadId.makeUnsafe("thread-6"),
-    ]);
-  });
-
-  it("includes threads from expanded workspace rows", () => {
-    expect(
-      getVisibleSidebarThreadIds([
-        {
-          renderedThreads: [{ id: ThreadId.makeUnsafe("local-1") }],
-          renderedWorkspaceRows: [
-            {
-              isExpanded: true,
-              workspaceThreads: [
-                { id: ThreadId.makeUnsafe("ws-1") },
-                { id: ThreadId.makeUnsafe("ws-2") },
-              ],
-            },
-            {
-              isExpanded: false,
-              workspaceThreads: [{ id: ThreadId.makeUnsafe("ws-3") }],
-            },
-          ],
-        },
-      ]),
-    ).toEqual([
-      ThreadId.makeUnsafe("ws-1"),
-      ThreadId.makeUnsafe("ws-2"),
-      ThreadId.makeUnsafe("local-1"),
-    ]);
-  });
-});
-
 describe("isContextMenuPointerDown", () => {
   it("treats secondary-button presses as context menu gestures on all platforms", () => {
     expect(
@@ -639,55 +551,6 @@ describe("resolveProjectStatusIndicator", () => {
         },
       ]),
     ).toMatchObject({ label: "Plan Ready", dotClass: "bg-violet-500" });
-  });
-});
-
-describe("getVisibleThreadsForProject", () => {
-  it("includes the active thread even when it falls below the folded preview", () => {
-    const threads = Array.from({ length: 8 }, (_, index) =>
-      makeThread({
-        id: ThreadId.makeUnsafe(`thread-${index + 1}`),
-        title: `Thread ${index + 1}`,
-      }),
-    );
-
-    const result = getVisibleThreadsForProject({
-      threads,
-      activeThreadId: ThreadId.makeUnsafe("thread-8"),
-      isThreadListExpanded: false,
-      previewLimit: 6,
-    });
-
-    expect(result.hasHiddenThreads).toBe(true);
-    expect(result.visibleThreads.map((thread) => thread.id)).toEqual([
-      ThreadId.makeUnsafe("thread-1"),
-      ThreadId.makeUnsafe("thread-2"),
-      ThreadId.makeUnsafe("thread-3"),
-      ThreadId.makeUnsafe("thread-4"),
-      ThreadId.makeUnsafe("thread-5"),
-      ThreadId.makeUnsafe("thread-6"),
-      ThreadId.makeUnsafe("thread-8"),
-    ]);
-  });
-
-  it("returns all threads when the list is expanded", () => {
-    const threads = Array.from({ length: 8 }, (_, index) =>
-      makeThread({
-        id: ThreadId.makeUnsafe(`thread-${index + 1}`),
-      }),
-    );
-
-    const result = getVisibleThreadsForProject({
-      threads,
-      activeThreadId: ThreadId.makeUnsafe("thread-8"),
-      isThreadListExpanded: true,
-      previewLimit: 6,
-    });
-
-    expect(result.hasHiddenThreads).toBe(true);
-    expect(result.visibleThreads.map((thread) => thread.id)).toEqual(
-      threads.map((thread) => thread.id),
-    );
   });
 });
 

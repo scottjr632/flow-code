@@ -33,7 +33,7 @@ interface WorkspaceCommandPaletteProps {
 }
 
 const GROUP_LABELS: Record<WorkspaceCommandPaletteItem["group"], string> = {
-  actions: "Actions",
+  actions: "Suggested",
   terminals: "Terminals",
   sessions: "Sessions",
 };

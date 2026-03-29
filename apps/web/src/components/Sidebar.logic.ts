@@ -154,24 +154,6 @@ export function resolveThreadKeyboardTraversal<T>(input: {
   return threadIds[activeIndex] ?? null;
 }
 
-export function getVisibleSidebarThreadIds<TThreadId>(
-  renderedProjects: readonly {
-    renderedThreads: readonly { id: TThreadId }[];
-    renderedWorkspaceRows: readonly {
-      isExpanded: boolean;
-      workspaceThreads: readonly { id: TThreadId }[];
-    }[];
-  }[],
-): TThreadId[] {
-  return renderedProjects.flatMap((renderedProject) => {
-    const workspaceThreadIds = renderedProject.renderedWorkspaceRows.flatMap((row) =>
-      row.isExpanded ? row.workspaceThreads.map((thread) => thread.id) : [],
-    );
-    const localThreadIds = renderedProject.renderedThreads.map((thread) => thread.id);
-    return [...workspaceThreadIds, ...localThreadIds];
-  });
-}
-
 export function resolveAdjacentThreadId<T>(input: {
   threadIds: readonly T[];
   currentThreadId: T | null;

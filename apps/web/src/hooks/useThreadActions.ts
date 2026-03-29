@@ -157,7 +157,7 @@ export function useThreadActions() {
             replace: true,
           });
         } else {
-          await navigate({ to: "/", replace: true });
+          await navigate({ to: "/", replace: true, search: {} });
         }
       }
 
@@ -326,12 +326,80 @@ export function useThreadActions() {
     [deleteWorkspace, draftThreadsByThreadId, threads, workspaces],
   );
 
+  const archiveWorkspace = useCallback(
+    async (workspaceId: WorkspaceId) => {
+      const api = readNativeApi();
+      if (!api) return;
+      const workspace = workspaces.find((entry) => entry.id === workspaceId);
+      if (!workspace) return;
+      const linkedThreads = threads.filter(
+        (thread) => thread.workspaceId === workspaceId && thread.archivedAt === null,
+      );
+      const runningThread = linkedThreads.find(
+        (thread) => thread.session?.status === "running" && thread.session.activeTurnId != null,
+      );
+      if (runningThread) {
+        throw new Error("Cannot archive a workspace while one of its threads is running.");
+      }
+
+      for (const thread of linkedThreads) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.archive",
+          commandId: newCommandId(),
+          threadId: thread.id,
+        });
+      }
+
+      await deleteWorkspace(workspaceId);
+
+      if (routeThreadId && linkedThreads.some((thread) => thread.id === routeThreadId)) {
+        await handleNewThread(workspace.projectId, {
+          workspaceId: null,
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        });
+      }
+    },
+    [deleteWorkspace, handleNewThread, routeThreadId, threads, workspaces],
+  );
+
+  const confirmAndArchiveWorkspace = useCallback(
+    async (workspaceId: WorkspaceId) => {
+      const api = readNativeApi();
+      if (!api) return;
+      const workspace = workspaces.find((entry) => entry.id === workspaceId);
+      if (!workspace) return;
+      const activeWorkspaceThreads = threads.filter(
+        (thread) => thread.workspaceId === workspaceId && thread.archivedAt === null,
+      );
+
+      const confirmed = await api.dialogs.confirm(
+        [
+          `Archive workspace "${workspace.name}"?`,
+          activeWorkspaceThreads.length > 0
+            ? `${activeWorkspaceThreads.length} active session${activeWorkspaceThreads.length === 1 ? "" : "s"} will be archived and removed from this workspace.`
+            : "This workspace will be removed from the sidebar.",
+          "The worktree will be kept on disk.",
+        ].join("\n"),
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      await archiveWorkspace(workspaceId);
+    },
+    [archiveWorkspace, threads, workspaces],
+  );
+
   return {
     archiveThread,
+    archiveWorkspace,
     unarchiveThread,
     deleteThread,
     confirmAndDeleteThread,
     deleteWorkspace,
     confirmAndDeleteWorkspace,
+    confirmAndArchiveWorkspace,
   };
 }

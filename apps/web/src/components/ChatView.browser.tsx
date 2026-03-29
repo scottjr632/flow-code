@@ -37,10 +37,12 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_ID = "project-1" as ProjectId;
+const SECOND_PROJECT_ID = "project-2" as ProjectId;
 const WORKSPACE_ID = "workspace-1" as WorkspaceId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
+const SECOND_THREAD_ID = "thread-browser-test-2" as ThreadId;
 
 interface WsRequestEnvelope {
   id: string;
@@ -719,6 +721,19 @@ function dispatchFocusComposerShortcut(): void {
   );
 }
 
+function dispatchWorkspaceCommandPaletteShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "k",
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 async function triggerChatNewShortcutUntilPath(
   router: ReturnType<typeof getRouter>,
   predicate: (pathname: string) => boolean,
@@ -745,6 +760,25 @@ async function waitForNewThreadShortcutLabel(): Promise<void> {
     ? "New thread (⇧⌘O)"
     : "New thread (Ctrl+Shift+O)";
   await expect.element(page.getByText(shortcutLabel)).toBeInTheDocument();
+}
+
+async function openProjectNewThreadPage(): Promise<void> {
+  const newThreadButton = page.getByTestId("new-thread-button");
+  await expect.element(newThreadButton).toBeInTheDocument();
+  await newThreadButton.click();
+  await expect.element(page.getByText("Let's build")).toBeInTheDocument();
+  await expect.element(page.getByTestId("new-thread-prompt-input")).toBeInTheDocument();
+}
+
+async function submitNewThreadPage(): Promise<void> {
+  const submitButton = page.getByTestId("create-thread-submit-button");
+  await expect.element(submitButton).toBeInTheDocument();
+  await submitButton.click();
+}
+
+async function openProjectNewThreadAndCreateDraft(): Promise<void> {
+  await openProjectNewThreadPage();
+  await submitNewThreadPage();
 }
 
 async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
@@ -835,6 +869,7 @@ async function measureUserRow(options: {
 async function mountChatView(options: {
   viewport: ViewportSpec;
   snapshot: OrchestrationReadModel;
+  initialEntries?: string[];
   configureFixture?: (fixture: TestFixture) => void;
   resolveRpc?: (body: WsRequestEnvelope["body"]) => unknown | undefined;
 }): Promise<MountedChatView> {
@@ -855,7 +890,7 @@ async function mountChatView(options: {
 
   const router = getRouter(
     createMemoryHistory({
-      initialEntries: [`/${THREAD_ID}`],
+      initialEntries: options.initialEntries ?? [`/${THREAD_ID}`],
     }),
   );
 
@@ -1885,6 +1920,257 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("opens the create-thread page from the global sidebar button", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-global-new-thread-page" as MessageId,
+        targetText: "global new thread page",
+      }),
+    });
+
+    try {
+      const globalNewThreadButton = page.getByTestId("global-new-thread-button");
+      await expect.element(globalNewThreadButton).toBeInTheDocument();
+
+      await globalNewThreadButton.click();
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/",
+        "Route should have changed to the create-thread page.",
+      );
+      await expect.element(page.getByText("Let's build")).toBeInTheDocument();
+      await expect.element(page.getByTestId("new-thread-prompt-input")).toBeInTheDocument();
+      await expect.element(page.getByTestId("create-thread-submit-button")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("preselects the project on the create-thread page when opened from a repo row", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-project-new-thread-page" as MessageId,
+        targetText: "project new thread page",
+      }),
+    });
+
+    try {
+      await openProjectNewThreadPage();
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/",
+        "Route should have changed to the project-scoped create-thread page.",
+      );
+      await vi.waitFor(() => {
+        const trigger = document.querySelector('[data-testid="new-thread-project-select"]');
+        expect(trigger?.textContent).toContain("Project");
+      });
+      await expect.element(page.getByTestId("create-thread-submit-button")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("defaults the global create-thread page to the most recently used project", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-global-new-thread-default-project" as MessageId,
+      targetText: "global new thread default project",
+    });
+    const snapshotWithSecondProject: OrchestrationReadModel = {
+      ...baseSnapshot,
+      projects: [
+        ...baseSnapshot.projects,
+        {
+          id: SECOND_PROJECT_ID,
+          title: "Second Project",
+          workspaceRoot: "/repo/second-project",
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5",
+          },
+          scripts: [],
+          createdAt: NOW_ISO,
+          updatedAt: NOW_ISO,
+          deletedAt: null,
+        },
+      ],
+      threads: [
+        ...baseSnapshot.threads,
+        {
+          id: SECOND_THREAD_ID,
+          projectId: SECOND_PROJECT_ID,
+          workspaceId: null,
+          title: "Second browser test thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5",
+          },
+          interactionMode: "default",
+          runtimeMode: "full-access",
+          branch: "main",
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: NOW_ISO,
+          updatedAt: NOW_ISO,
+          archivedAt: null,
+          deletedAt: null,
+          messages: [],
+          activities: [],
+          proposedPlans: [],
+          checkpoints: [],
+          session: {
+            threadId: SECOND_THREAD_ID,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: NOW_ISO,
+          },
+        },
+      ],
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: snapshotWithSecondProject,
+    });
+
+    try {
+      useStore.setState({ threadMruIds: [SECOND_THREAD_ID, THREAD_ID] });
+
+      const globalNewThreadButton = page.getByTestId("global-new-thread-button");
+      await globalNewThreadButton.click();
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/",
+        "Route should have changed to the create-thread page.",
+      );
+      await vi.waitFor(() => {
+        const trigger = document.querySelector('[data-testid="new-thread-project-select"]');
+        expect(trigger?.textContent).toContain("Second Project");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("lets you choose a workspace from the create-thread page", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withWorkspace(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-new-thread-workspace-select" as MessageId,
+          targetText: "new thread workspace select",
+        }),
+      ),
+    });
+
+    try {
+      await openProjectNewThreadPage();
+
+      const targetSelect = page.getByTestId("new-thread-target-select");
+      await expect.element(targetSelect).toBeInTheDocument();
+
+      await targetSelect.click();
+      await page.getByText("feature-flow").first().click();
+      await submitNewThreadPage();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      expect(useComposerDraftStore.getState().draftThreadsByThreadId[newThreadId]).toMatchObject({
+        projectId: PROJECT_ID,
+        workspaceId: WORKSPACE_ID,
+        branch: "feature-flow",
+        worktreePath: "/repo/project/.t3/worktrees/feature-flow",
+        envMode: "worktree",
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("lets you choose a new workspace from the create-thread page", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withWorkspace(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-new-thread-new-workspace-select" as MessageId,
+          targetText: "new thread new workspace select",
+        }),
+      ),
+    });
+
+    try {
+      await openProjectNewThreadPage();
+
+      const targetSelect = page.getByTestId("new-thread-target-select");
+      await expect.element(targetSelect).toBeInTheDocument();
+
+      await targetSelect.click();
+      await page.getByText("New workspace").first().click();
+      await submitNewThreadPage();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      expect(useComposerDraftStore.getState().draftThreadsByThreadId[newThreadId]).toMatchObject({
+        projectId: PROJECT_ID,
+        workspaceId: null,
+        branch: "main",
+        worktreePath: null,
+        envMode: "worktree",
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("carries the create-page prompt into the draft composer", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-new-thread-prompt-handoff" as MessageId,
+        targetText: "new thread prompt handoff",
+      }),
+    });
+
+    try {
+      await openProjectNewThreadPage();
+
+      const promptInput = page.getByTestId("new-thread-prompt-input");
+      await promptInput.fill("Investigate the failing browser test");
+      await submitNewThreadPage();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      await waitForComposerEditor();
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "Investigate the failing browser test",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps the new thread selected after clicking the new-thread button", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -1895,11 +2181,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      // Wait for the sidebar to render with the project.
-      const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
-
-      await newThreadButton.click();
+      await openProjectNewThreadAndCreateDraft();
 
       // The route should change to a new draft thread ID.
       const newThreadPath = await waitForURL(
@@ -1958,10 +2240,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
-
-      await newThreadButton.click();
+      await openProjectNewThreadAndCreateDraft();
 
       const newThreadPath = await waitForURL(
         mounted.router,
@@ -1977,6 +2256,207 @@ describe("ChatView timeline estimator parity (full app)", () => {
         branch: null,
         worktreePath: null,
       });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("archives a workspace and its active threads from the sidebar context menu", async () => {
+    const contextMenuSelections: string[][] = [];
+    const confirmMessages: string[] = [];
+    const contextMenuResult = vi.fn(async () => "archive");
+    const confirmResult = vi.fn(async (message: string) => {
+      confirmMessages.push(message);
+      return true;
+    });
+    const desktopBridge = {
+      getWsUrl: () => null,
+      pickFolder: async () => null,
+      confirm: confirmResult,
+      setTheme: async () => undefined,
+      showContextMenu: async (items: ReadonlyArray<{ id: string }>) => {
+        contextMenuSelections.push(items.map((item) => item.id));
+        return contextMenuResult();
+      },
+      openExternal: async () => true,
+      onMenuAction: () => () => undefined,
+      getUpdateState: async () => ({
+        enabled: false,
+        status: "disabled" as const,
+        currentVersion: "0.0.0",
+        hostArch: "arm64" as const,
+        appArch: "arm64" as const,
+        runningUnderArm64Translation: false,
+        availableVersion: null,
+        downloadedVersion: null,
+        downloadPercent: null,
+        checkedAt: null,
+        message: null,
+        errorContext: null,
+        canRetry: false,
+      }),
+      checkForUpdate: async () => ({
+        checked: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      downloadUpdate: async () => ({
+        accepted: false,
+        completed: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      installUpdate: async () => ({
+        accepted: false,
+        completed: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      onUpdateState: () => () => undefined,
+    } as NonNullable<Window["desktopBridge"]>;
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: desktopBridge,
+    });
+
+    const draftThreadId = "draft-workspace-archive" as ThreadId;
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [draftThreadId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceId: WORKSPACE_ID,
+          branch: "feature-flow",
+          worktreePath: "/repo/project/.t3/worktrees/feature-flow",
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: draftThreadId,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withWorkspace(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-workspace-archive-test" as MessageId,
+          targetText: "workspace archive test",
+        }),
+        { title: "Flow Workspace" },
+      ),
+    });
+
+    try {
+      const workspaceLabel = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("span")).find(
+            (element) => element.textContent?.trim() === "Flow Workspace",
+          ) ?? null,
+        "Unable to find workspace row.",
+      );
+
+      workspaceLabel.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 32,
+          clientY: 32,
+          button: 2,
+        }),
+      );
+      await waitForLayout();
+
+      await vi.waitFor(
+        () => {
+          expect(contextMenuResult).toHaveBeenCalledTimes(1);
+          expect(confirmResult).toHaveBeenCalledTimes(1);
+          expect(
+            wsRequests.some((request) => {
+              const command = request.command as { type?: string; threadId?: ThreadId } | undefined;
+              return (
+                request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+                command?.type === "thread.archive" &&
+                command.threadId === THREAD_ID
+              );
+            }),
+          ).toBe(true);
+          expect(
+            wsRequests.some((request) => {
+              const command = request.command as
+                | { type?: string; workspaceId?: WorkspaceId }
+                | undefined;
+              return (
+                request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+                command?.type === "workspace.delete" &&
+                command.workspaceId === WORKSPACE_ID
+              );
+            }),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(contextMenuSelections).toEqual([
+        ["rename", "copy-path", "new-session", "archive", "delete"],
+      ]);
+      expect(confirmMessages).toEqual([
+        'Archive workspace "Flow Workspace"?\n1 active session will be archived and removed from this workspace.\nThe worktree will be kept on disk.',
+      ]);
+      await vi.waitFor(
+        () => {
+          expect(
+            useComposerDraftStore.getState().draftThreadsByThreadId[draftThreadId],
+          ).toMatchObject({
+            workspaceId: null,
+            branch: null,
+            worktreePath: null,
+            envMode: "local",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
@@ -2149,7 +2629,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      expect(contextMenuSelections).toEqual([["rename", "copy-path", "new-session", "delete"]]);
+      expect(contextMenuSelections).toEqual([
+        ["rename", "copy-path", "new-session", "archive", "delete"],
+      ]);
       expect(confirmMessages).toEqual([
         'Delete workspace "Flow Workspace"?\n1 session will stay, but they will no longer be grouped under this workspace.',
       ]);
@@ -2188,10 +2670,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
-
-      await newThreadButton.click();
+      await openProjectNewThreadAndCreateDraft();
 
       const newThreadPath = await waitForURL(
         mounted.router,
@@ -2241,10 +2720,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
-
-      await newThreadButton.click();
+      await openProjectNewThreadAndCreateDraft();
 
       const newThreadPath = await waitForURL(
         mounted.router,
@@ -2281,10 +2757,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
-
-      await newThreadButton.click();
+      await openProjectNewThreadAndCreateDraft();
 
       const newThreadPath = await waitForURL(
         mounted.router,
@@ -2323,10 +2796,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
-
-      await newThreadButton.click();
+      await openProjectNewThreadAndCreateDraft();
 
       const threadPath = await waitForURL(
         mounted.router,
@@ -2357,7 +2827,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
       });
 
-      await newThreadButton.click();
+      await openProjectNewThreadAndCreateDraft();
 
       await waitForURL(
         mounted.router,
@@ -2429,6 +2899,63 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("opens the new-thread page from the command palette", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-palette-new-thread" as MessageId,
+        targetText: "command palette new thread",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.new",
+              shortcut: {
+                key: "o",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      dispatchWorkspaceCommandPaletteShortcut();
+
+      await expect.element(page.getByText("Suggested")).toBeInTheDocument();
+
+      const newThreadCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("New thread"),
+          ) ?? null,
+        "Unable to find New thread command.",
+      );
+      newThreadCommand.click();
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/",
+        "Command palette should navigate to the global new-thread page.",
+      );
+      await expect.element(page.getByText("Let's build")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("focuses the composer with Cmd+L", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -2489,11 +3016,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
       await waitForNewThreadShortcutLabel();
       await waitForServerConfigToApply();
-      await newThreadButton.click();
+      await openProjectNewThreadAndCreateDraft();
 
       const promotedThreadPath = await waitForURL(
         mounted.router,

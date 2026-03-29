@@ -5,7 +5,9 @@ import {
   buildTerminalWorkspaceTabId,
   buildWorkspaceTabs,
   DEFAULT_CHAT_WORKSPACE_TAB_ID,
+  reorderWorkspaceTabIds,
   resolveWorkspaceTabId,
+  sortWorkspaceTabsByOrder,
 } from "./workspaceTabs";
 
 describe("workspaceTabs", () => {
@@ -87,5 +89,37 @@ describe("workspaceTabs", () => {
     expect(resolveWorkspaceTabId(buildTerminalWorkspaceTabId("group-a"), tabs)).toBe(
       buildTerminalWorkspaceTabId("group-a"),
     );
+  });
+
+  it("reorders tabs using a saved tab id order", () => {
+    const tabs = buildWorkspaceTabs({
+      diffOpen: true,
+      terminalOpen: true,
+      terminalGroups: [{ id: "group-a", terminalIds: ["terminal-a"] }],
+    });
+
+    expect(
+      sortWorkspaceTabsByOrder(tabs, ["diff", DEFAULT_CHAT_WORKSPACE_TAB_ID]).map((tab) => tab.id),
+    ).toEqual(["diff", DEFAULT_CHAT_WORKSPACE_TAB_ID, buildTerminalWorkspaceTabId("group-a")]);
+  });
+
+  it("moves the dragged tab id to the target position", () => {
+    expect(
+      reorderWorkspaceTabIds(
+        [
+          DEFAULT_CHAT_WORKSPACE_TAB_ID,
+          "diff",
+          buildTerminalWorkspaceTabId("group-a"),
+          buildTerminalWorkspaceTabId("group-b"),
+        ],
+        buildTerminalWorkspaceTabId("group-b"),
+        "diff",
+      ),
+    ).toEqual([
+      DEFAULT_CHAT_WORKSPACE_TAB_ID,
+      buildTerminalWorkspaceTabId("group-b"),
+      "diff",
+      buildTerminalWorkspaceTabId("group-a"),
+    ]);
   });
 });

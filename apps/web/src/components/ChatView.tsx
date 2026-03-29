@@ -102,6 +102,7 @@ import {
   LockOpenIcon,
   MessageSquareTextIcon,
   PlusIcon,
+  SquarePenIcon,
   TerminalSquareIcon,
   XIcon,
 } from "lucide-react";
@@ -166,8 +167,10 @@ import {
   buildTerminalWorkspaceTabId,
   buildWorkspaceTabs,
   DEFAULT_CHAT_WORKSPACE_TAB_ID,
+  reorderWorkspaceTabIds,
   isTerminalWorkspaceTabId,
   resolveWorkspaceTabId,
+  sortWorkspaceTabsByOrder,
   type WorkspaceTabId,
 } from "../workspaceTabs";
 import {
@@ -203,6 +206,7 @@ import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
+  buildWorkspaceTabOrderContextId,
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
@@ -219,6 +223,8 @@ import {
   SendPhase,
   shouldReuseHiddenDefaultTerminalForWorkspaceCreation,
   updateLastActiveWorkspaceTabByThread,
+  WORKSPACE_TAB_ORDER_BY_CONTEXT_KEY,
+  WorkspaceTabOrderByContextSchema,
 } from "./ChatView.logic";
 import { sortThreadsForSidebar } from "./Sidebar.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -432,6 +438,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     {},
     LastActiveWorkspaceTabByThreadSchema,
   );
+  const [workspaceTabOrderByContextId, setWorkspaceTabOrderByContextId] = useLocalStorage(
+    WORKSPACE_TAB_ORDER_BY_CONTEXT_KEY,
+    {},
+    WorkspaceTabOrderByContextSchema,
+  );
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const activeWorkspaceTabThreadIdRef = useRef(threadId);
   activeWorkspaceTabThreadIdRef.current = threadId;
@@ -466,9 +477,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setMessagesScrollElement(element);
   }, []);
 
-  const terminalState = useTerminalStateStore((state) =>
-    selectThreadTerminalState(state.terminalStateByThreadId, threadId),
-  );
   const storeSetTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
   const storeSetTerminalHeight = useTerminalStateStore((s) => s.setTerminalHeight);
   const storeSplitTerminal = useTerminalStateStore((s) => s.splitTerminal);
@@ -578,6 +586,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
+  /**
+   * Terminal sessions are scoped to the workspace when the thread belongs to one,
+   * so all threads in a workspace share the same set of terminals. For local
+   * (non-workspace) threads, terminals are scoped to the individual thread.
+   */
+  const terminalOwnerId: ThreadId | null =
+    (activeThread?.workspaceId as unknown as ThreadId) ?? activeThreadId;
+  const terminalState = useTerminalStateStore((state) =>
+    selectThreadTerminalState(state.terminalStateByThreadId, terminalOwnerId ?? threadId),
+  );
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const activeContextWindow = useMemo(
     () => deriveLatestContextWindowSnapshot(activeThread?.activities ?? []),
@@ -668,16 +686,33 @@ export default function ChatView({ threadId }: ChatViewProps) {
     settings.sidebarThreadSortOrder,
     threads,
   ]);
-  const workspaceTabs = useMemo(
+  const workspaceTabOrderContextId = useMemo(
     () =>
-      buildWorkspaceTabs({
-        sessionTabs: workspaceSessionTabs,
-        diffOpen,
-        terminalOpen: terminalState.terminalOpen,
-        terminalGroups: terminalState.terminalGroups,
+      buildWorkspaceTabOrderContextId({
+        threadId: activeThread?.id ?? threadId,
+        workspaceId: activeWorkspaceContext.workspaceId,
       }),
-    [diffOpen, terminalState.terminalGroups, terminalState.terminalOpen, workspaceSessionTabs],
+    [activeThread?.id, activeWorkspaceContext.workspaceId, threadId],
   );
+  const workspaceTabs = useMemo(() => {
+    const tabs = buildWorkspaceTabs({
+      sessionTabs: workspaceSessionTabs,
+      diffOpen,
+      terminalOpen: terminalState.terminalOpen,
+      terminalGroups: terminalState.terminalGroups,
+      runningTerminalIds: terminalState.runningTerminalIds,
+    });
+
+    return sortWorkspaceTabsByOrder(tabs, workspaceTabOrderByContextId[workspaceTabOrderContextId]);
+  }, [
+    diffOpen,
+    terminalState.terminalGroups,
+    terminalState.runningTerminalIds,
+    terminalState.terminalOpen,
+    workspaceSessionTabs,
+    workspaceTabOrderByContextId,
+    workspaceTabOrderContextId,
+  ]);
   const defaultConversationWorkspaceTabId =
     activeThread && activeWorkspaceContext.workspaceId
       ? buildThreadWorkspaceTabId(activeThread.id)
@@ -718,6 +753,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeWorkspaceTabId, diffOpen, resolvedWorkspaceTabId, setActiveWorkspaceTabId]);
 
   useEffect(() => {
+    const orderedTabIds = workspaceTabs.map((tab) => tab.id);
+    setWorkspaceTabOrderByContextId((current) => {
+      const previousTabIds = current[workspaceTabOrderContextId];
+      if (
+        previousTabIds &&
+        previousTabIds.length === orderedTabIds.length &&
+        previousTabIds.every((tabId, index) => tabId === orderedTabIds[index])
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [workspaceTabOrderContextId]: orderedTabIds,
+      };
+    });
+  }, [setWorkspaceTabOrderByContextId, workspaceTabOrderContextId, workspaceTabs]);
+
+  useEffect(() => {
     if (
       activeWorkspaceTabId === "diff" ||
       isTerminalWorkspaceTabId(activeWorkspaceTabId) ||
@@ -727,6 +781,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     setActiveWorkspaceTabId(defaultConversationWorkspaceTabId);
   }, [activeWorkspaceTabId, defaultConversationWorkspaceTabId, setActiveWorkspaceTabId]);
+
+  const reorderWorkspaceTabs = useCallback(
+    (draggedTabId: WorkspaceTabId, targetTabId: WorkspaceTabId) => {
+      setWorkspaceTabOrderByContextId((current) => {
+        const currentTabIds = workspaceTabs.map((tab) => tab.id);
+        const nextTabIds = reorderWorkspaceTabIds(currentTabIds, draggedTabId, targetTabId);
+        const previousTabIds = current[workspaceTabOrderContextId];
+        if (
+          previousTabIds &&
+          previousTabIds.length === nextTabIds.length &&
+          previousTabIds.every((tabId, index) => tabId === nextTabIds[index])
+        ) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [workspaceTabOrderContextId]: nextTabIds,
+        };
+      });
+    },
+    [setWorkspaceTabOrderByContextId, workspaceTabOrderContextId, workspaceTabs],
+  );
 
   const openOrReuseProjectDraftThread = useCallback(
     async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
@@ -1432,6 +1509,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => shortcutLabelForCommand(keybindings, "diff.toggle", nonTerminalShortcutLabelOptions),
     [keybindings, nonTerminalShortcutLabelOptions],
   );
+  const newThreadShortcutLabel = useMemo(
+    () =>
+      shortcutLabelForCommand(keybindings, "chat.newLocal", nonTerminalShortcutLabelOptions) ??
+      shortcutLabelForCommand(keybindings, "chat.new", nonTerminalShortcutLabelOptions),
+    [keybindings, nonTerminalShortcutLabelOptions],
+  );
   const onToggleDiff = useCallback(() => {
     if (!diffOpen) {
       setActiveWorkspaceTabId("diff");
@@ -1560,20 +1643,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const setTerminalOpen = useCallback(
     (open: boolean) => {
-      if (!activeThreadId) return;
-      storeSetTerminalOpen(activeThreadId, open);
+      if (!terminalOwnerId) return;
+      storeSetTerminalOpen(terminalOwnerId, open);
     },
-    [activeThreadId, storeSetTerminalOpen],
+    [terminalOwnerId, storeSetTerminalOpen],
   );
   const setTerminalHeight = useCallback(
     (height: number) => {
-      if (!activeThreadId) return;
-      storeSetTerminalHeight(activeThreadId, height);
+      if (!terminalOwnerId) return;
+      storeSetTerminalHeight(terminalOwnerId, height);
     },
-    [activeThreadId, storeSetTerminalHeight],
+    [terminalOwnerId, storeSetTerminalHeight],
   );
   const toggleTerminalVisibility = useCallback(() => {
-    if (!activeThreadId) return;
+    if (!terminalOwnerId) return;
     if (terminalState.terminalOpen && activeWorkspaceTab?.kind === "terminal") {
       setActiveWorkspaceTabId(diffOpen ? "diff" : defaultConversationWorkspaceTabId);
     } else if (!terminalState.terminalOpen) {
@@ -1584,7 +1667,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     setTerminalOpen(!terminalState.terminalOpen);
   }, [
-    activeThreadId,
+    terminalOwnerId,
     activeWorkspaceTab?.kind,
     defaultConversationWorkspaceTabId,
     diffOpen,
@@ -1596,13 +1679,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     workspaceTerminalTabIdForGroup,
   ]);
   const splitTerminal = useCallback(() => {
-    if (!activeThreadId || hasReachedSplitLimit) return;
+    if (!terminalOwnerId || hasReachedSplitLimit) return;
     const terminalId = `terminal-${randomUUID()}`;
-    storeSplitTerminal(activeThreadId, terminalId);
+    storeSplitTerminal(terminalOwnerId, terminalId);
     setActiveWorkspaceTabId(workspaceTerminalTabIdForGroup(terminalState.activeTerminalGroupId));
     setTerminalFocusRequestId((value) => value + 1);
   }, [
-    activeThreadId,
+    terminalOwnerId,
     hasReachedSplitLimit,
     setActiveWorkspaceTabId,
     storeSplitTerminal,
@@ -1610,21 +1693,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
     workspaceTerminalTabIdForGroup,
   ]);
   const createNewTerminal = useCallback(() => {
-    if (!activeThreadId) return;
+    if (!terminalOwnerId) return;
     const terminalId = `terminal-${randomUUID()}`;
-    storeNewTerminal(activeThreadId, terminalId);
+    storeNewTerminal(terminalOwnerId, terminalId);
     setActiveWorkspaceTabId(buildTerminalWorkspaceTabId(terminalGroupIdForTerminal(terminalId)));
     setTerminalFocusRequestId((value) => value + 1);
-  }, [activeThreadId, setActiveWorkspaceTabId, storeNewTerminal]);
+  }, [terminalOwnerId, setActiveWorkspaceTabId, storeNewTerminal]);
   const activateTerminal = useCallback(
     (terminalId: string) => {
-      if (!activeThreadId) return;
-      storeSetActiveTerminal(activeThreadId, terminalId);
+      if (!terminalOwnerId) return;
+      storeSetActiveTerminal(terminalOwnerId, terminalId);
       setActiveWorkspaceTabId(workspaceTerminalTabIdForTerminal(terminalId));
       setTerminalFocusRequestId((value) => value + 1);
     },
     [
-      activeThreadId,
+      terminalOwnerId,
       setActiveWorkspaceTabId,
       storeSetActiveTerminal,
       workspaceTerminalTabIdForTerminal,
@@ -1633,25 +1716,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const closeTerminal = useCallback(
     (terminalId: string) => {
       const api = readNativeApi();
-      if (!activeThreadId || !api) return;
+      if (!terminalOwnerId || !api) return;
       const latestTerminalState = selectThreadTerminalState(
         useTerminalStateStore.getState().terminalStateByThreadId,
-        activeThreadId,
+        terminalOwnerId,
       );
       const isFinalTerminal = latestTerminalState.terminalIds.length <= 1;
       const fallbackExitWrite = () =>
         api.terminal
-          .write({ threadId: activeThreadId, terminalId, data: "exit\n" })
+          .write({ threadId: terminalOwnerId, terminalId, data: "exit\n" })
           .catch(() => undefined);
       if ("close" in api.terminal && typeof api.terminal.close === "function") {
         void (async () => {
           if (isFinalTerminal) {
             await api.terminal
-              .clear({ threadId: activeThreadId, terminalId })
+              .clear({ threadId: terminalOwnerId, terminalId })
               .catch(() => undefined);
           }
           await api.terminal.close({
-            threadId: activeThreadId,
+            threadId: terminalOwnerId,
             terminalId,
             deleteHistory: true,
           });
@@ -1659,14 +1742,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       } else {
         void fallbackExitWrite();
       }
-      storeCloseTerminal(activeThreadId, terminalId);
+      storeCloseTerminal(terminalOwnerId, terminalId);
       if (isFinalTerminal && activeWorkspaceTab?.kind === "terminal") {
         setActiveWorkspaceTabId(diffOpen ? "diff" : defaultConversationWorkspaceTabId);
       }
       setTerminalFocusRequestId((value) => value + 1);
     },
     [
-      activeThreadId,
+      terminalOwnerId,
       activeWorkspaceTab?.kind,
       defaultConversationWorkspaceTabId,
       diffOpen,
@@ -1686,7 +1769,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       },
     ) => {
       const api = readNativeApi();
-      if (!api || !activeThreadId || !activeProject || !activeThread) return;
+      if (!api || !terminalOwnerId || !activeProject || !activeThread) return;
       if (options?.rememberAsLastInvoked !== false) {
         setLastInvokedScriptByProjectId((current) => {
           if (current[activeProject.id] === script.id) return current;
@@ -1707,12 +1790,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       setTerminalOpen(true);
       if (shouldCreateNewTerminal) {
-        storeNewTerminal(activeThreadId, targetTerminalId);
+        storeNewTerminal(terminalOwnerId, targetTerminalId);
         setActiveWorkspaceTabId(
           buildTerminalWorkspaceTabId(terminalGroupIdForTerminal(targetTerminalId)),
         );
       } else {
-        storeSetActiveTerminal(activeThreadId, targetTerminalId);
+        storeSetActiveTerminal(terminalOwnerId, targetTerminalId);
         setActiveWorkspaceTabId(workspaceTerminalTabIdForTerminal(targetTerminalId));
       }
       setTerminalFocusRequestId((value) => value + 1);
@@ -1726,7 +1809,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       const openTerminalInput: Parameters<typeof api.terminal.open>[0] = shouldCreateNewTerminal
         ? {
-            threadId: activeThreadId,
+            threadId: terminalOwnerId,
             terminalId: targetTerminalId,
             cwd: targetCwd,
             env: runtimeEnv,
@@ -1734,7 +1817,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             rows: SCRIPT_TERMINAL_ROWS,
           }
         : {
-            threadId: activeThreadId,
+            threadId: terminalOwnerId,
             terminalId: targetTerminalId,
             cwd: targetCwd,
             env: runtimeEnv,
@@ -1743,13 +1826,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       try {
         await api.terminal.open(openTerminalInput);
         await api.terminal.write({
-          threadId: activeThreadId,
+          threadId: terminalOwnerId,
           terminalId: targetTerminalId,
           data: `${script.command}\r`,
         });
       } catch (error) {
         setThreadError(
-          activeThreadId,
+          activeThreadId ?? terminalOwnerId,
           error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
         );
       }
@@ -1758,6 +1841,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeProject,
       activeThread,
       activeThreadId,
+      terminalOwnerId,
       gitCwd,
       setActiveWorkspaceTabId,
       setTerminalOpen,
@@ -2519,16 +2603,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   useEffect(() => {
-    if (!activeThreadId) return;
-    const previous = terminalOpenByThreadRef.current[activeThreadId] ?? false;
+    if (!terminalOwnerId) return;
+    const previous = terminalOpenByThreadRef.current[terminalOwnerId] ?? false;
     const current = Boolean(terminalState.terminalOpen);
 
     if (!previous && current) {
-      terminalOpenByThreadRef.current[activeThreadId] = current;
+      terminalOpenByThreadRef.current[terminalOwnerId] = current;
       setTerminalFocusRequestId((value) => value + 1);
       return;
     } else if (previous && !current) {
-      terminalOpenByThreadRef.current[activeThreadId] = current;
+      terminalOpenByThreadRef.current[terminalOwnerId] = current;
       const frame = window.requestAnimationFrame(() => {
         focusComposer();
       });
@@ -2537,8 +2621,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       };
     }
 
-    terminalOpenByThreadRef.current[activeThreadId] = current;
-  }, [activeThreadId, focusComposer, terminalState.terminalOpen]);
+    terminalOpenByThreadRef.current[terminalOwnerId] = current;
+  }, [terminalOwnerId, focusComposer, terminalState.terminalOpen]);
 
   useEffect(() => {
     const openPalette = () => {
@@ -4111,6 +4195,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const workspaceCommandPaletteItems = useMemo<WorkspaceCommandPaletteItem[]>(() => {
     const items: WorkspaceCommandPaletteItem[] = [];
 
+    items.push({
+      id: "action:new-thread",
+      group: "actions",
+      title: "New thread",
+      keywords: "new thread create thread draft",
+      icon: SquarePenIcon,
+      ...(newThreadShortcutLabel ? { shortcut: newThreadShortcutLabel } : {}),
+      onSelect: () => {
+        void navigate({ to: "/" });
+      },
+    });
+
     if (activeProject) {
       items.push({
         id: "action:new-terminal",
@@ -4193,6 +4289,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activateTerminal,
     createNewTerminal,
     navigate,
+    newThreadShortcutLabel,
     newTerminalShortcutLabel,
     projects,
     resolvedWorkspaceTabId,
@@ -4270,6 +4367,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           tabs={workspaceTabs}
           activeTabId={resolvedWorkspaceTabId}
           onSelectTab={selectWorkspaceTab}
+          onReorderTab={reorderWorkspaceTabs}
           onCloseTab={closeWorkspaceTab}
           canCreateSession={activeWorkspaceContext.workspaceId !== null}
           canCreateTerminal={activeProject !== undefined}
@@ -4909,9 +5007,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ) : activeTerminalWorkspaceTab && activeProject ? (
           <div className="min-h-0 min-w-0 flex-1 px-3 pb-3 pt-0 sm:px-5 sm:pb-5 sm:pt-0">
             <ThreadTerminalDrawer
-              key={`${activeThread.id}:${activeTerminalWorkspaceTab.terminalGroupId}`}
+              key={`${terminalOwnerId}:${activeTerminalWorkspaceTab.terminalGroupId}`}
               variant="panel"
-              threadId={activeThread.id}
+              threadId={terminalOwnerId ?? activeThread.id}
               cwd={gitCwd ?? activeProject.cwd}
               runtimeEnv={threadTerminalRuntimeEnv}
               terminalIds={activeTerminalWorkspaceTab.terminalIds}

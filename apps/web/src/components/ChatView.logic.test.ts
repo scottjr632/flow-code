@@ -2,6 +2,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildWorkspaceTabOrderContextId,
   buildExpiredTerminalContextToastCopy,
   deriveComposerSendState,
   getWorkspaceTabReconciliationTarget,
@@ -161,6 +162,26 @@ describe("getWorkspaceTabReconciliationTarget", () => {
         diffOpen: false,
       }),
     ).toBe("chat");
+  });
+});
+
+describe("buildWorkspaceTabOrderContextId", () => {
+  it("keys workspace-backed tab order by workspace id", () => {
+    expect(
+      buildWorkspaceTabOrderContextId({
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        workspaceId: "workspace-1",
+      }),
+    ).toBe("workspace:workspace-1");
+  });
+
+  it("falls back to the thread id for local threads", () => {
+    expect(
+      buildWorkspaceTabOrderContextId({
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        workspaceId: null,
+      }),
+    ).toBe("thread:thread-1");
   });
 });
 

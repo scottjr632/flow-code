@@ -13,10 +13,15 @@ import { DEFAULT_THREAD_TERMINAL_ID } from "../types";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const LAST_ACTIVE_WORKSPACE_TAB_BY_THREAD_KEY = "t3code:last-active-workspace-tab-by-thread";
+export const WORKSPACE_TAB_ORDER_BY_CONTEXT_KEY = "t3code:workspace-tab-order-by-context";
 const WORKTREE_BRANCH_PREFIX = "t3code";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 export const LastActiveWorkspaceTabByThreadSchema = Schema.Record(ThreadId, Schema.String);
+export const WorkspaceTabOrderByContextSchema = Schema.Record(
+  Schema.String,
+  Schema.Array(Schema.String),
+);
 
 export function buildLocalDraftThread(
   threadId: ThreadId,
@@ -214,6 +219,13 @@ export function getWorkspaceTabReconciliationTarget(options: {
   }
 
   return options.resolvedTabId;
+}
+
+export function buildWorkspaceTabOrderContextId(options: {
+  threadId: ThreadId;
+  workspaceId: string | null;
+}): string {
+  return options.workspaceId ? `workspace:${options.workspaceId}` : `thread:${options.threadId}`;
 }
 
 export function shouldReuseHiddenDefaultTerminalForWorkspaceCreation(options: {

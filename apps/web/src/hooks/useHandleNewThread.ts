@@ -40,6 +40,7 @@ export function useHandleNewThread() {
         branch?: string | null;
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
+        initialPrompt?: string;
       },
     ): Promise<void> => {
       const {
@@ -47,6 +48,7 @@ export function useHandleNewThread() {
         getDraftThread,
         getDraftThreadByProjectId,
         applyStickyState,
+        setPrompt,
         setDraftThreadContext,
         setProjectDraftThreadId,
       } = useComposerDraftStore.getState();
@@ -67,6 +69,16 @@ export function useHandleNewThread() {
           ...context,
           workspaces,
         });
+      const initialPrompt =
+        typeof options?.initialPrompt === "string" && options.initialPrompt.length > 0
+          ? options.initialPrompt
+          : null;
+      const primeDraftPrompt = (threadId: ThreadId) => {
+        if (!initialPrompt) {
+          return;
+        }
+        setPrompt(threadId, initialPrompt);
+      };
       if (storedDraftThread) {
         return (async () => {
           const nextWorkspaceContext = resolveDraftWorkspaceContext({
@@ -97,6 +109,7 @@ export function useHandleNewThread() {
             });
           }
           setProjectDraftThreadId(projectId, storedDraftThread.threadId);
+          primeDraftPrompt(storedDraftThread.threadId);
           if (routeThreadId === storedDraftThread.threadId) {
             return;
           }
@@ -142,6 +155,7 @@ export function useHandleNewThread() {
           });
         }
         setProjectDraftThreadId(projectId, routeThreadId);
+        primeDraftPrompt(routeThreadId);
         return Promise.resolve();
       }
 
@@ -162,6 +176,7 @@ export function useHandleNewThread() {
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
         applyStickyState(threadId);
+        primeDraftPrompt(threadId);
 
         await navigate({
           to: "/$threadId",

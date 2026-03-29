@@ -26,7 +26,7 @@ function ChatThreadRouteView() {
     }
 
     if (!routeThreadExists) {
-      void navigate({ to: "/", replace: true });
+      void navigate({ to: "/", replace: true, search: {} });
     }
   }, [navigate, routeThreadExists, threadsHydrated]);
 

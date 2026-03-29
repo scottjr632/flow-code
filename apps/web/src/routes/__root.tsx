@@ -12,6 +12,7 @@ import { Throttler } from "@tanstack/react-pacer";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { AppLogo } from "../components/AppLogo";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
@@ -41,7 +42,8 @@ function RootRouteView() {
   if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
-        <div className="flex flex-1 items-center justify-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-4">
+          <AppLogo decorative className="size-14 rounded-3xl" />
           <p className="text-sm text-muted-foreground">
             Connecting to {APP_DISPLAY_NAME} server...
           </p>
@@ -75,12 +77,17 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
       </div>
 
       <section className="relative w-full max-w-xl rounded-2xl border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-8">
-        <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-          {APP_DISPLAY_NAME}
-        </p>
-        <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-          Something went wrong.
-        </h1>
+        <div className="flex items-center gap-3">
+          <AppLogo decorative className="size-10 rounded-2xl" />
+          <div>
+            <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+              {APP_DISPLAY_NAME}
+            </p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">
+              Something went wrong.
+            </h1>
+          </div>
+        </div>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{message}</p>
 
         <div className="mt-5 flex flex-wrap gap-2">

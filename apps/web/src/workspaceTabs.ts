@@ -58,6 +58,7 @@ export type WorkspaceTab =
       terminalGroupId: string;
       terminalIds: string[];
       primaryTerminalId: string;
+      hasRunningProcess: boolean;
     };
 
 function resolveSessionTabTitle(input: { isDraft: boolean; title: string }): string {
@@ -76,6 +77,7 @@ export function buildWorkspaceTabs(input: {
   diffOpen: boolean;
   terminalOpen: boolean;
   terminalGroups: readonly ThreadTerminalGroup[];
+  runningTerminalIds?: readonly string[];
 }): WorkspaceTab[] {
   const tabs: WorkspaceTab[] =
     input.sessionTabs && input.sessionTabs.length > 0
@@ -112,6 +114,7 @@ export function buildWorkspaceTabs(input: {
     const normalizedTerminalGroups = input.terminalGroups.filter(
       (group) => group.terminalIds.length > 0,
     );
+    const runningSet = new Set(input.runningTerminalIds ?? []);
     normalizedTerminalGroups.forEach((group, groupIndex) => {
       const primaryTerminalId = group.terminalIds[0];
       if (!primaryTerminalId) {
@@ -130,6 +133,7 @@ export function buildWorkspaceTabs(input: {
         terminalGroupId: group.id,
         terminalIds: [...group.terminalIds],
         primaryTerminalId,
+        hasRunningProcess: group.terminalIds.some((id) => runningSet.has(id)),
       });
     });
   }
@@ -145,4 +149,55 @@ export function resolveWorkspaceTabId(
     return preferredTabId;
   }
   return tabs[0]?.id ?? DEFAULT_CHAT_WORKSPACE_TAB_ID;
+}
+
+export function sortWorkspaceTabsByOrder(
+  tabs: readonly WorkspaceTab[],
+  orderedTabIds: readonly WorkspaceTabId[] | undefined,
+): WorkspaceTab[] {
+  if (!orderedTabIds || orderedTabIds.length === 0) {
+    return [...tabs];
+  }
+
+  const rankByTabId = new Map(orderedTabIds.map((tabId, index) => [tabId, index] as const));
+
+  return [...tabs].toSorted((left, right) => {
+    const leftRank = rankByTabId.get(left.id);
+    const rightRank = rankByTabId.get(right.id);
+
+    if (leftRank === undefined && rightRank === undefined) {
+      return 0;
+    }
+    if (leftRank === undefined) {
+      return 1;
+    }
+    if (rightRank === undefined) {
+      return -1;
+    }
+    return leftRank - rightRank;
+  });
+}
+
+export function reorderWorkspaceTabIds(
+  tabIds: readonly WorkspaceTabId[],
+  draggedTabId: WorkspaceTabId,
+  targetTabId: WorkspaceTabId,
+): WorkspaceTabId[] {
+  if (draggedTabId === targetTabId) {
+    return [...tabIds];
+  }
+
+  const draggedIndex = tabIds.indexOf(draggedTabId);
+  const targetIndex = tabIds.indexOf(targetTabId);
+  if (draggedIndex === -1 || targetIndex === -1) {
+    return [...tabIds];
+  }
+
+  const nextTabIds = [...tabIds];
+  const [draggedTab] = nextTabIds.splice(draggedIndex, 1);
+  if (!draggedTab) {
+    return [...tabIds];
+  }
+  nextTabIds.splice(targetIndex, 0, draggedTab);
+  return nextTabIds;
 }
