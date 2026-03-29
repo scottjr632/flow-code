@@ -233,6 +233,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
+const SESSION_OPEN_SCROLL_LOCK_MS = 1500;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
@@ -441,6 +442,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingUserScrollUpIntentRef = useRef(false);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
+  const sessionOpenScrollLockDeadlineRef = useRef(0);
   const pendingInteractionAnchorRef = useRef<{
     element: HTMLElement;
     top: number;
@@ -2079,6 +2081,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scrollMessagesToBottom();
     });
   }, [scrollMessagesToBottom]);
+  const keepSessionOpenScrolledToBottom = useCallback(() => {
+    if (!shouldAutoScrollRef.current) return;
+    if (Date.now() > sessionOpenScrollLockDeadlineRef.current) return;
+    scheduleStickToBottom();
+  }, [scheduleStickToBottom]);
   const onMessagesClickCapture = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       const scrollContainer = messagesScrollRef.current;
@@ -2189,7 +2196,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [cancelPendingInteractionAnchorAdjustment, cancelPendingStickToBottom]);
   useLayoutEffect(() => {
     if (!activeThread?.id) return;
+    sessionOpenScrollLockDeadlineRef.current = Date.now() + SESSION_OPEN_SCROLL_LOCK_MS;
     shouldAutoScrollRef.current = true;
+    setShowScrollToBottom(false);
     scheduleStickToBottom();
     const timeout = window.setTimeout(() => {
       const scrollContainer = messagesScrollRef.current;
@@ -4319,6 +4328,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     onRevertUserMessage={onRevertUserMessage}
                     isRevertingCheckpoint={isRevertingCheckpoint}
                     onImageExpand={onExpandTimelineImage}
+                    onLayoutChange={keepSessionOpenScrolledToBottom}
                     markdownCwd={gitCwd ?? undefined}
                     resolvedTheme={resolvedTheme}
                     timestampFormat={timestampFormat}

@@ -82,6 +82,7 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
+  onLayoutChange?: () => void;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
@@ -106,6 +107,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   isRevertingCheckpoint,
   onImageExpand,
+  onLayoutChange,
   markdownCwd,
   resolvedTheme,
   timestampFormat,
@@ -128,16 +130,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     };
 
     updateWidth(timelineRoot.getBoundingClientRect().width);
+    onLayoutChange?.();
 
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       updateWidth(timelineRoot.getBoundingClientRect().width);
+      onLayoutChange?.();
     });
     observer.observe(timelineRoot);
     return () => {
       observer.disconnect();
     };
-  }, [hasMessages, isWorking]);
+  }, [hasMessages, isWorking, onLayoutChange]);
 
   const rows = useMemo<TimelineRow[]>(() => {
     const nextRows: TimelineRow[] = [];
@@ -289,8 +293,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     pendingMeasureFrameRef.current = window.requestAnimationFrame(() => {
       pendingMeasureFrameRef.current = null;
       rowVirtualizer.measure();
+      onLayoutChange?.();
     });
-  }, [rowVirtualizer]);
+  }, [onLayoutChange, rowVirtualizer]);
   useEffect(() => {
     return () => {
       const frame = pendingMeasureFrameRef.current;
