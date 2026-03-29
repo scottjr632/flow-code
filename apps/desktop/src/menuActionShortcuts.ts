@@ -1,4 +1,8 @@
-export type DesktopMenuAction = "open-settings" | "thread-next" | "thread-previous";
+export type DesktopMenuAction =
+  | "open-settings"
+  | "thread-next"
+  | "thread-previous"
+  | "thread-traversal-end";
 
 interface ShortcutLikeInput {
   type: string;
@@ -10,11 +14,19 @@ interface ShortcutLikeInput {
 export function resolveDesktopMenuActionForInput(
   input: ShortcutLikeInput,
 ): DesktopMenuAction | null {
+  const normalizedKey = input.key?.toLowerCase();
+  if (
+    input.type === "keyUp" &&
+    input.control !== true &&
+    (normalizedKey === "control" || normalizedKey === "tab")
+  ) {
+    return "thread-traversal-end";
+  }
+
   if (input.type !== "keyDown") {
     return null;
   }
 
-  const normalizedKey = input.key?.toLowerCase();
   if (normalizedKey !== "tab" || input.control !== true) {
     return null;
   }

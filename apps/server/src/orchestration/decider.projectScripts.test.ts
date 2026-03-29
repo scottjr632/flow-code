@@ -5,6 +5,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  WorkspaceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
@@ -15,6 +16,7 @@ import { createEmptyReadModel, projectEvent } from "./projector.ts";
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
+const asWorkspaceId = (value: string): WorkspaceId => WorkspaceId.makeUnsafe(value);
 
 describe("decider project scripts", () => {
   it("emits empty scripts on project.create", async () => {
@@ -368,5 +370,118 @@ describe("decider project scripts", () => {
         interactionMode: "plan",
       },
     });
+  });
+
+  it("reuses a deleted workspace id when creating a thread for the same worktree path", async () => {
+    const now = new Date().toISOString();
+    const workspacePath = "/tmp/project/.t3/worktrees/feature-reused";
+    const deletedWorkspaceId = asWorkspaceId("workspace-deleted");
+    const initial = createEmptyReadModel(now);
+    const withProject = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-workspace-reuse"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-1"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-workspace-reuse"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-workspace-reuse"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const withDeletedWorkspace = await Effect.runPromise(
+      projectEvent(
+        await Effect.runPromise(
+          projectEvent(withProject, {
+            sequence: 2,
+            eventId: asEventId("evt-workspace-create-workspace-reuse"),
+            aggregateKind: "workspace",
+            aggregateId: deletedWorkspaceId,
+            type: "workspace.created",
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe("cmd-workspace-create-workspace-reuse"),
+            causationEventId: null,
+            correlationId: CommandId.makeUnsafe("cmd-workspace-create-workspace-reuse"),
+            metadata: {},
+            payload: {
+              workspaceId: deletedWorkspaceId,
+              projectId: asProjectId("project-1"),
+              title: "feature-reused",
+              branch: "feature-reused",
+              worktreePath: workspacePath,
+              createdAt: now,
+              updatedAt: now,
+            },
+          }),
+        ),
+        {
+          sequence: 3,
+          eventId: asEventId("evt-workspace-delete-workspace-reuse"),
+          aggregateKind: "workspace",
+          aggregateId: deletedWorkspaceId,
+          type: "workspace.deleted",
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-workspace-delete-workspace-reuse"),
+          causationEventId: null,
+          correlationId: CommandId.makeUnsafe("cmd-workspace-delete-workspace-reuse"),
+          metadata: {},
+          payload: {
+            workspaceId: deletedWorkspaceId,
+            deletedAt: now,
+          },
+        },
+      ),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-create-workspace-reuse"),
+          threadId: ThreadId.makeUnsafe("thread-workspace-reuse"),
+          projectId: asProjectId("project-1"),
+          title: "Thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: "feature-reused",
+          worktreePath: workspacePath,
+          createdAt: now,
+        },
+        readModel: withDeletedWorkspace,
+      }),
+    );
+
+    expect(Array.isArray(result)).toBe(true);
+    const events = Array.isArray(result) ? result : [result];
+    expect(events.map((event) => event.type)).toEqual(["workspace.created", "thread.created"]);
+
+    const workspaceEvent = events[0];
+    expect(workspaceEvent?.type).toBe("workspace.created");
+    if (workspaceEvent?.type !== "workspace.created") {
+      return;
+    }
+    expect(workspaceEvent.payload.workspaceId).toBe(deletedWorkspaceId);
+
+    const threadEvent = events[1];
+    expect(threadEvent?.type).toBe("thread.created");
+    if (threadEvent?.type !== "thread.created") {
+      return;
+    }
+    expect(threadEvent.payload.workspaceId).toBe(deletedWorkspaceId);
   });
 });

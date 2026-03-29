@@ -1,6 +1,7 @@
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { Thread, Workspace } from "../types";
 import { cn } from "../lib/utils";
+import { reconcileThreadTraversalMruIds } from "../threadTraversal";
 import {
   findLatestProposedPlan,
   hasActionableProposedPlan,
@@ -88,8 +89,7 @@ function getThreadTraversalKey(thread: ThreadTraversalInput): {
 
   return {
     hasVisited: false,
-    timestamp:
-      toSortableTimestamp(thread.updatedAt ?? thread.createdAt) ?? Number.NEGATIVE_INFINITY,
+    timestamp: toSortableTimestamp(thread.createdAt) ?? Number.NEGATIVE_INFINITY,
   };
 }
 
@@ -115,27 +115,18 @@ export function getThreadIdsByMostRecentVisit<
 
 export function getThreadIdsForKeyboardTraversal<
   T extends Pick<Thread, "id" | "createdAt" | "updatedAt" | "lastVisitedAt">,
->(threads: readonly T[], threadMruIds?: readonly T["id"][]): T["id"][] {
-  const fallbackThreadIds = getThreadIdsByMostRecentVisit(threads);
-  if (!threadMruIds || threadMruIds.length === 0) {
-    return fallbackThreadIds;
-  }
-
-  const availableThreadIds = new Set(fallbackThreadIds);
-  const orderedThreadIds: T["id"][] = [];
-  for (const threadId of threadMruIds) {
-    if (availableThreadIds.has(threadId) && !orderedThreadIds.includes(threadId)) {
-      orderedThreadIds.push(threadId);
-    }
-  }
-
-  for (const threadId of fallbackThreadIds) {
-    if (!orderedThreadIds.includes(threadId)) {
-      orderedThreadIds.push(threadId);
-    }
-  }
-
-  return orderedThreadIds;
+>(
+  threads: readonly T[],
+  threadMruIds?: readonly T["id"][],
+  currentThreadId?: T["id"] | null,
+): T["id"][] {
+  const fallbackThreadIds = getThreadIdsByMostRecentVisit(threads).filter(
+    (threadId) => threadId !== currentThreadId,
+  );
+  return reconcileThreadTraversalMruIds(
+    threadMruIds?.filter((threadId) => threadId !== currentThreadId),
+    fallbackThreadIds,
+  );
 }
 
 export function resolveThreadKeyboardTraversal<T>(input: {

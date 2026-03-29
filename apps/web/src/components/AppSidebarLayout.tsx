@@ -1,8 +1,11 @@
 import { ThreadId } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, type ReactNode } from "react";
 
-import ThreadSidebar from "./Sidebar";
+import ThreadSidebar, {
+  type ThreadTraversalController,
+  type ActiveThreadTraversalSession,
+} from "./Sidebar";
 import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
 import { getThreadIdsForKeyboardTraversal, resolveThreadKeyboardTraversal } from "./Sidebar.logic";
 import { useStore } from "../store";
@@ -15,18 +18,83 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const threads = useStore((store) => store.threads);
   const threadMruIds = useStore((store) => store.threadMruIds ?? []);
+  const recordThreadTraversal = useStore((store) => store.recordThreadTraversal);
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
+  const activeThreadTraversalRef = useRef<ActiveThreadTraversalSession | null>(null);
+  const previousRouteThreadIdRef = useRef(routeThreadId);
   const threadTraversalIds = useMemo(
     () =>
       getThreadIdsForKeyboardTraversal(
         threads.filter((thread) => thread.archivedAt === null),
         threadMruIds,
+        routeThreadId,
       ),
-    [threadMruIds, threads],
+    [routeThreadId, threadMruIds, threads],
   );
+  const finishThreadTraversal = useEffectEvent(() => {
+    const activeTraversal = activeThreadTraversalRef.current;
+    activeThreadTraversalRef.current = null;
+    if (!activeTraversal || !routeThreadId || activeTraversal.originThreadId === routeThreadId) {
+      return;
+    }
+
+    recordThreadTraversal(activeTraversal.originThreadId, routeThreadId);
+  });
+  const beginThreadTraversal = useEffectEvent((session: ActiveThreadTraversalSession) => {
+    if (activeThreadTraversalRef.current) {
+      return;
+    }
+    activeThreadTraversalRef.current = session;
+  });
+  const threadTraversalController = useMemo<ThreadTraversalController>(
+    () => ({
+      activeSessionRef: activeThreadTraversalRef,
+      beginSession: beginThreadTraversal,
+      finishSession: finishThreadTraversal,
+    }),
+    [],
+  );
+
+  useEffect(() => {
+    const previousThreadId = previousRouteThreadIdRef.current;
+    previousRouteThreadIdRef.current = routeThreadId;
+    if (
+      !previousThreadId ||
+      !routeThreadId ||
+      previousThreadId === routeThreadId ||
+      activeThreadTraversalRef.current
+    ) {
+      return;
+    }
+
+    recordThreadTraversal(previousThreadId, routeThreadId);
+  }, [recordThreadTraversal, routeThreadId]);
+
+  useEffect(() => {
+    const onWindowKeyUp = (event: KeyboardEvent) => {
+      const activeTraversal = activeThreadTraversalRef.current;
+      if (!activeTraversal || event[activeTraversal.modifierKey]) {
+        return;
+      }
+
+      finishThreadTraversal();
+    };
+
+    const onWindowBlur = () => {
+      finishThreadTraversal();
+    };
+
+    window.addEventListener("keyup", onWindowKeyUp);
+    window.addEventListener("blur", onWindowBlur);
+
+    return () => {
+      window.removeEventListener("keyup", onWindowKeyUp);
+      window.removeEventListener("blur", onWindowBlur);
+    };
+  }, []);
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
@@ -40,12 +108,27 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         return;
       }
 
+      if (action === "thread-traversal-end") {
+        finishThreadTraversal();
+        return;
+      }
+
       if (action !== "thread-next" && action !== "thread-previous") {
         return;
       }
 
+      const activeTraversal = activeThreadTraversalRef.current;
+      const traversalThreadIds = activeTraversal?.threadIds ?? threadTraversalIds;
+      if (!activeTraversal && routeThreadId) {
+        beginThreadTraversal({
+          originThreadId: routeThreadId,
+          modifierKey: "ctrlKey",
+          threadIds: traversalThreadIds,
+        });
+      }
+
       const targetThreadId = resolveThreadKeyboardTraversal({
-        threadIds: threadTraversalIds,
+        threadIds: traversalThreadIds,
         currentThreadId: routeThreadId,
         direction: action === "thread-next" ? "next" : "previous",
       });
@@ -77,7 +160,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
       >
-        <ThreadSidebar />
+        <ThreadSidebar threadTraversalController={threadTraversalController} />
         <SidebarRail />
       </Sidebar>
       {children}

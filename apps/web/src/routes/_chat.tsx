@@ -7,10 +7,12 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { resolveShortcutCommand } from "../keybindings";
+import { useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useSettings } from "~/hooks/useSettings";
+import { resolveExistingWorkspaceContext } from "~/workspaceContext";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 
@@ -19,6 +21,7 @@ function ChatRouteGlobalShortcuts() {
   const selectedThreadIdsSize = useThreadSelectionStore((state) => state.selectedThreadIds.size);
   const { activeDraftThread, activeThread, handleNewThread, projects, routeThreadId } =
     useHandleNewThread();
+  const workspaces = useStore((store) => store.workspaces);
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
   const terminalOpen = useTerminalStateStore((state) =>
@@ -62,10 +65,16 @@ function ChatRouteGlobalShortcuts() {
       if (command !== "chat.new") return;
       event.preventDefault();
       event.stopPropagation();
-      void handleNewThread(projectId, {
+      const workspaceContext = resolveExistingWorkspaceContext({
         workspaceId: activeThread?.workspaceId ?? activeDraftThread?.workspaceId ?? null,
         branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
         worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
+        workspaces,
+      });
+      void handleNewThread(projectId, {
+        workspaceId: workspaceContext.workspaceId,
+        branch: workspaceContext.branch,
+        worktreePath: workspaceContext.worktreePath,
         envMode: activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
       });
     };
@@ -84,6 +93,7 @@ function ChatRouteGlobalShortcuts() {
     selectedThreadIdsSize,
     terminalOpen,
     appSettings.defaultThreadEnvMode,
+    workspaces,
   ]);
 
   return null;

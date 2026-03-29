@@ -19,6 +19,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
   type MouseEvent,
   type PointerEvent,
 } from "react";
@@ -112,7 +113,6 @@ import {
   getVisibleThreadsForProject,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
-  resolveSidebarNewThreadEnvMode,
   resolveThreadKeyboardTraversal,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -323,7 +323,23 @@ function SortableProjectItem({
   );
 }
 
-export default function Sidebar() {
+export interface ActiveThreadTraversalSession {
+  originThreadId: ThreadId;
+  modifierKey: "ctrlKey" | "metaKey";
+  threadIds: ThreadId[];
+}
+
+export interface ThreadTraversalController {
+  activeSessionRef: MutableRefObject<ActiveThreadTraversalSession | null>;
+  beginSession: (session: ActiveThreadTraversalSession) => void;
+  finishSession: () => void;
+}
+
+export default function Sidebar({
+  threadTraversalController,
+}: {
+  threadTraversalController: ThreadTraversalController;
+}) {
   const projects = useStore((store) => store.projects);
   const workspaces = useStore((store) => store.workspaces);
   const threads = useStore((store) => store.threads);
@@ -345,7 +361,7 @@ export default function Sidebar() {
   const appSettings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useHandleNewThread();
-  const { archiveThread, deleteThread } = useThreadActions();
+  const { archiveThread, deleteThread, confirmAndDeleteWorkspace } = useThreadActions();
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
@@ -1017,6 +1033,7 @@ export default function Sidebar() {
           { id: "rename", label: "Rename workspace" },
           { id: "copy-path", label: "Copy worktree path" },
           { id: "new-session", label: "New session in workspace" },
+          { id: "delete", label: "Delete workspace", destructive: true },
         ],
         position,
       );
@@ -1038,9 +1055,21 @@ export default function Sidebar() {
           worktreePath: workspace.worktreePath,
           envMode: "worktree",
         });
+        return;
+      }
+      if (clicked === "delete") {
+        try {
+          await confirmAndDeleteWorkspace(workspace.id);
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Failed to delete workspace",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
       }
     },
-    [copyPathToClipboard, handleNewThread],
+    [confirmAndDeleteWorkspace, copyPathToClipboard, handleNewThread],
   );
 
   const projectDnDSensors = useSensors(
@@ -1296,8 +1325,8 @@ export default function Sidebar() {
     return mapping;
   }, [keybindings, sidebarShortcutLabelOptions, threadJumpCommandById]);
   const threadTraversalIds = useMemo(
-    () => getThreadIdsForKeyboardTraversal(visibleThreads, threadMruIds),
-    [threadMruIds, visibleThreads],
+    () => getThreadIdsForKeyboardTraversal(visibleThreads, threadMruIds, routeThreadId),
+    [routeThreadId, threadMruIds, visibleThreads],
   );
 
   useEffect(() => {
@@ -1324,8 +1353,19 @@ export default function Sidebar() {
       });
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
+        const activeTraversal = threadTraversalController.activeSessionRef.current;
+        const modifierKey = event.metaKey ? "metaKey" : event.ctrlKey ? "ctrlKey" : null;
+        const traversalThreadIds = activeTraversal?.threadIds ?? threadTraversalIds;
+        if (!activeTraversal && routeThreadId && modifierKey) {
+          threadTraversalController.beginSession({
+            originThreadId: routeThreadId,
+            modifierKey,
+            threadIds: traversalThreadIds,
+          });
+        }
+
         const targetThreadId = resolveThreadKeyboardTraversal({
-          threadIds: threadTraversalIds,
+          threadIds: traversalThreadIds,
           currentThreadId: routeThreadId,
           direction: traversalDirection,
         });
@@ -1361,10 +1401,18 @@ export default function Sidebar() {
           context: getShortcutContext(),
         }),
       );
+
+      const activeTraversal = threadTraversalController.activeSessionRef.current;
+      if (!activeTraversal || event[activeTraversal.modifierKey]) {
+        return;
+      }
+
+      threadTraversalController.finishSession();
     };
 
     const onWindowBlur = () => {
       setShowThreadJumpHints(false);
+      threadTraversalController.finishSession();
     };
 
     window.addEventListener("keydown", onWindowKeyDown);
@@ -1382,6 +1430,7 @@ export default function Sidebar() {
     platform,
     routeTerminalOpen,
     routeThreadId,
+    threadTraversalController,
     threadTraversalIds,
     threadJumpThreadIds,
   ]);
@@ -1859,9 +1908,7 @@ export default function Sidebar() {
                     event.preventDefault();
                     event.stopPropagation();
                     void handleNewThread(project.id, {
-                      envMode: resolveSidebarNewThreadEnvMode({
-                        defaultEnvMode: appSettings.defaultThreadEnvMode,
-                      }),
+                      envMode: "local",
                     });
                   }}
                 >

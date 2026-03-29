@@ -223,6 +223,7 @@ import {
 import { sortThreadsForSidebar } from "./Sidebar.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { resolveExistingWorkspaceContext } from "../workspaceContext";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -293,6 +294,7 @@ interface PendingPullRequestSetupRequest {
 export default function ChatView({ threadId }: ChatViewProps) {
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
+  const workspaces = useStore((store) => store.workspaces);
   const markThreadVisited = useStore((store) => store.markThreadVisited);
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
@@ -581,9 +583,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+  const activeWorkspaceContext = useMemo(
+    () =>
+      resolveExistingWorkspaceContext({
+        workspaceId: activeThread?.workspaceId ?? null,
+        branch: activeThread?.branch ?? null,
+        worktreePath: activeThread?.worktreePath ?? null,
+        workspaces,
+      }),
+    [activeThread?.branch, activeThread?.workspaceId, activeThread?.worktreePath, workspaces],
+  );
   const projectDraftThread = activeProject ? getDraftThreadByProjectId(activeProject.id) : null;
   const workspaceSessionTabs = useMemo(() => {
-    if (!activeProject || !activeThread?.workspaceId) {
+    if (!activeProject || !activeWorkspaceContext.workspaceId || !activeThread) {
       return [];
     }
 
@@ -599,7 +611,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         (thread) =>
           thread.archivedAt === null &&
           thread.projectId === activeProject.id &&
-          thread.workspaceId === activeThread.workspaceId,
+          thread.workspaceId === activeWorkspaceContext.workspaceId,
       )
       .forEach((thread) => {
         sessionsById.set(thread.id, {
@@ -612,7 +624,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       });
 
-    if (projectDraftThread && projectDraftThread.workspaceId === activeThread.workspaceId) {
+    if (
+      projectDraftThread &&
+      projectDraftThread.workspaceId === activeWorkspaceContext.workspaceId
+    ) {
       sessionsById.set(projectDraftThread.threadId, {
         id: projectDraftThread.threadId,
         title: "New thread",
@@ -645,6 +660,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeProject,
     activeThread,
+    activeWorkspaceContext.workspaceId,
     isLocalDraftThread,
     projectDraftThread,
     settings.sidebarThreadSortOrder,
@@ -661,7 +677,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [diffOpen, terminalState.terminalGroups, terminalState.terminalOpen, workspaceSessionTabs],
   );
   const defaultConversationWorkspaceTabId =
-    activeThread && activeThread.workspaceId
+    activeThread && activeWorkspaceContext.workspaceId
       ? buildThreadWorkspaceTabId(activeThread.id)
       : DEFAULT_CHAT_WORKSPACE_TAB_ID;
   const resolvedWorkspaceTabId = resolveWorkspaceTabId(activeWorkspaceTabId, workspaceTabs);
@@ -708,7 +724,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     setActiveWorkspaceTabId(defaultConversationWorkspaceTabId);
-  }, [activeWorkspaceTabId, defaultConversationWorkspaceTabId]);
+  }, [activeWorkspaceTabId, defaultConversationWorkspaceTabId, setActiveWorkspaceTabId]);
 
   const openOrReuseProjectDraftThread = useCallback(
     async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
@@ -2900,7 +2916,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     );
     const messageTextWithSessionReferences = appendSessionReferencesToPrompt(messageTextForSend, {
       threads,
-      workspaceId: activeThread.workspaceId,
+      workspaceId: activeWorkspaceContext.workspaceId,
       currentThreadId: threadIdForSend,
     });
     const messageIdForSend = newMessageId();
@@ -3022,18 +3038,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
       };
 
       if (isLocalDraftThread) {
+        const threadCreateWorkspaceContext = resolveExistingWorkspaceContext({
+          workspaceId: activeThread.workspaceId,
+          branch: nextThreadBranch,
+          worktreePath: nextThreadWorktreePath,
+          workspaces,
+        });
         await api.orchestration.dispatchCommand({
           type: "thread.create",
           commandId: newCommandId(),
           threadId: threadIdForSend,
           projectId: activeProject.id,
-          workspaceId: activeThread.workspaceId,
+          workspaceId: threadCreateWorkspaceContext.workspaceId,
           title,
           modelSelection: threadCreateModelSelection,
           runtimeMode,
           interactionMode,
-          branch: nextThreadBranch,
-          worktreePath: nextThreadWorktreePath,
+          branch: threadCreateWorkspaceContext.branch,
+          worktreePath: threadCreateWorkspaceContext.worktreePath,
           createdAt: activeThread.createdAt,
         });
         createdServerThreadForLocalDraft = true;
@@ -3470,6 +3492,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       sendInFlightRef.current = false;
       resetSendPhase();
     };
+    const implementationWorkspaceContext = resolveExistingWorkspaceContext({
+      workspaceId: activeThread.workspaceId,
+      branch: activeThread.branch,
+      worktreePath: activeThread.worktreePath,
+      workspaces,
+    });
 
     await api.orchestration
       .dispatchCommand({
@@ -3477,13 +3505,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         commandId: newCommandId(),
         threadId: nextThreadId,
         projectId: activeProject.id,
-        workspaceId: activeThread.workspaceId,
+        workspaceId: implementationWorkspaceContext.workspaceId,
         title: nextThreadTitle,
         modelSelection: nextThreadModelSelection,
         runtimeMode,
         interactionMode: "default",
-        branch: activeThread.branch,
-        worktreePath: activeThread.worktreePath,
+        branch: implementationWorkspaceContext.branch,
+        worktreePath: implementationWorkspaceContext.worktreePath,
         createdAt,
       })
       .then(() => {
@@ -3553,6 +3581,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProviderModels,
     syncServerReadModel,
     selectedModel,
+    workspaces,
   ]);
 
   const onProviderModelSelect = useCallback(
@@ -3984,23 +4013,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activateTerminal, navigate, setActiveWorkspaceTabId, threadId, workspaceTabs],
   );
   const createSessionWorkspace = useCallback(() => {
-    if (!activeProject || !activeThread?.workspaceId) {
+    if (!activeProject || !activeThread) {
       return;
     }
-    void handleNewThread(activeProject.id, {
+    const nextWorkspaceContext = resolveExistingWorkspaceContext({
       workspaceId: activeThread.workspaceId,
       branch: activeThread.branch,
       worktreePath: activeThread.worktreePath,
-      envMode: activeThread.worktreePath ? "worktree" : (draftThread?.envMode ?? "worktree"),
+      workspaces,
     });
-  }, [
-    activeProject,
-    activeThread?.branch,
-    activeThread?.workspaceId,
-    activeThread?.worktreePath,
-    draftThread?.envMode,
-    handleNewThread,
-  ]);
+    if (!nextWorkspaceContext.workspaceId && !nextWorkspaceContext.worktreePath) {
+      return;
+    }
+    void handleNewThread(activeProject.id, {
+      workspaceId: nextWorkspaceContext.workspaceId,
+      branch: nextWorkspaceContext.branch,
+      worktreePath: nextWorkspaceContext.worktreePath,
+      envMode: nextWorkspaceContext.worktreePath
+        ? "worktree"
+        : (draftThread?.envMode ?? "worktree"),
+    });
+  }, [activeProject, activeThread, draftThread?.envMode, handleNewThread, workspaces]);
   const createTerminalWorkspace = useCallback(() => {
     if (!activeProject) {
       return;
@@ -4229,7 +4262,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeTabId={resolvedWorkspaceTabId}
           onSelectTab={selectWorkspaceTab}
           onCloseTab={closeWorkspaceTab}
-          canCreateSession={activeThread.workspaceId !== null}
+          canCreateSession={activeWorkspaceContext.workspaceId !== null}
           canCreateTerminal={activeProject !== undefined}
           canOpenReview={isGitRepo}
           onCreateSession={createSessionWorkspace}

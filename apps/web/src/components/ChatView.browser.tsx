@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type ServerConfig,
   type ThreadId,
+  type WorkspaceId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
@@ -36,6 +37,7 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_ID = "project-1" as ProjectId;
+const WORKSPACE_ID = "workspace-1" as WorkspaceId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
@@ -358,6 +360,51 @@ function withProjectScripts(
     ...snapshot,
     projects: snapshot.projects.map((project) =>
       project.id === PROJECT_ID ? { ...project, scripts: Array.from(scripts) } : project,
+    ),
+  };
+}
+
+function withWorkspace(
+  snapshot: OrchestrationReadModel,
+  options: {
+    workspaceId?: WorkspaceId;
+    title?: string;
+    branch?: string | null;
+    worktreePath?: string;
+    threadId?: ThreadId;
+  } = {},
+): OrchestrationReadModel {
+  const workspaceId = options.workspaceId ?? WORKSPACE_ID;
+  const title = options.title ?? "feature-flow";
+  const branch = options.branch ?? "feature-flow";
+  const worktreePath = options.worktreePath ?? "/repo/project/.t3/worktrees/feature-flow";
+  const threadId = options.threadId ?? THREAD_ID;
+
+  return {
+    ...snapshot,
+    workspaces: [
+      ...snapshot.workspaces,
+      {
+        id: workspaceId,
+        projectId: PROJECT_ID,
+        title,
+        branch,
+        worktreePath,
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+    ],
+    threads: snapshot.threads.map((thread) =>
+      thread.id === threadId
+        ? {
+            ...thread,
+            workspaceId,
+            branch,
+            worktreePath,
+            updatedAt: NOW_ISO,
+          }
+        : thread,
     ),
   };
 }
@@ -892,11 +939,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
       threads: [],
       threadsHydrated: false,
     });
+    Reflect.deleteProperty(window, "desktopBridge");
   });
 
   afterEach(() => {
     customWsRpcResolver = null;
     document.body.innerHTML = "";
+    Reflect.deleteProperty(window, "desktopBridge");
   });
 
   it.each(TEXT_VIEWPORT_MATRIX)(
@@ -1756,6 +1805,64 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("drops a stale workspace id before creating a server thread from a local draft", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceId: WORKSPACE_ID,
+          branch: "feature-stale",
+          worktreePath: "/repo/project/.t3/worktrees/feature-stale",
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "ship it");
+
+    const draftMounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const createRequest = wsRequests.find((request) => {
+            const command = request.command as
+              | { type?: string; workspaceId?: WorkspaceId | null; worktreePath?: string | null }
+              | undefined;
+            return (
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              command?.type === "thread.create"
+            );
+          });
+          expect(createRequest).toBeTruthy();
+          const command = createRequest?.command as {
+            workspaceId?: WorkspaceId | null;
+            branch?: string | null;
+            worktreePath?: string | null;
+          };
+          expect(command.workspaceId).toBeNull();
+          expect(command.branch).toBe("feature-stale");
+          expect(command.worktreePath).toBe("/repo/project/.t3/worktrees/feature-stale");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await draftMounted.cleanup();
+    }
+  });
+
   it("shows a pointer cursor for the running stop button", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -1827,6 +1934,231 @@ describe("ChatView timeline estimator parity (full app)", () => {
         .element(page.getByText("Send a message to start the conversation."))
         .toBeInTheDocument();
       await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("creates a local draft from the repo-row new-thread button even when the default env is worktree", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-new-thread-local-test" as MessageId,
+        targetText: "new thread local mode test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          settings: {
+            ...nextFixture.serverConfig.settings,
+            defaultThreadEnvMode: "worktree",
+          },
+        };
+      },
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      expect(useComposerDraftStore.getState().draftThreadsByThreadId[newThreadId]).toMatchObject({
+        projectId: PROJECT_ID,
+        envMode: "local",
+        workspaceId: null,
+        branch: null,
+        worktreePath: null,
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("deletes a workspace from the sidebar context menu", async () => {
+    const contextMenuSelections: string[][] = [];
+    const confirmMessages: string[] = [];
+    const contextMenuResult = vi.fn(async () => "delete");
+    const confirmResult = vi.fn(async (message: string) => {
+      confirmMessages.push(message);
+      return true;
+    });
+    const desktopBridge = {
+      getWsUrl: () => null,
+      pickFolder: async () => null,
+      confirm: confirmResult,
+      setTheme: async () => undefined,
+      showContextMenu: async (items: ReadonlyArray<{ id: string }>) => {
+        contextMenuSelections.push(items.map((item) => item.id));
+        return contextMenuResult();
+      },
+      openExternal: async () => true,
+      onMenuAction: () => () => undefined,
+      getUpdateState: async () => ({
+        enabled: false,
+        status: "disabled" as const,
+        currentVersion: "0.0.0",
+        hostArch: "arm64" as const,
+        appArch: "arm64" as const,
+        runningUnderArm64Translation: false,
+        availableVersion: null,
+        downloadedVersion: null,
+        downloadPercent: null,
+        checkedAt: null,
+        message: null,
+        errorContext: null,
+        canRetry: false,
+      }),
+      checkForUpdate: async () => ({
+        checked: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      downloadUpdate: async () => ({
+        accepted: false,
+        completed: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      installUpdate: async () => ({
+        accepted: false,
+        completed: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      onUpdateState: () => () => undefined,
+    } as NonNullable<Window["desktopBridge"]>;
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: desktopBridge,
+    });
+
+    const draftThreadId = "draft-workspace-delete" as ThreadId;
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [draftThreadId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceId: WORKSPACE_ID,
+          branch: "feature-flow",
+          worktreePath: "/repo/project/.t3/worktrees/feature-flow",
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: draftThreadId,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withWorkspace(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-workspace-delete-test" as MessageId,
+          targetText: "workspace delete test",
+        }),
+        { title: "Flow Workspace" },
+      ),
+    });
+
+    try {
+      const workspaceLabel = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("span")).find(
+            (element) => element.textContent?.trim() === "Flow Workspace",
+          ) ?? null,
+        "Unable to find workspace row.",
+      );
+
+      workspaceLabel.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 32,
+          clientY: 32,
+          button: 2,
+        }),
+      );
+      await waitForLayout();
+
+      await vi.waitFor(
+        () => {
+          expect(contextMenuResult).toHaveBeenCalledTimes(1);
+          expect(confirmResult).toHaveBeenCalledTimes(1);
+          expect(
+            wsRequests.some((request) => {
+              const command = request.command as
+                | { type?: string; workspaceId?: WorkspaceId }
+                | undefined;
+              return (
+                request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+                command?.type === "workspace.delete" &&
+                command.workspaceId === WORKSPACE_ID
+              );
+            }),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(contextMenuSelections).toEqual([["rename", "copy-path", "new-session", "delete"]]);
+      expect(confirmMessages).toEqual([
+        'Delete workspace "Flow Workspace"?\n1 session will stay, but they will no longer be grouped under this workspace.',
+      ]);
+      expect(useComposerDraftStore.getState().draftThreadsByThreadId[draftThreadId]).toMatchObject({
+        workspaceId: null,
+        branch: "feature-flow",
+        worktreePath: "/repo/project/.t3/worktrees/feature-flow",
+        envMode: "worktree",
+      });
     } finally {
       await mounted.cleanup();
     }

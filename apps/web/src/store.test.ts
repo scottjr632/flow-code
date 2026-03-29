@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   markThreadUnread,
   markThreadVisited,
+  recordThreadTraversal,
   reorderProjects,
   syncServerReadModel,
   type AppState,
@@ -151,10 +152,10 @@ describe("store pure functions", () => {
     );
 
     expect(next.threads[0]?.lastVisitedAt).toBe("2026-02-25T12:35:00.000Z");
-    expect(next.threadMruIds).toEqual([ThreadId.makeUnsafe("thread-1")]);
+    expect(next.threadMruIds).toBeUndefined();
   });
 
-  it("markThreadVisited moves the thread to the front of the MRU stack", () => {
+  it("recordThreadTraversal moves the departed thread to the front of the MRU stack", () => {
     const initialState: AppState = {
       ...makeState(
         makeThread({
@@ -173,16 +174,15 @@ describe("store pure functions", () => {
       ],
     };
 
-    const next = markThreadVisited(
+    const next = recordThreadTraversal(
       initialState,
       ThreadId.makeUnsafe("thread-2"),
-      "2026-02-25T12:35:00.000Z",
+      ThreadId.makeUnsafe("thread-1"),
     );
 
     expect(next.threadMruIds).toEqual([
       ThreadId.makeUnsafe("thread-2"),
       ThreadId.makeUnsafe("thread-3"),
-      ThreadId.makeUnsafe("thread-1"),
     ]);
   });
 
@@ -328,6 +328,20 @@ describe("store read model sync", () => {
       ThreadId.makeUnsafe("thread-2"),
       ThreadId.makeUnsafe("thread-1"),
     ]);
+  });
+
+  it("does not seed lastVisitedAt from updatedAt when hydrating threads", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        updatedAt: "2026-02-27T00:10:00.000Z",
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threads[0]?.lastVisitedAt).toBeUndefined();
   });
 
   it("resolves claude aliases when session provider is claudeAgent", () => {

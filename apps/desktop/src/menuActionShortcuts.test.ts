@@ -43,4 +43,23 @@ describe("resolveDesktopMenuActionForInput", () => {
       }),
     ).toBeNull();
   });
+
+  it("maps control release to traversal end", () => {
+    expect(
+      resolveDesktopMenuActionForInput({
+        type: "keyUp",
+        key: "Control",
+        control: false,
+        shift: false,
+      }),
+    ).toBe("thread-traversal-end");
+    expect(
+      resolveDesktopMenuActionForInput({
+        type: "keyUp",
+        key: "Tab",
+        control: false,
+        shift: false,
+      }),
+    ).toBe("thread-traversal-end");
+  });
 });

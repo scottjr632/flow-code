@@ -180,7 +180,7 @@ describe("resolveThreadKeyboardTraversal", () => {
 });
 
 describe("getThreadIdsByMostRecentVisit", () => {
-  it("orders threads by lastVisitedAt before falling back to update timestamps", () => {
+  it("orders threads by lastVisitedAt before falling back to createdAt", () => {
     const threadIds = getThreadIdsByMostRecentVisit([
       makeThread({
         id: ThreadId.makeUnsafe("thread-1"),
@@ -194,7 +194,8 @@ describe("getThreadIdsByMostRecentVisit", () => {
       }),
       makeThread({
         id: ThreadId.makeUnsafe("thread-3"),
-        updatedAt: "2026-03-09T10:25:00.000Z",
+        createdAt: "2026-03-09T10:25:00.000Z",
+        updatedAt: "2026-03-09T10:30:00.000Z",
       }),
     ]);
 
@@ -256,6 +257,54 @@ describe("getThreadIdsForKeyboardTraversal", () => {
       ThreadId.makeUnsafe("thread-2"),
       ThreadId.makeUnsafe("thread-1"),
       ThreadId.makeUnsafe("thread-3"),
+    ]);
+  });
+
+  it("excludes the active thread and caps traversal to five entries", () => {
+    const threadIds = getThreadIdsForKeyboardTraversal(
+      [
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-1"),
+          lastVisitedAt: "2026-03-09T10:20:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-2"),
+          lastVisitedAt: "2026-03-09T10:19:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-3"),
+          lastVisitedAt: "2026-03-09T10:18:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-4"),
+          lastVisitedAt: "2026-03-09T10:17:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-5"),
+          lastVisitedAt: "2026-03-09T10:16:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.makeUnsafe("thread-6"),
+          lastVisitedAt: "2026-03-09T10:15:00.000Z",
+        }),
+      ],
+      [
+        ThreadId.makeUnsafe("thread-1"),
+        ThreadId.makeUnsafe("thread-2"),
+        ThreadId.makeUnsafe("thread-3"),
+        ThreadId.makeUnsafe("thread-4"),
+        ThreadId.makeUnsafe("thread-5"),
+        ThreadId.makeUnsafe("thread-6"),
+      ],
+      ThreadId.makeUnsafe("thread-1"),
+    );
+
+    expect(threadIds).toEqual([
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-3"),
+      ThreadId.makeUnsafe("thread-4"),
+      ThreadId.makeUnsafe("thread-5"),
+      ThreadId.makeUnsafe("thread-6"),
     ]);
   });
 });

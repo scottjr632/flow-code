@@ -60,6 +60,16 @@ export function findWorkspaceByProjectAndWorktreePath(
   );
 }
 
+export function findWorkspaceByProjectAndWorktreePathIncludingDeleted(
+  readModel: OrchestrationReadModel,
+  projectId: ProjectId,
+  worktreePath: string,
+): OrchestrationWorkspace | undefined {
+  return readModel.workspaces.find(
+    (workspace) => workspace.projectId === projectId && workspace.worktreePath === worktreePath,
+  );
+}
+
 export function listWorkspacesByProjectId(
   readModel: OrchestrationReadModel,
   projectId: ProjectId,

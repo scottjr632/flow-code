@@ -13,10 +13,12 @@ import {
 } from "../composerDraftStore";
 import { newThreadId } from "../lib/utils";
 import { useStore } from "../store";
+import { resolveExistingWorkspaceContext } from "../workspaceContext";
 
 export function useHandleNewThread() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
+  const workspaces = useStore((store) => store.workspaces);
   const navigate = useNavigate();
   const routeThreadId = useParams({
     strict: false,
@@ -56,18 +58,41 @@ export function useHandleNewThread() {
       const latestActiveDraftThread: DraftThreadState | null = routeThreadId
         ? getDraftThread(routeThreadId)
         : null;
+      const resolveDraftWorkspaceContext = (context: {
+        workspaceId: WorkspaceId | null;
+        branch: string | null;
+        worktreePath: string | null;
+      }) =>
+        resolveExistingWorkspaceContext({
+          ...context,
+          workspaces,
+        });
       if (storedDraftThread) {
         return (async () => {
+          const nextWorkspaceContext = resolveDraftWorkspaceContext({
+            workspaceId: hasWorkspaceIdOption
+              ? (options?.workspaceId ?? null)
+              : (storedDraftThread.workspaceId ?? null),
+            branch: hasBranchOption
+              ? (options?.branch ?? null)
+              : (storedDraftThread.branch ?? null),
+            worktreePath: hasWorktreePathOption
+              ? (options?.worktreePath ?? null)
+              : (storedDraftThread.worktreePath ?? null),
+          });
           if (
+            storedDraftThread.workspaceId !== nextWorkspaceContext.workspaceId ||
+            storedDraftThread.branch !== nextWorkspaceContext.branch ||
+            storedDraftThread.worktreePath !== nextWorkspaceContext.worktreePath ||
             hasWorkspaceIdOption ||
             hasBranchOption ||
             hasWorktreePathOption ||
             hasEnvModeOption
           ) {
             setDraftThreadContext(storedDraftThread.threadId, {
-              ...(hasWorkspaceIdOption ? { workspaceId: options?.workspaceId ?? null } : {}),
-              ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-              ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+              workspaceId: nextWorkspaceContext.workspaceId,
+              branch: nextWorkspaceContext.branch,
+              worktreePath: nextWorkspaceContext.worktreePath,
               ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
             });
           }
@@ -89,11 +114,30 @@ export function useHandleNewThread() {
         routeThreadId &&
         latestActiveDraftThread.projectId === projectId
       ) {
-        if (hasWorkspaceIdOption || hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
+        const nextWorkspaceContext = resolveDraftWorkspaceContext({
+          workspaceId: hasWorkspaceIdOption
+            ? (options?.workspaceId ?? null)
+            : (latestActiveDraftThread.workspaceId ?? null),
+          branch: hasBranchOption
+            ? (options?.branch ?? null)
+            : (latestActiveDraftThread.branch ?? null),
+          worktreePath: hasWorktreePathOption
+            ? (options?.worktreePath ?? null)
+            : (latestActiveDraftThread.worktreePath ?? null),
+        });
+        if (
+          latestActiveDraftThread.workspaceId !== nextWorkspaceContext.workspaceId ||
+          latestActiveDraftThread.branch !== nextWorkspaceContext.branch ||
+          latestActiveDraftThread.worktreePath !== nextWorkspaceContext.worktreePath ||
+          hasWorkspaceIdOption ||
+          hasBranchOption ||
+          hasWorktreePathOption ||
+          hasEnvModeOption
+        ) {
           setDraftThreadContext(routeThreadId, {
-            ...(hasWorkspaceIdOption ? { workspaceId: options?.workspaceId ?? null } : {}),
-            ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-            ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+            workspaceId: nextWorkspaceContext.workspaceId,
+            branch: nextWorkspaceContext.branch,
+            worktreePath: nextWorkspaceContext.worktreePath,
             ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
           });
         }
@@ -103,12 +147,17 @@ export function useHandleNewThread() {
 
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
+      const nextWorkspaceContext = resolveDraftWorkspaceContext({
+        workspaceId: options?.workspaceId ?? null,
+        branch: options?.branch ?? null,
+        worktreePath: options?.worktreePath ?? null,
+      });
       return (async () => {
         setProjectDraftThreadId(projectId, threadId, {
           createdAt,
-          workspaceId: options?.workspaceId ?? null,
-          branch: options?.branch ?? null,
-          worktreePath: options?.worktreePath ?? null,
+          workspaceId: nextWorkspaceContext.workspaceId,
+          branch: nextWorkspaceContext.branch,
+          worktreePath: nextWorkspaceContext.worktreePath,
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
@@ -120,7 +169,7 @@ export function useHandleNewThread() {
         });
       })();
     },
-    [navigate, routeThreadId],
+    [navigate, routeThreadId, workspaces],
   );
 
   return {

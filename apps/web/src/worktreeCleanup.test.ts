@@ -1,8 +1,17 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, WorkspaceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
+import {
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type Thread,
+  type Workspace,
+} from "./types";
+import {
+  formatWorktreePathForDisplay,
+  getOrphanedWorktreePathForThread,
+  getOrphanedWorktreePathForWorkspace,
+} from "./worktreeCleanup";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -28,6 +37,19 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    ...overrides,
+  };
+}
+
+function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
+  return {
+    id: WorkspaceId.makeUnsafe("workspace-1"),
+    projectId: ProjectId.makeUnsafe("project-1"),
+    name: "Workspace",
+    branch: "feature-a",
+    worktreePath: "/tmp/repo/worktrees/feature-a",
+    createdAt: "2026-02-13T00:00:00.000Z",
+    updatedAt: "2026-02-13T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -104,5 +126,47 @@ describe("formatWorktreePathForDisplay", () => {
   it("ignores trailing slashes", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree/");
     expect(result).toBe("my-worktree");
+  });
+});
+
+describe("getOrphanedWorktreePathForWorkspace", () => {
+  it("returns the worktree path when nothing still references it", () => {
+    const workspace = makeWorkspace();
+
+    const result = getOrphanedWorktreePathForWorkspace([], workspace);
+
+    expect(result).toBe(workspace.worktreePath);
+  });
+
+  it("returns null when a thread still belongs to the workspace", () => {
+    const workspace = makeWorkspace();
+
+    const result = getOrphanedWorktreePathForWorkspace(
+      [
+        makeThread({
+          workspaceId: workspace.id,
+          worktreePath: workspace.worktreePath,
+        }),
+      ],
+      workspace,
+    );
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null when another reference still points at the same worktree path", () => {
+    const workspace = makeWorkspace();
+
+    const result = getOrphanedWorktreePathForWorkspace(
+      [
+        {
+          workspaceId: null,
+          worktreePath: workspace.worktreePath,
+        },
+      ],
+      workspace,
+    );
+
+    expect(result).toBeNull();
   });
 });

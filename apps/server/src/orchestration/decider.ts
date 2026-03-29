@@ -10,6 +10,7 @@ import { Effect } from "effect";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   findWorkspaceByProjectAndWorktreePath,
+  findWorkspaceByProjectAndWorktreePathIncludingDeleted,
   requireProject,
   requireProjectAbsent,
   requireThread,
@@ -332,7 +333,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             });
           }
         } else {
-          workspaceId = crypto.randomUUID() as WorkspaceId;
+          const deletedWorkspace = findWorkspaceByProjectAndWorktreePathIncludingDeleted(
+            readModel,
+            command.projectId,
+            worktreePath,
+          );
+          workspaceId = deletedWorkspace?.id ?? (crypto.randomUUID() as WorkspaceId);
+          branch = deletedWorkspace ? resolveWorkspaceBranch(deletedWorkspace, branch) : branch;
           events.push({
             ...withEventBase({
               aggregateKind: "workspace",
@@ -511,7 +518,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             });
           }
         } else {
-          workspaceId = crypto.randomUUID() as WorkspaceId;
+          const deletedWorkspace = findWorkspaceByProjectAndWorktreePathIncludingDeleted(
+            readModel,
+            existingThread.projectId,
+            worktreePath,
+          );
+          const resolvedBranch = deletedWorkspace
+            ? resolveWorkspaceBranch(deletedWorkspace, branch)
+            : (branch ?? null);
+          workspaceId = deletedWorkspace?.id ?? (crypto.randomUUID() as WorkspaceId);
+          branch = resolvedBranch;
           events.push({
             ...withEventBase({
               aggregateKind: "workspace",
@@ -523,8 +539,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             payload: {
               workspaceId,
               projectId: existingThread.projectId,
-              title: deriveWorkspaceTitle({ branch: branch ?? null, worktreePath }),
-              branch: branch ?? null,
+              title: deriveWorkspaceTitle({ branch: resolvedBranch, worktreePath }),
+              branch: resolvedBranch,
               worktreePath,
               createdAt: occurredAt,
               updatedAt: occurredAt,

@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type WorkspaceId } from "@t3tools/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback } from "react";
@@ -11,18 +11,25 @@ import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import {
+  formatWorktreePathForDisplay,
+  getOrphanedWorktreePathForThread,
+  getOrphanedWorktreePathForWorkspace,
+} from "../worktreeCleanup";
 import { toastManager } from "../components/ui/toast";
 import { useSettings } from "./useSettings";
 
 export function useThreadActions() {
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
+  const workspaces = useStore((store) => store.workspaces);
   const appSettings = useSettings();
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadById,
   );
+  const draftThreadsByThreadId = useComposerDraftStore((store) => store.draftThreadsByThreadId);
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const routeThreadId = useParams({
     strict: false,
@@ -32,6 +39,20 @@ export function useThreadActions() {
   const { handleNewThread } = useHandleNewThread();
   const queryClient = useQueryClient();
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
+
+  const clearWorkspaceFromDraftThreads = useCallback(
+    (workspaceId: WorkspaceId) => {
+      for (const [threadId, draftThread] of Object.entries(draftThreadsByThreadId) as Array<
+        [ThreadId, (typeof draftThreadsByThreadId)[ThreadId]]
+      >) {
+        if (draftThread?.workspaceId !== workspaceId) {
+          continue;
+        }
+        setDraftThreadContext(threadId, { workspaceId: null });
+      }
+    },
+    [draftThreadsByThreadId, setDraftThreadContext],
+  );
 
   const archiveThread = useCallback(
     async (threadId: ThreadId) => {
@@ -202,10 +223,115 @@ export function useThreadActions() {
     [appSettings.confirmThreadDelete, deleteThread, threads],
   );
 
+  const deleteWorkspace = useCallback(
+    async (workspaceId: WorkspaceId, options: { deleteWorktree?: boolean } = {}) => {
+      const api = readNativeApi();
+      if (!api) return;
+      const workspace = workspaces.find((entry) => entry.id === workspaceId);
+      if (!workspace) return;
+      const project = projects.find((entry) => entry.id === workspace.projectId);
+      const worktreeReferences = [...threads, ...Object.values(draftThreadsByThreadId)];
+      const orphanedWorktreePath = getOrphanedWorktreePathForWorkspace(
+        worktreeReferences,
+        workspace,
+      );
+      const shouldDeleteWorktree =
+        options.deleteWorktree === true && orphanedWorktreePath !== null && project !== undefined;
+
+      await api.orchestration.dispatchCommand({
+        type: "workspace.delete",
+        commandId: newCommandId(),
+        workspaceId,
+      });
+      clearWorkspaceFromDraftThreads(workspaceId);
+
+      if (!shouldDeleteWorktree || !project || !orphanedWorktreePath) {
+        return;
+      }
+
+      try {
+        await removeWorktreeMutation.mutateAsync({
+          cwd: project.cwd,
+          path: orphanedWorktreePath,
+          force: true,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error removing worktree.";
+        console.error("Failed to remove worktree after workspace deletion", {
+          workspaceId,
+          projectCwd: project.cwd,
+          worktreePath: orphanedWorktreePath,
+          error,
+        });
+        toastManager.add({
+          type: "error",
+          title: "Workspace deleted, but worktree removal failed",
+          description: `Could not remove ${formatWorktreePathForDisplay(orphanedWorktreePath)}. ${message}`,
+        });
+      }
+    },
+    [
+      clearWorkspaceFromDraftThreads,
+      draftThreadsByThreadId,
+      projects,
+      removeWorktreeMutation,
+      threads,
+      workspaces,
+    ],
+  );
+
+  const confirmAndDeleteWorkspace = useCallback(
+    async (workspaceId: WorkspaceId) => {
+      const api = readNativeApi();
+      if (!api) return;
+      const workspace = workspaces.find((entry) => entry.id === workspaceId);
+      if (!workspace) return;
+
+      const linkedThreads = threads.filter((thread) => thread.workspaceId === workspaceId);
+      const linkedThreadCount = linkedThreads.length;
+      const worktreeReferences = [...threads, ...Object.values(draftThreadsByThreadId)];
+      const orphanedWorktreePath = getOrphanedWorktreePathForWorkspace(
+        worktreeReferences,
+        workspace,
+      );
+      const displayWorktreePath = orphanedWorktreePath
+        ? formatWorktreePathForDisplay(orphanedWorktreePath)
+        : null;
+
+      const confirmed = await api.dialogs.confirm(
+        [
+          `Delete workspace "${workspace.name}"?`,
+          linkedThreadCount > 0
+            ? `${linkedThreadCount} session${linkedThreadCount === 1 ? "" : "s"} will stay, but they will no longer be grouped under this workspace.`
+            : "This removes the workspace from the sidebar.",
+        ].join("\n"),
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      const shouldDeleteWorktree =
+        orphanedWorktreePath !== null &&
+        (await api.dialogs.confirm(
+          [
+            "This workspace is the only thing linked to this worktree:",
+            displayWorktreePath ?? orphanedWorktreePath,
+            "",
+            "Delete the worktree too?",
+          ].join("\n"),
+        ));
+
+      await deleteWorkspace(workspaceId, { deleteWorktree: shouldDeleteWorktree });
+    },
+    [deleteWorkspace, draftThreadsByThreadId, threads, workspaces],
+  );
+
   return {
     archiveThread,
     unarchiveThread,
     deleteThread,
     confirmAndDeleteThread,
+    deleteWorkspace,
+    confirmAndDeleteWorkspace,
   };
 }

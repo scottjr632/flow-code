@@ -9,6 +9,7 @@ import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
 import { type ChatMessage, type Project, type Thread, type Workspace } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
+import { recordThreadTraversalDeparture, reconcileThreadTraversalMruIds } from "./threadTraversal";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -127,15 +128,6 @@ function updateThread(
   return changed ? next : threads;
 }
 
-function moveThreadIdToFront(
-  threadIds: readonly ThreadId[] | undefined,
-  threadId: ThreadId,
-): ThreadId[] {
-  const nextThreadIds = (threadIds ?? []).filter((entry) => entry !== threadId);
-  nextThreadIds.unshift(threadId);
-  return nextThreadIds;
-}
-
 function toSortableTimestamp(iso: string | undefined): number {
   if (!iso) return Number.NEGATIVE_INFINITY;
   const timestamp = Date.parse(iso);
@@ -143,24 +135,14 @@ function toSortableTimestamp(iso: string | undefined): number {
 }
 
 function getThreadFallbackRecency(thread: Thread): number {
-  return toSortableTimestamp(thread.lastVisitedAt ?? thread.updatedAt ?? thread.createdAt);
+  return toSortableTimestamp(thread.lastVisitedAt ?? thread.createdAt);
 }
 
 function reconcileThreadMruIds(
   threadMruIds: readonly ThreadId[] | undefined,
   threads: readonly Thread[],
 ): ThreadId[] {
-  const availableThreadIds = new Set(threads.map((thread) => thread.id));
-  const nextThreadMruIds: ThreadId[] = [];
-
-  for (const threadId of threadMruIds ?? []) {
-    if (availableThreadIds.has(threadId) && !nextThreadMruIds.includes(threadId)) {
-      nextThreadMruIds.push(threadId);
-    }
-  }
-
-  const missingThreadIds = threads
-    .filter((thread) => !nextThreadMruIds.includes(thread.id))
+  const fallbackThreadIds = threads
     .toSorted((left, right) => {
       const rightTimestamp = getThreadFallbackRecency(right);
       const leftTimestamp = getThreadFallbackRecency(left);
@@ -170,9 +152,7 @@ function reconcileThreadMruIds(
       return right.id.localeCompare(left.id);
     })
     .map((thread) => thread.id);
-
-  nextThreadMruIds.push(...missingThreadIds);
-  return nextThreadMruIds;
+  return reconcileThreadTraversalMruIds(threadMruIds, fallbackThreadIds);
 }
 
 function mapProjectsFromReadModel(
@@ -381,7 +361,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         archivedAt: thread.archivedAt,
         updatedAt: thread.updatedAt,
         latestTurn: thread.latestTurn,
-        lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
+        lastVisitedAt: existing?.lastVisitedAt,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
         turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
@@ -429,13 +409,29 @@ export function markThreadVisited(
     }
     return { ...thread, lastVisitedAt: at };
   });
-  if (threads === state.threads && state.threadMruIds?.[0] === threadId) {
+  return threads === state.threads ? state : { ...state, threads };
+}
+
+export function recordThreadTraversal(
+  state: AppState,
+  fromThreadId: ThreadId,
+  toThreadId: ThreadId,
+): AppState {
+  if (fromThreadId === toThreadId) {
     return state;
   }
+
+  const threadMruIds = recordThreadTraversalDeparture(state.threadMruIds, fromThreadId, toThreadId);
+  if (
+    threadMruIds.length === (state.threadMruIds ?? []).length &&
+    threadMruIds.every((threadId, index) => threadId === state.threadMruIds?.[index])
+  ) {
+    return state;
+  }
+
   return {
     ...state,
-    threads,
-    threadMruIds: moveThreadIdToFront(state.threadMruIds, threadId),
+    threadMruIds,
   };
 }
 
@@ -520,6 +516,7 @@ export function setThreadBranch(
 interface AppStore extends AppState {
   syncServerReadModel: (readModel: OrchestrationReadModel) => void;
   markThreadVisited: (threadId: ThreadId, visitedAt?: string) => void;
+  recordThreadTraversal: (fromThreadId: ThreadId, toThreadId: ThreadId) => void;
   markThreadUnread: (threadId: ThreadId) => void;
   toggleProject: (projectId: Project["id"]) => void;
   setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
@@ -533,6 +530,8 @@ export const useStore = create<AppStore>((set) => ({
   syncServerReadModel: (readModel) => set((state) => syncServerReadModel(state, readModel)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
+  recordThreadTraversal: (fromThreadId, toThreadId) =>
+    set((state) => recordThreadTraversal(state, fromThreadId, toThreadId)),
   markThreadUnread: (threadId) => set((state) => markThreadUnread(state, threadId)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>

@@ -154,6 +154,15 @@ function resolvePythonForNodeGyp(): string | undefined {
   return executable;
 }
 
+function resolveElectronBuilderExecutable(repoRoot: string): string {
+  return join(
+    repoRoot,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "electron-builder.cmd" : "electron-builder",
+  );
+}
+
 interface ResolvedBuildOptions {
   readonly platform: typeof BuildPlatform.Type;
   readonly target: string;
@@ -713,6 +722,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     buildEnv.GYP_MSVS_VERSION = buildEnv.GYP_MSVS_VERSION ?? "2022";
   }
 
+  const electronBuilderExecutable = resolveElectronBuilderExecutable(repoRoot);
+  if (!existsSync(electronBuilderExecutable)) {
+    return yield* new BuildScriptError({
+      message: `electron-builder is missing at ${electronBuilderExecutable}. Run 'bun install' in the repo root.`,
+    });
+  }
+
   yield* Effect.log(
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
   );
@@ -723,7 +739,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims.
       shell: process.platform === "win32",
-    })`bunx electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`${electronBuilderExecutable} ${platformConfig.cliFlag} --${options.arch} --publish never`,
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");
