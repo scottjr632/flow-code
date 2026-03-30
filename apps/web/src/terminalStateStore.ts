@@ -29,7 +29,7 @@ interface ThreadTerminalState {
   activeTerminalGroupId: string;
 }
 
-const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
+const TERMINAL_STATE_STORAGE_KEY = "flow:terminal-state:v1";
 
 interface PersistedTerminalStateStoreState {
   terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>;

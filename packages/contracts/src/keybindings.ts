@@ -32,6 +32,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "terminal.split",
   "terminal.new",
   "terminal.close",
+  "workspaceTerminal.toggle",
   "diff.toggle",
   "chat.new",
   "chat.newLocal",

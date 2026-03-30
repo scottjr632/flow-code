@@ -1,21 +1,21 @@
 # Remote Access Setup
 
-Use this when you want to open T3 Code from another device (phone, tablet, another laptop).
+Use this when you want to open Flow from another device (phone, tablet, another laptop).
 
 ## CLI ↔ Env option map
 
-The T3 Code CLI accepts the following configuration options, available either as CLI flags or environment variables:
+The Flow CLI accepts the following configuration options, available either as CLI flags or environment variables:
 
 | CLI flag                | Env var               | Notes                                                                                |
 | ----------------------- | --------------------- | ------------------------------------------------------------------------------------ |
-| `--mode <web\|desktop>` | `T3CODE_MODE`         | Runtime mode.                                                                        |
-| `--port <number>`       | `T3CODE_PORT`         | HTTP/WebSocket port.                                                                 |
-| `--host <address>`      | `T3CODE_HOST`         | Bind interface/address.                                                              |
-| `--base-dir <path>`     | `T3CODE_HOME`         | Base directory.                                                                      |
+| `--mode <web\|desktop>` | `FLOW_MODE`           | Runtime mode.                                                                        |
+| `--port <number>`       | `FLOW_PORT`           | HTTP/WebSocket port.                                                                 |
+| `--host <address>`      | `FLOW_HOST`           | Bind interface/address.                                                              |
+| `--base-dir <path>`     | `FLOW_HOME`           | Base directory.                                                                      |
 | `--dev-url <url>`       | `VITE_DEV_SERVER_URL` | Dev web URL redirect/proxy target.                                                   |
-| `--no-browser`          | `T3CODE_NO_BROWSER`   | Disable auto-open browser.                                                           |
-| `--auth-token <token>`  | `T3CODE_AUTH_TOKEN`   | WebSocket auth token. Use this for standard CLI and remote-server flows.             |
-| `--bootstrap-fd <fd>`   | `T3CODE_BOOTSTRAP_FD` | Read a one-shot bootstrap envelope from an inherited file descriptor during startup. |
+| `--no-browser`          | `FLOW_NO_BROWSER`     | Disable auto-open browser.                                                           |
+| `--auth-token <token>`  | `FLOW_AUTH_TOKEN`     | WebSocket auth token. Use this for standard CLI and remote-server flows.             |
+| `--bootstrap-fd <fd>`   | `FLOW_BOOTSTRAP_FD`   | Read a one-shot bootstrap envelope from an inherited file descriptor during startup. |
 
 > TIP: Use the `--help` flag to see all available options and their descriptions.
 

@@ -17,6 +17,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 
 import { GitCommandError } from "../Errors.ts";
@@ -38,6 +39,7 @@ const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
+const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 300_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
@@ -103,6 +105,26 @@ function parseNumstatEntries(
   return entries;
 }
 
+function buildChangeSet(
+  entries: ReadonlyArray<{ path: string; insertions: number; deletions: number }>,
+) {
+  let insertions = 0;
+  let deletions = 0;
+  const files = [...entries]
+    .map((entry) => {
+      insertions += entry.insertions;
+      deletions += entry.deletions;
+      return entry;
+    })
+    .toSorted((a, b) => a.path.localeCompare(b.path));
+
+  return {
+    files,
+    insertions,
+    deletions,
+  };
+}
+
 function parsePorcelainPath(line: string): string | null {
   if (line.startsWith("? ") || line.startsWith("! ")) {
     const simple = line.slice(2).trim();
@@ -123,6 +145,41 @@ function parsePorcelainPath(line: string): string | null {
   const parts = line.trim().split(/\s+/g);
   const filePath = parts.at(-1) ?? "";
   return filePath.length > 0 ? filePath : null;
+}
+
+function parseUntrackedPaths(stdout: string): ReadonlyArray<string> {
+  const paths = new Set<string>();
+  for (const line of stdout.split(/\r?\n/g)) {
+    if (!line.startsWith("? ")) continue;
+    const filePath = parsePorcelainPath(line);
+    if (filePath) {
+      paths.add(filePath);
+    }
+  }
+  return [...paths].toSorted((a, b) => a.localeCompare(b));
+}
+
+function normalizeUntrackedPatch(rawPatch: string, filePath: string, tempFilePath: string): string {
+  if (rawPatch.trim().length === 0) {
+    return rawPatch;
+  }
+
+  const normalizedTempFilePath = tempFilePath.replaceAll("\\", "/");
+  return rawPatch
+    .split(/\r?\n/g)
+    .map((line) => {
+      if (line.startsWith("diff --git ") && line.includes(normalizedTempFilePath)) {
+        return `diff --git a/${filePath} b/${filePath}`;
+      }
+      if (line.startsWith("--- ") && line.includes(normalizedTempFilePath)) {
+        return "--- /dev/null";
+      }
+      if (line.startsWith("+++ ")) {
+        return `+++ b/${filePath}`;
+      }
+      return line;
+    })
+    .join("\n");
 }
 
 function parseBranchLine(line: string): { name: string; current: boolean } | null {
@@ -319,7 +376,7 @@ const createTrace2Monitor = Effect.fn(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const traceFilePath = yield* fs.makeTempFileScoped({
-    prefix: `t3code-git-trace2-${process.pid}-`,
+    prefix: `flow-git-trace2-${process.pid}-`,
     suffix: ".json",
   });
   const hookStartByChildKey = new Map<string, { hookName: string; startedAtMs: number }>();
@@ -1295,6 +1352,8 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
 
         const stagedEntries = parseNumstatEntries(stagedNumstatStdout);
         const unstagedEntries = parseNumstatEntries(unstagedNumstatStdout);
+        const staged = buildChangeSet(stagedEntries);
+        const unstaged = buildChangeSet(unstagedEntries);
         const fileStatMap = new Map<string, { insertions: number; deletions: number }>();
         for (const entry of [...stagedEntries, ...unstagedEntries]) {
           const existing = fileStatMap.get(entry.path) ?? { insertions: 0, deletions: 0 };
@@ -1303,14 +1362,12 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
           fileStatMap.set(entry.path, existing);
         }
 
-        let insertions = 0;
-        let deletions = 0;
         const files = Array.from(fileStatMap.entries())
-          .map(([filePath, stat]) => {
-            insertions += stat.insertions;
-            deletions += stat.deletions;
-            return { path: filePath, insertions: stat.insertions, deletions: stat.deletions };
-          })
+          .map(([filePath, stat]) => ({
+            path: filePath,
+            insertions: stat.insertions,
+            deletions: stat.deletions,
+          }))
           .toSorted((a, b) => a.path.localeCompare(b.path));
 
         for (const filePath of changedFilesWithoutNumstat) {
@@ -1318,16 +1375,15 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
           files.push({ path: filePath, insertions: 0, deletions: 0 });
         }
         files.sort((a, b) => a.path.localeCompare(b.path));
+        const workingTree = buildChangeSet(files);
 
         return {
           branch,
           upstreamRef,
           hasWorkingTreeChanges,
-          workingTree: {
-            files,
-            insertions,
-            deletions,
-          },
+          workingTree,
+          staged,
+          unstaged,
           hasUpstream: upstreamRef !== null,
           aheadCount,
           behindCount,
@@ -1340,12 +1396,105 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
           branch: details.branch,
           hasWorkingTreeChanges: details.hasWorkingTreeChanges,
           workingTree: details.workingTree,
+          staged: details.staged,
+          unstaged: details.unstaged,
           hasUpstream: details.hasUpstream,
           aheadCount: details.aheadCount,
           behindCount: details.behindCount,
           pr: null,
         })),
       );
+
+    const reviewDiff: GitCoreShape["reviewDiff"] = (input) =>
+      Effect.gen(function* () {
+        if (input.selection === "staged") {
+          const diff = yield* runGitStdoutWithOptions(
+            "GitCore.reviewDiff.staged",
+            input.cwd,
+            ["diff", "--cached", "--patch", "--minimal"],
+            {
+              maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+              truncateOutputAtMaxBytes: true,
+            },
+          );
+          return { diff };
+        }
+
+        const [trackedDiff, statusStdout, gitDirRaw] = yield* Effect.all(
+          [
+            runGitStdoutWithOptions(
+              "GitCore.reviewDiff.unstagedTracked",
+              input.cwd,
+              ["diff", "--patch", "--minimal"],
+              {
+                maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+                truncateOutputAtMaxBytes: true,
+              },
+            ),
+            runGitStdout("GitCore.reviewDiff.status", input.cwd, [
+              "status",
+              "--porcelain=2",
+              "--branch",
+            ]),
+            runGitStdout("GitCore.reviewDiff.gitDir", input.cwd, ["rev-parse", "--git-dir"]),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        const untrackedPaths = parseUntrackedPaths(statusStdout);
+        if (untrackedPaths.length === 0) {
+          return { diff: trackedDiff };
+        }
+
+        const gitDirRelative = gitDirRaw.trim();
+        const gitDir = path.isAbsolute(gitDirRelative)
+          ? gitDirRelative
+          : path.join(input.cwd, gitDirRelative);
+
+        const untrackedPatches = yield* Effect.forEach(
+          untrackedPaths,
+          (filePath) =>
+            Effect.gen(function* () {
+              const tempFilePath = path.join(gitDir, `t3-review-empty-${randomUUID()}`);
+              yield* fileSystem
+                .writeFileString(tempFilePath, "")
+                .pipe(
+                  Effect.mapError(() =>
+                    createGitCommandError(
+                      "GitCore.reviewDiff.untracked.writeTempFile",
+                      input.cwd,
+                      ["diff", "--no-index", "--patch", "--minimal", "--", tempFilePath, filePath],
+                      `Unable to prepare a temporary empty file for ${filePath}.`,
+                    ),
+                  ),
+                );
+              const patch = yield* runGitStdoutWithOptions(
+                "GitCore.reviewDiff.untracked",
+                input.cwd,
+                ["diff", "--no-index", "--patch", "--minimal", "--", tempFilePath, filePath],
+                {
+                  allowNonZeroExit: true,
+                  maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+                  truncateOutputAtMaxBytes: true,
+                },
+              ).pipe(
+                Effect.ensuring(
+                  fileSystem
+                    .remove(tempFilePath, { force: true })
+                    .pipe(Effect.catch(() => Effect.void)),
+                ),
+              );
+
+              return normalizeUntrackedPatch(patch, filePath, tempFilePath);
+            }),
+          { concurrency: 1 },
+        );
+
+        const diff = [trackedDiff, ...untrackedPatches]
+          .filter((value) => value.trim().length > 0)
+          .join("\n");
+        return { diff };
+      });
 
     const prepareCommitContext: GitCoreShape["prepareCommitContext"] = (cwd, filePaths) =>
       Effect.gen(function* () {
@@ -2066,6 +2215,7 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
       execute,
       status,
       statusDetails,
+      reviewDiff,
       prepareCommitContext,
       commit,
       pushCurrentBranch,

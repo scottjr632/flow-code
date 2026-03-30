@@ -12,10 +12,10 @@ import {
 import { DEFAULT_THREAD_TERMINAL_ID } from "../types";
 import { isFileWorkspaceTabId, isTerminalWorkspaceTabId } from "../workspaceTabs";
 
-export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
-export const LAST_ACTIVE_WORKSPACE_TAB_BY_THREAD_KEY = "t3code:last-active-workspace-tab-by-thread";
-export const WORKSPACE_TAB_ORDER_BY_CONTEXT_KEY = "t3code:workspace-tab-order-by-context";
-const WORKTREE_BRANCH_PREFIX = "t3code";
+export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "flow:last-invoked-script-by-project";
+export const LAST_ACTIVE_WORKSPACE_TAB_BY_THREAD_KEY = "flow:last-active-workspace-tab-by-thread";
+export const WORKSPACE_TAB_ORDER_BY_CONTEXT_KEY = "flow:workspace-tab-order-by-context";
+const WORKTREE_BRANCH_PREFIX = "flow";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 export const LastActiveWorkspaceTabByThreadSchema = Schema.Record(ThreadId, Schema.String);

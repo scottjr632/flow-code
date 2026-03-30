@@ -1,4 +1,4 @@
-import { type GitStackedAction } from "@t3tools/contracts";
+import { type GitReviewDiffSelection, type GitStackedAction } from "@t3tools/contracts";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 
@@ -10,6 +10,8 @@ const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
 export const gitQueryKeys = {
   all: ["git"] as const,
   status: (cwd: string | null) => ["git", "status", cwd] as const,
+  reviewDiff: (cwd: string | null, selection: GitReviewDiffSelection | null) =>
+    ["git", "review-diff", cwd, selection] as const,
   branches: (cwd: string | null) => ["git", "branches", cwd] as const,
 };
 
@@ -35,6 +37,28 @@ export function gitStatusQueryOptions(cwd: string | null) {
       return api.git.status({ cwd });
     },
     enabled: cwd !== null,
+    staleTime: GIT_STATUS_STALE_TIME_MS,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
+    refetchInterval: GIT_STATUS_REFETCH_INTERVAL_MS,
+  });
+}
+
+export function gitReviewDiffQueryOptions(input: {
+  cwd: string | null;
+  selection: GitReviewDiffSelection | null;
+  enabled?: boolean;
+}) {
+  return queryOptions({
+    queryKey: gitQueryKeys.reviewDiff(input.cwd, input.selection),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!input.cwd || !input.selection) {
+        throw new Error("Git review diff is unavailable.");
+      }
+      return api.git.reviewDiff({ cwd: input.cwd, selection: input.selection });
+    },
+    enabled: Boolean(input.enabled ?? true) && input.cwd !== null && input.selection !== null,
     staleTime: GIT_STATUS_STALE_TIME_MS,
     refetchOnWindowFocus: "always",
     refetchOnReconnect: "always",

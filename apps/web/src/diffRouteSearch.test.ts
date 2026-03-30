@@ -17,6 +17,20 @@ describe("parseDiffRouteSearch", () => {
     });
   });
 
+  it("parses staged diff selection", () => {
+    const parsed = parseDiffRouteSearch({
+      diff: "1",
+      diffSelection: "staged",
+      diffTurnId: "turn-1",
+      diffFilePath: "src/app.ts",
+    });
+
+    expect(parsed).toEqual({
+      diff: "1",
+      diffSelection: "staged",
+    });
+  });
+
   it("treats numeric and boolean diff toggles as open", () => {
     expect(
       parseDiffRouteSearch({
@@ -57,6 +71,19 @@ describe("parseDiffRouteSearch", () => {
 
     expect(parsed).toEqual({
       diff: "1",
+    });
+  });
+
+  it("drops unknown diff selection values", () => {
+    const parsed = parseDiffRouteSearch({
+      diff: "1",
+      diffSelection: "other",
+      diffTurnId: "turn-1",
+    });
+
+    expect(parsed).toEqual({
+      diff: "1",
+      diffTurnId: "turn-1",
     });
   });
 

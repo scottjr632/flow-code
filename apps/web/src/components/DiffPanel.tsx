@@ -20,11 +20,16 @@ import {
   useState,
 } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
+import { gitReviewDiffQueryOptions } from "~/lib/gitReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { resolvePathLinkTarget } from "../terminal-links";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import {
+  parseDiffRouteSearch,
+  stripDiffSearchParams,
+  type DiffSelection,
+} from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
@@ -320,10 +325,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   );
   const latestTurnId = orderedTurnDiffSummaries[0]?.turnId ?? null;
 
+  const selectedDiffSelection = diffSearch.diffSelection ?? null;
   const selectedTurnId = diffSearch.diffTurnId ?? null;
-  const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
+  const selectedFilePath =
+    selectedDiffSelection === null && selectedTurnId !== null
+      ? (diffSearch.diffFilePath ?? null)
+      : null;
   const selectedTurn =
-    selectedTurnId === null
+    selectedDiffSelection !== null || selectedTurnId === null
       ? undefined
       : (orderedTurnDiffSummaries.find((summary) => summary.turnId === selectedTurnId) ??
         orderedTurnDiffSummaries[0]);
@@ -367,18 +376,25 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     ? selectedCheckpointRange
     : conversationCheckpointRange;
   const conversationCacheScope = useMemo(() => {
-    if (selectedTurn || orderedTurnDiffSummaries.length === 0) {
+    if (selectedTurn || selectedDiffSelection !== null || orderedTurnDiffSummaries.length === 0) {
       return null;
     }
     return `conversation:${orderedTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
-  }, [orderedTurnDiffSummaries, selectedTurn]);
+  }, [orderedTurnDiffSummaries, selectedDiffSelection, selectedTurn]);
   const activeCheckpointDiffQuery = useQuery(
     checkpointDiffQueryOptions({
       threadId: activeThreadId,
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,
-      enabled: true,
+      enabled: selectedDiffSelection === null,
+    }),
+  );
+  const reviewDiffQuery = useQuery(
+    gitReviewDiffQueryOptions({
+      cwd: activeCwd ?? null,
+      selection: selectedDiffSelection,
+      enabled: selectedDiffSelection !== null,
     }),
   );
   const selectedTurnCheckpointDiff = selectedTurn
@@ -394,8 +410,22 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       : activeCheckpointDiffQuery.error
         ? "Failed to load checkpoint diff."
         : null;
+  const reviewDiffError =
+    reviewDiffQuery.error instanceof Error
+      ? reviewDiffQuery.error.message
+      : reviewDiffQuery.error
+        ? "Failed to load git review diff."
+        : null;
 
-  const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
+  const selectedPatch =
+    selectedDiffSelection !== null
+      ? reviewDiffQuery.data?.diff
+      : selectedTurn
+        ? selectedTurnCheckpointDiff
+        : conversationCheckpointDiff;
+  const activePatchError = selectedDiffSelection !== null ? reviewDiffError : checkpointDiffError;
+  const isLoadingActivePatch =
+    selectedDiffSelection !== null ? reviewDiffQuery.isLoading : isLoadingCheckpointDiff;
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
@@ -498,7 +528,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     setSelectedRangesByFileKey({});
     setActiveCommentSelection(null);
     setActiveCommentBody("");
-  }, [selectedTurnId, renderablePatch]);
+  }, [selectedDiffSelection, selectedTurnId, renderablePatch]);
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
@@ -508,6 +538,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
         return { ...rest, diff: "1", diffTurnId: turnId };
+      },
+    });
+  };
+  const selectDiffSelection = (selection: DiffSelection) => {
+    if (!activeThread) return;
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: activeThread.id },
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return { ...rest, diff: "1", diffSelection: selection };
       },
     });
   };
@@ -628,13 +669,47 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           <button
             type="button"
             className="shrink-0 rounded-md"
-            onClick={selectWholeConversation}
-            data-turn-chip-selected={selectedTurnId === null}
+            onClick={() => selectDiffSelection("staged")}
+            data-turn-chip-selected={selectedDiffSelection === "staged"}
           >
             <div
               className={cn(
                 "rounded-md border px-2 py-1 text-left transition-colors",
-                selectedTurnId === null
+                selectedDiffSelection === "staged"
+                  ? "border-border bg-accent text-accent-foreground"
+                  : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
+              )}
+            >
+              <div className="text-[10px] leading-tight font-medium">Staged</div>
+            </div>
+          </button>
+          <button
+            type="button"
+            className="shrink-0 rounded-md"
+            onClick={() => selectDiffSelection("unstaged")}
+            data-turn-chip-selected={selectedDiffSelection === "unstaged"}
+          >
+            <div
+              className={cn(
+                "rounded-md border px-2 py-1 text-left transition-colors",
+                selectedDiffSelection === "unstaged"
+                  ? "border-border bg-accent text-accent-foreground"
+                  : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
+              )}
+            >
+              <div className="text-[10px] leading-tight font-medium">Unstaged</div>
+            </div>
+          </button>
+          <button
+            type="button"
+            className="shrink-0 rounded-md"
+            onClick={selectWholeConversation}
+            data-turn-chip-selected={selectedDiffSelection === null && selectedTurnId === null}
+          >
+            <div
+              className={cn(
+                "rounded-md border px-2 py-1 text-left transition-colors",
+                selectedDiffSelection === null && selectedTurnId === null
                   ? "border-border bg-accent text-accent-foreground"
                   : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
               )}
@@ -718,177 +793,189 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
-      ) : orderedTurnDiffSummaries.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          No completed turns yet.
-        </div>
       ) : (
         <>
           <div
             ref={patchViewportRef}
             className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden"
           >
-            {checkpointDiffError && !renderablePatch && (
-              <div className="px-3">
-                <p className="mb-2 text-[11px] text-red-500/80">{checkpointDiffError}</p>
+            {selectedDiffSelection === null && orderedTurnDiffSummaries.length === 0 ? (
+              <div className="flex h-full items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+                No completed turns yet.
               </div>
-            )}
-            {!renderablePatch ? (
-              isLoadingCheckpointDiff ? (
-                <DiffPanelLoadingState label="Loading checkpoint diff..." />
-              ) : (
-                <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
-                  <p>
-                    {hasNoNetChanges
-                      ? "No net changes in this selection."
-                      : "No patch available for this selection."}
-                  </p>
-                </div>
-              )
-            ) : renderablePatch.kind === "files" ? (
-              <Virtualizer
-                className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
-                config={{
-                  overscrollSize: 600,
-                  intersectionObserverMargin: 1200,
-                }}
-              >
-                {renderableFiles.map((fileDiff) => {
-                  const filePath = resolveFileDiffPath(fileDiff);
-                  const fileKey = buildFileDiffRenderKey(fileDiff);
-                  const themedFileKey = `${fileKey}:${resolvedTheme}`;
-                  const selectedRange = selectedRangesByFileKey[fileKey] ?? null;
-                  const isCommentComposerOpen = activeCommentSelection?.fileKey === fileKey;
-                  return (
-                    <div
-                      key={themedFileKey}
-                      data-diff-file-path={filePath}
-                      className="diff-render-file mb-2 rounded-md first:mt-2 last:mb-0"
-                      onClickCapture={(event) => {
-                        const nativeEvent = event.nativeEvent as MouseEvent;
-                        const composedPath = nativeEvent.composedPath?.() ?? [];
-                        const clickedHeader = composedPath.some((node) => {
-                          if (!(node instanceof Element)) return false;
-                          return node.hasAttribute("data-title");
-                        });
-                        if (!clickedHeader) return;
-                        openDiffFileInEditor(filePath);
-                      }}
-                    >
-                      <FileDiff<InlineDiffCommentAnnotationMetadata>
-                        fileDiff={fileDiff}
-                        lineAnnotations={
-                          isCommentComposerOpen && activeCommentSelection
-                            ? [
-                                {
-                                  side: activeCommentSelection.side,
-                                  lineNumber: activeCommentSelection.lineEnd,
-                                  metadata: {
-                                    kind: "draft-form",
-                                    selection: activeCommentSelection,
-                                  },
-                                },
-                              ]
-                            : []
-                        }
-                        options={{
-                          diffStyle: diffRenderMode === "split" ? "split" : "unified",
-                          lineDiffType: "none",
-                          enableGutterUtility: true,
-                          enableLineSelection: true,
-                          overflow: diffWordWrap ? "wrap" : "scroll",
-                          theme: resolveDiffThemeName(resolvedTheme),
-                          themeType: resolvedTheme as DiffThemeType,
-                          unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
-                          onGutterUtilityClick: (range) => {
-                            openCommentComposer(
-                              buildCommentSelectionFromRange(fileDiff, fileKey, range),
-                            );
-                          },
-                          onLineSelected: (range) => {
-                            setSelectedRangesByFileKey((currentRanges) => ({
-                              ...currentRanges,
-                              [fileKey]: range,
-                            }));
-                            if (!range && activeCommentSelection?.fileKey === fileKey) {
-                              clearCommentComposer(fileKey);
-                            }
-                          },
-                        }}
-                        selectedLines={selectedRange}
-                        renderAnnotation={(annotation) => {
-                          if (annotation.metadata?.kind !== "draft-form") {
-                            return null;
-                          }
-                          return (
-                            <div className="mx-4 my-2 rounded-xl border border-border/70 bg-card/95 p-3 shadow-sm">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="space-y-1">
-                                  <p className="text-xs font-medium text-foreground">
-                                    Add review comment
-                                  </p>
-                                  <p className="text-[11px] text-muted-foreground/75">
-                                    {formatCommentSelectionSummary(annotation.metadata.selection)}
-                                  </p>
-                                </div>
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  onClick={() => clearCommentComposer(fileKey)}
-                                  aria-label="Cancel diff comment"
-                                >
-                                  <XIcon className="size-3.5" />
-                                </Button>
-                              </div>
-                              <Textarea
-                                className="mt-3 min-h-24 font-mono text-sm"
-                                value={activeCommentBody}
-                                onChange={(event) => setActiveCommentBody(event.target.value)}
-                                placeholder="Explain what needs attention in this change."
-                              />
-                              <div className="mt-2 flex justify-end gap-2">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => clearCommentComposer(fileKey)}
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  disabled={activeCommentBody.trim().length === 0}
-                                  onClick={addSelectedCommentToDraft}
-                                >
-                                  Comment
-                                </Button>
-                              </div>
-                            </div>
-                          );
-                        }}
-                      />
-                    </div>
-                  );
-                })}
-              </Virtualizer>
             ) : (
-              <div className="h-full overflow-auto p-2">
-                <div className="space-y-2">
-                  <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
-                  <pre
-                    className={cn(
-                      "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90",
-                      diffWordWrap
-                        ? "overflow-auto whitespace-pre-wrap wrap-break-word"
-                        : "overflow-auto",
-                    )}
+              <>
+                {activePatchError && !renderablePatch && (
+                  <div className="px-3">
+                    <p className="mb-2 text-[11px] text-red-500/80">{activePatchError}</p>
+                  </div>
+                )}
+                {!renderablePatch ? (
+                  isLoadingActivePatch ? (
+                    <DiffPanelLoadingState
+                      label={
+                        selectedDiffSelection === null
+                          ? "Loading checkpoint diff..."
+                          : `Loading ${selectedDiffSelection} diff...`
+                      }
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
+                      <p>
+                        {hasNoNetChanges
+                          ? "No net changes in this selection."
+                          : "No patch available for this selection."}
+                      </p>
+                    </div>
+                  )
+                ) : renderablePatch.kind === "files" ? (
+                  <Virtualizer
+                    className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
+                    config={{
+                      overscrollSize: 600,
+                      intersectionObserverMargin: 1200,
+                    }}
                   >
-                    {renderablePatch.text}
-                  </pre>
-                </div>
-              </div>
+                    {renderableFiles.map((fileDiff) => {
+                      const filePath = resolveFileDiffPath(fileDiff);
+                      const fileKey = buildFileDiffRenderKey(fileDiff);
+                      const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                      const selectedRange = selectedRangesByFileKey[fileKey] ?? null;
+                      const isCommentComposerOpen = activeCommentSelection?.fileKey === fileKey;
+                      return (
+                        <div
+                          key={themedFileKey}
+                          data-diff-file-path={filePath}
+                          className="diff-render-file mb-2 rounded-md first:mt-2 last:mb-0"
+                          onClickCapture={(event) => {
+                            const nativeEvent = event.nativeEvent as MouseEvent;
+                            const composedPath = nativeEvent.composedPath?.() ?? [];
+                            const clickedHeader = composedPath.some((node) => {
+                              if (!(node instanceof Element)) return false;
+                              return node.hasAttribute("data-title");
+                            });
+                            if (!clickedHeader) return;
+                            openDiffFileInEditor(filePath);
+                          }}
+                        >
+                          <FileDiff<InlineDiffCommentAnnotationMetadata>
+                            fileDiff={fileDiff}
+                            lineAnnotations={
+                              isCommentComposerOpen && activeCommentSelection
+                                ? [
+                                    {
+                                      side: activeCommentSelection.side,
+                                      lineNumber: activeCommentSelection.lineEnd,
+                                      metadata: {
+                                        kind: "draft-form",
+                                        selection: activeCommentSelection,
+                                      },
+                                    },
+                                  ]
+                                : []
+                            }
+                            options={{
+                              diffStyle: diffRenderMode === "split" ? "split" : "unified",
+                              lineDiffType: "none",
+                              enableGutterUtility: true,
+                              enableLineSelection: true,
+                              overflow: diffWordWrap ? "wrap" : "scroll",
+                              theme: resolveDiffThemeName(resolvedTheme),
+                              themeType: resolvedTheme as DiffThemeType,
+                              unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
+                              onGutterUtilityClick: (range) => {
+                                openCommentComposer(
+                                  buildCommentSelectionFromRange(fileDiff, fileKey, range),
+                                );
+                              },
+                              onLineSelected: (range) => {
+                                setSelectedRangesByFileKey((currentRanges) => ({
+                                  ...currentRanges,
+                                  [fileKey]: range,
+                                }));
+                                if (!range && activeCommentSelection?.fileKey === fileKey) {
+                                  clearCommentComposer(fileKey);
+                                }
+                              },
+                            }}
+                            selectedLines={selectedRange}
+                            renderAnnotation={(annotation) => {
+                              if (annotation.metadata?.kind !== "draft-form") {
+                                return null;
+                              }
+                              return (
+                                <div className="mx-4 my-2 rounded-xl border border-border/70 bg-card/95 p-3 shadow-sm">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="space-y-1">
+                                      <p className="text-xs font-medium text-foreground">
+                                        Add review comment
+                                      </p>
+                                      <p className="text-[11px] text-muted-foreground/75">
+                                        {formatCommentSelectionSummary(
+                                          annotation.metadata.selection,
+                                        )}
+                                      </p>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      size="icon-xs"
+                                      variant="ghost"
+                                      onClick={() => clearCommentComposer(fileKey)}
+                                      aria-label="Cancel diff comment"
+                                    >
+                                      <XIcon className="size-3.5" />
+                                    </Button>
+                                  </div>
+                                  <Textarea
+                                    className="mt-3 min-h-24 font-mono text-sm"
+                                    value={activeCommentBody}
+                                    onChange={(event) => setActiveCommentBody(event.target.value)}
+                                    placeholder="Explain what needs attention in this change."
+                                  />
+                                  <div className="mt-2 flex justify-end gap-2">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => clearCommentComposer(fileKey)}
+                                    >
+                                      Cancel
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      disabled={activeCommentBody.trim().length === 0}
+                                      onClick={addSelectedCommentToDraft}
+                                    >
+                                      Comment
+                                    </Button>
+                                  </div>
+                                </div>
+                              );
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </Virtualizer>
+                ) : (
+                  <div className="h-full overflow-auto p-2">
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-muted-foreground/75">
+                        {renderablePatch.reason}
+                      </p>
+                      <pre
+                        className={cn(
+                          "rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90",
+                          diffWordWrap ? "whitespace-pre-wrap wrap-break-word" : "whitespace-pre",
+                        )}
+                      >
+                        {renderablePatch.text}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </>

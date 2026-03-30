@@ -49,7 +49,7 @@ interface WorkspaceEditorStoreState {
   setVimMode: (threadId: ThreadId, enabled: boolean) => void;
 }
 
-export const WORKSPACE_EDITOR_VIM_MODE_KEY = "t3code:workspace-editor-vim-mode";
+export const WORKSPACE_EDITOR_VIM_MODE_KEY = "flow:workspace-editor-vim-mode";
 
 export function readPersistedWorkspaceEditorVimMode(): boolean {
   return getLocalStorageItem(WORKSPACE_EDITOR_VIM_MODE_KEY, Schema.Boolean) ?? false;

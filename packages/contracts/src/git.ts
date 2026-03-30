@@ -33,6 +33,8 @@ const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
+export const GitReviewDiffSelection = Schema.Literals(["staged", "unstaged"]);
+export type GitReviewDiffSelection = typeof GitReviewDiffSelection.Type;
 
 export const GitBranch = Schema.Struct({
   name: TrimmedNonEmptyStringSchema,
@@ -64,6 +66,12 @@ export const GitStatusInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
 });
 export type GitStatusInput = typeof GitStatusInput.Type;
+
+export const GitReviewDiffInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  selection: GitReviewDiffSelection,
+});
+export type GitReviewDiffInput = typeof GitReviewDiffInput.Type;
 
 export const GitPullInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -143,26 +151,37 @@ const GitStatusPr = Schema.Struct({
   state: GitStatusPrState,
 });
 
+export const GitStatusFileStat = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  insertions: NonNegativeInt,
+  deletions: NonNegativeInt,
+});
+export type GitStatusFileStat = typeof GitStatusFileStat.Type;
+
+export const GitStatusChangeSet = Schema.Struct({
+  files: Schema.Array(GitStatusFileStat),
+  insertions: NonNegativeInt,
+  deletions: NonNegativeInt,
+});
+export type GitStatusChangeSet = typeof GitStatusChangeSet.Type;
+
 export const GitStatusResult = Schema.Struct({
   branch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   hasWorkingTreeChanges: Schema.Boolean,
-  workingTree: Schema.Struct({
-    files: Schema.Array(
-      Schema.Struct({
-        path: TrimmedNonEmptyStringSchema,
-        insertions: NonNegativeInt,
-        deletions: NonNegativeInt,
-      }),
-    ),
-    insertions: NonNegativeInt,
-    deletions: NonNegativeInt,
-  }),
+  workingTree: GitStatusChangeSet,
+  staged: GitStatusChangeSet,
+  unstaged: GitStatusChangeSet,
   hasUpstream: Schema.Boolean,
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
   pr: Schema.NullOr(GitStatusPr),
 });
 export type GitStatusResult = typeof GitStatusResult.Type;
+
+export const GitReviewDiffResult = Schema.Struct({
+  diff: Schema.String,
+});
+export type GitReviewDiffResult = typeof GitReviewDiffResult.Type;
 
 export const GitListBranchesResult = Schema.Struct({
   branches: Schema.Array(GitBranch),

@@ -21,7 +21,7 @@ import { CheckpointStore, type CheckpointStoreShape } from "../Services/Checkpoi
 import { CheckpointRef, type TurnReviewVcsPreference } from "@t3tools/contracts";
 
 const JJ_COMMAND_TIMEOUT_MS = 30_000;
-const JJ_METADATA_DIRNAME = "t3code-checkpoints";
+const JJ_METADATA_DIRNAME = "flow-checkpoints";
 // Turn-review diffs can legitimately be much larger than the generic GitCore
 // output budget. Keep this scoped to checkpoint diffs so normal git commands
 // still fail fast on runaway output.
@@ -379,10 +379,10 @@ const makeCheckpointStore = Effect.gen(function* () {
               const commitEnv: NodeJS.ProcessEnv = {
                 ...process.env,
                 GIT_INDEX_FILE: tempIndexPath,
-                GIT_AUTHOR_NAME: "T3 Code",
-                GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
-                GIT_COMMITTER_NAME: "T3 Code",
-                GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+                GIT_AUTHOR_NAME: "Flow",
+                GIT_AUTHOR_EMAIL: "flow@users.noreply.github.com",
+                GIT_COMMITTER_NAME: "Flow",
+                GIT_COMMITTER_EMAIL: "flow@users.noreply.github.com",
               };
 
               const headExists = yield* hasHeadCommit(input.cwd);

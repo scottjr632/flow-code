@@ -11,14 +11,18 @@ import {
 } from "./GitActionsControl.logic";
 
 function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
+  const emptyChangeSet = {
+    files: [],
+    insertions: 0,
+    deletions: 0,
+  };
+
   return {
     branch: "feature/test",
     hasWorkingTreeChanges: false,
-    workingTree: {
-      files: [],
-      insertions: 0,
-      deletions: 0,
-    },
+    workingTree: emptyChangeSet,
+    staged: emptyChangeSet,
+    unstaged: emptyChangeSet,
     hasUpstream: true,
     aheadCount: 0,
     behindCount: 0,

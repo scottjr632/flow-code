@@ -60,21 +60,21 @@ describe("resolveCodeCommentFileTarget", () => {
     expect(
       resolveCodeCommentFileTarget(
         "apps/web/src/components/ChatView.tsx",
-        "/Users/scottrichardson/workspace/github.com/scottjr632/t3code",
+        "/Users/scottrichardson/workspace/github.com/scottjr632/flow",
       ),
     ).toBe(
-      "/Users/scottrichardson/workspace/github.com/scottjr632/t3code/apps/web/src/components/ChatView.tsx",
+      "/Users/scottrichardson/workspace/github.com/scottjr632/flow/apps/web/src/components/ChatView.tsx",
     );
   });
 
   it("resolves workspace-name-prefixed review comment paths", () => {
     expect(
       resolveCodeCommentFileTarget(
-        "t3code/apps/web/src/components/ChatView.tsx",
-        "/Users/scottrichardson/workspace/github.com/scottjr632/t3code",
+        "flow/apps/web/src/components/ChatView.tsx",
+        "/Users/scottrichardson/workspace/github.com/scottjr632/flow",
       ),
     ).toBe(
-      "/Users/scottrichardson/workspace/github.com/scottjr632/t3code/apps/web/src/components/ChatView.tsx",
+      "/Users/scottrichardson/workspace/github.com/scottjr632/flow/apps/web/src/components/ChatView.tsx",
     );
   });
 
@@ -85,10 +85,10 @@ describe("resolveCodeCommentFileTarget", () => {
           file: "apps/web/src/components/ChatView.tsx",
           start: 526,
         },
-        "/Users/scottrichardson/workspace/github.com/scottjr632/t3code",
+        "/Users/scottrichardson/workspace/github.com/scottjr632/flow",
       ),
     ).toBe(
-      "/Users/scottrichardson/workspace/github.com/scottjr632/t3code/apps/web/src/components/ChatView.tsx:526",
+      "/Users/scottrichardson/workspace/github.com/scottjr632/flow/apps/web/src/components/ChatView.tsx:526",
     );
   });
 });

@@ -11,6 +11,7 @@ import { resolveShortcutCommand } from "../keybindings";
 import { useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useWorkspaceTerminalStore } from "../workspaceTerminalStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useSettings } from "~/hooks/useSettings";
 import { resolveExistingWorkspaceContext } from "~/workspaceContext";
@@ -32,6 +33,7 @@ function ChatRouteGlobalShortcuts() {
       : false,
   );
   const appSettings = useSettings();
+  const toggleWorkspaceTerminal = useWorkspaceTerminalStore((state) => state.toggle);
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -54,6 +56,13 @@ function ChatRouteGlobalShortcuts() {
       });
 
       if (shouldBypassChatRouteShortcut(pathname, command)) {
+        return;
+      }
+
+      if (command === "workspaceTerminal.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleWorkspaceTerminal();
         return;
       }
 
@@ -99,6 +108,7 @@ function ChatRouteGlobalShortcuts() {
     projects,
     selectedThreadIdsSize,
     terminalOpen,
+    toggleWorkspaceTerminal,
     appSettings.defaultThreadEnvMode,
     workspaces,
   ]);

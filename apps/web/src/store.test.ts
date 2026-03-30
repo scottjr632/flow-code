@@ -17,7 +17,7 @@ import {
 } from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
-const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
+const PERSISTED_STATE_KEY = "flow:renderer-state:v8";
 
 type MockStorage = {
   getItem: (key: string) => string | null;

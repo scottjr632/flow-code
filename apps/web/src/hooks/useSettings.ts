@@ -37,8 +37,8 @@ import { Predicate, Schema, Struct } from "effect";
 import { DeepMutable } from "effect/Types";
 import { deepMerge } from "@t3tools/shared/Struct";
 
-const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
-const OLD_SETTINGS_KEY = "t3code:app-settings:v1";
+const CLIENT_SETTINGS_STORAGE_KEY = "flow:client-settings:v1";
+const OLD_SETTINGS_KEY = "flow:app-settings:v1";
 
 // ── Key sets for routing patches ─────────────────────────────────────
 

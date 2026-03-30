@@ -11,6 +11,8 @@ import {
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
+  GitReviewDiffInput,
+  GitReviewDiffResult,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
@@ -40,6 +42,13 @@ export interface GitManagerShape {
   readonly status: (
     input: GitStatusInput,
   ) => Effect.Effect<GitStatusResult, GitManagerServiceError>;
+
+  /**
+   * Read a staged or unstaged patch for the review surface.
+   */
+  readonly reviewDiff: (
+    input: GitReviewDiffInput,
+  ) => Effect.Effect<GitReviewDiffResult, GitManagerServiceError>;
 
   /**
    * Resolve a pull request by URL/number against the current repository.

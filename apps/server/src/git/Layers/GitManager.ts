@@ -102,7 +102,7 @@ function resolvePullRequestWorktreeLocalBranchName(
 
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  return `t3code/pr-${pullRequest.number}/${suffix}`;
+  return `flow/pr-${pullRequest.number}/${suffix}`;
 }
 
 function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
@@ -891,7 +891,7 @@ export const makeGitManager = Effect.gen(function* () {
         modelSelection,
       });
 
-      const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
+      const bodyFile = path.join(tempDir, `flow-pr-body-${process.pid}-${randomUUID()}.md`);
       yield* fileSystem
         .writeFileString(bodyFile, generated.body)
         .pipe(
@@ -947,11 +947,17 @@ export const makeGitManager = Effect.gen(function* () {
       branch: details.branch,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
+      staged: details.staged,
+      unstaged: details.unstaged,
       hasUpstream: details.hasUpstream,
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
       pr,
     };
+  });
+
+  const reviewDiff: GitManagerShape["reviewDiff"] = Effect.fnUntraced(function* (input) {
+    return yield* gitCore.reviewDiff(input);
   });
 
   const resolvePullRequest: GitManagerShape["resolvePullRequest"] = Effect.fnUntraced(
@@ -1295,6 +1301,7 @@ export const makeGitManager = Effect.gen(function* () {
 
   return {
     status,
+    reviewDiff,
     resolvePullRequest,
     preparePullRequestThread,
     runStackedAction,

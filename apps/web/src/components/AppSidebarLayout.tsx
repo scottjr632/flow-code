@@ -6,6 +6,7 @@ import ThreadSidebar, {
   type ThreadTraversalController,
   type ActiveThreadTraversalSession,
 } from "./Sidebar";
+import WorkspaceTerminalPanel from "./WorkspaceTerminalPanel";
 import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
 import { getThreadIdsForKeyboardTraversal, resolveThreadKeyboardTraversal } from "./Sidebar.logic";
 import { useStore } from "../store";
@@ -163,7 +164,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <ThreadSidebar threadTraversalController={threadTraversalController} />
         <SidebarRail />
       </Sidebar>
-      {children}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 overflow-hidden">{children}</div>
+        <WorkspaceTerminalPanel />
+      </div>
     </SidebarProvider>
   );
 }

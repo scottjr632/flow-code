@@ -40,7 +40,7 @@ const wsLink = ws.link(/ws(s)?:\/\/.*/);
 function createBaseServerConfig(): ServerConfig {
   return {
     cwd: "/repo/project",
-    keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
+    keybindingsConfigPath: "/repo/project/.flow-keybindings.json",
     keybindings: [],
     issues: [],
     providers: [
@@ -165,15 +165,21 @@ function resolveWsRpc(tag: string): unknown {
     };
   }
   if (tag === WS_METHODS.gitStatus) {
+    const emptyChangeSet = { files: [], insertions: 0, deletions: 0 };
     return {
       branch: "main",
       hasWorkingTreeChanges: false,
-      workingTree: { files: [], insertions: 0, deletions: 0 },
+      workingTree: emptyChangeSet,
+      staged: emptyChangeSet,
+      unstaged: emptyChangeSet,
       hasUpstream: true,
       aheadCount: 0,
       behindCount: 0,
       pr: null,
     };
+  }
+  if (tag === WS_METHODS.gitReviewDiff) {
+    return { diff: "" };
   }
   if (tag === WS_METHODS.projectsSearchEntries) {
     return { entries: [], truncated: false };

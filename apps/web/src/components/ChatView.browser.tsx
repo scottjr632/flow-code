@@ -111,7 +111,7 @@ function isoAt(offsetSeconds: number): string {
 function createBaseServerConfig(): ServerConfig {
   return {
     cwd: "/repo/project",
-    keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
+    keybindingsConfigPath: "/repo/project/.flow-keybindings.json",
     keybindings: [],
     issues: [],
     providers: [
@@ -515,19 +515,25 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
     };
   }
   if (tag === WS_METHODS.gitStatus) {
+    const emptyChangeSet = {
+      files: [],
+      insertions: 0,
+      deletions: 0,
+    };
     return {
       branch: "main",
       hasWorkingTreeChanges: false,
-      workingTree: {
-        files: [],
-        insertions: 0,
-        deletions: 0,
-      },
+      workingTree: emptyChangeSet,
+      staged: emptyChangeSet,
+      unstaged: emptyChangeSet,
       hasUpstream: true,
       aheadCount: 0,
       behindCount: 0,
       pr: null,
     };
+  }
+  if (tag === WS_METHODS.gitReviewDiff) {
+    return { diff: "" };
   }
   if (tag === WS_METHODS.projectsSearchEntries) {
     return {
@@ -1287,7 +1293,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("falls back to the first installed editor when the stored favorite is unavailable", async () => {
-    localStorage.setItem("t3code:last-editor", "vscodium");
+    localStorage.setItem("flow:last-editor", "vscodium");
     setDraftThreadWithoutWorktree();
 
     const mounted = await mountChatView({
@@ -1381,7 +1387,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             threadId: THREAD_ID,
             cwd: "/repo/project",
             env: {
-              T3CODE_PROJECT_ROOT: "/repo/project",
+              FLOW_PROJECT_ROOT: "/repo/project",
             },
           });
         },
@@ -1458,8 +1464,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
             threadId: THREAD_ID,
             cwd: "/repo/worktrees/feature-draft",
             env: {
-              T3CODE_PROJECT_ROOT: "/repo/project",
-              T3CODE_WORKTREE_PATH: "/repo/worktrees/feature-draft",
+              FLOW_PROJECT_ROOT: "/repo/project",
+              FLOW_WORKTREE_PATH: "/repo/worktrees/feature-draft",
             },
           });
         },
@@ -1506,7 +1512,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             pullRequest: {
               number: 1359,
               title: "Add thread archiving and settings navigation",
-              url: "https://github.com/pingdotgg/t3code/pull/1359",
+              url: "https://github.com/pingdotgg/flow/pull/1359",
               baseBranch: "main",
               headBranch: "archive-settings-overhaul",
               state: "open",
@@ -1518,7 +1524,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             pullRequest: {
               number: 1359,
               title: "Add thread archiving and settings navigation",
-              url: "https://github.com/pingdotgg/t3code/pull/1359",
+              url: "https://github.com/pingdotgg/flow/pull/1359",
               baseBranch: "main",
               headBranch: "archive-settings-overhaul",
               state: "open",
@@ -1592,8 +1598,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
             threadId: expect.any(String),
             cwd: "/repo/worktrees/pr-1359",
             env: {
-              T3CODE_PROJECT_ROOT: "/repo/project",
-              T3CODE_WORKTREE_PATH: "/repo/worktrees/pr-1359",
+              FLOW_PROJECT_ROOT: "/repo/project",
+              FLOW_WORKTREE_PATH: "/repo/worktrees/pr-1359",
             },
           });
         },

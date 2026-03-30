@@ -1,4 +1,4 @@
-export const OPEN_WORKSPACE_COMMAND_PALETTE_EVENT = "t3code:open-workspace-command-palette";
+export const OPEN_WORKSPACE_COMMAND_PALETTE_EVENT = "flow:open-workspace-command-palette";
 
 interface WorkspaceCommandPaletteShortcutEventLike {
   key: string;

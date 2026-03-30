@@ -17,6 +17,8 @@ import type {
   GitListBranchesInput,
   GitListBranchesResult,
   GitPullResult,
+  GitReviewDiffInput,
+  GitReviewDiffResult,
   GitRemoveWorktreeInput,
   GitStatusInput,
   GitStatusResult,
@@ -142,6 +144,13 @@ export interface GitCoreShape {
    * Read Git status for a repository.
    */
   readonly status: (input: GitStatusInput) => Effect.Effect<GitStatusResult, GitCommandError>;
+
+  /**
+   * Read a reviewable staged or unstaged patch for the repository.
+   */
+  readonly reviewDiff: (
+    input: GitReviewDiffInput,
+  ) => Effect.Effect<GitReviewDiffResult, GitCommandError>;
 
   /**
    * Read detailed working tree / branch status for a repository.

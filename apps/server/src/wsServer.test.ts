@@ -534,7 +534,7 @@ describe("WebSocket Server", () => {
       throw new Error("Test server is already running");
     }
 
-    const baseDir = options.baseDir ?? makeTempDir("t3code-ws-base-");
+    const baseDir = options.baseDir ?? makeTempDir("flow-ws-base-");
     const devUrl = options.devUrl ? new URL(options.devUrl) : undefined;
     const derivedPaths = deriveServerPathsSync(baseDir, devUrl);
     const scope = await Effect.runPromise(Scope.make("sequential"));
@@ -638,7 +638,7 @@ describe("WebSocket Server", () => {
   });
 
   it("serves persisted attachments from stateDir", async () => {
-    const baseDir = makeTempDir("t3code-state-attachments-");
+    const baseDir = makeTempDir("flow-state-attachments-");
     const { attachmentsDir } = deriveServerPathsSync(baseDir, undefined);
     const attachmentPath = path.join(attachmentsDir, "thread-a", "message-a", "0.png");
     fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
@@ -657,7 +657,7 @@ describe("WebSocket Server", () => {
   });
 
   it("serves persisted attachments for URL-encoded paths", async () => {
-    const baseDir = makeTempDir("t3code-state-attachments-encoded-");
+    const baseDir = makeTempDir("flow-state-attachments-encoded-");
     const { attachmentsDir } = deriveServerPathsSync(baseDir, undefined);
     const attachmentPath = path.join(
       attachmentsDir,
@@ -683,8 +683,8 @@ describe("WebSocket Server", () => {
   });
 
   it("serves static index for root path", async () => {
-    const baseDir = makeTempDir("t3code-state-static-root-");
-    const staticDir = makeTempDir("t3code-static-root-");
+    const baseDir = makeTempDir("flow-state-static-root-");
+    const staticDir = makeTempDir("flow-static-root-");
     fs.writeFileSync(path.join(staticDir, "index.html"), "<h1>static-root</h1>", "utf8");
 
     server = await createTestServer({ cwd: "/test/project", baseDir, staticDir });
@@ -698,8 +698,8 @@ describe("WebSocket Server", () => {
   });
 
   it("rejects static path traversal attempts", async () => {
-    const baseDir = makeTempDir("t3code-state-static-traversal-");
-    const staticDir = makeTempDir("t3code-static-traversal-");
+    const baseDir = makeTempDir("flow-state-static-traversal-");
+    const staticDir = makeTempDir("flow-static-traversal-");
     fs.writeFileSync(path.join(staticDir, "index.html"), "<h1>safe</h1>", "utf8");
 
     server = await createTestServer({ cwd: "/test/project", baseDir, staticDir });
@@ -792,7 +792,7 @@ describe("WebSocket Server", () => {
   });
 
   it("includes bootstrap ids in welcome when cwd project and thread already exist", async () => {
-    const baseDir = makeTempDir("t3code-state-bootstrap-existing-");
+    const baseDir = makeTempDir("flow-state-bootstrap-existing-");
     const { dbPath } = deriveServerPathsSync(baseDir, undefined);
     const persistenceLayer = makeSqlitePersistenceLive(dbPath).pipe(
       Layer.provide(NodeServices.layer),
@@ -873,7 +873,7 @@ describe("WebSocket Server", () => {
   });
 
   it("responds to server.getConfig", async () => {
-    const baseDir = makeTempDir("t3code-state-get-config-");
+    const baseDir = makeTempDir("flow-state-get-config-");
     const { keybindingsConfigPath: keybindingsPath } = deriveServerPathsSync(baseDir, undefined);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(keybindingsPath, "[]", "utf8");
@@ -900,7 +900,7 @@ describe("WebSocket Server", () => {
   });
 
   it("bootstraps default keybindings file when missing", async () => {
-    const baseDir = makeTempDir("t3code-state-bootstrap-keybindings-");
+    const baseDir = makeTempDir("flow-state-bootstrap-keybindings-");
     const { keybindingsConfigPath: keybindingsPath } = deriveServerPathsSync(baseDir, undefined);
     expect(fs.existsSync(keybindingsPath)).toBe(false);
 
@@ -931,7 +931,7 @@ describe("WebSocket Server", () => {
   });
 
   it("falls back to defaults and reports malformed keybindings config issues", async () => {
-    const baseDir = makeTempDir("t3code-state-malformed-keybindings-");
+    const baseDir = makeTempDir("flow-state-malformed-keybindings-");
     const { keybindingsConfigPath: keybindingsPath } = deriveServerPathsSync(baseDir, undefined);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(keybindingsPath, "{ not-json", "utf8");
@@ -964,7 +964,7 @@ describe("WebSocket Server", () => {
   });
 
   it("ignores invalid keybinding entries but keeps valid entries and reports issues", async () => {
-    const baseDir = makeTempDir("t3code-state-partial-invalid-keybindings-");
+    const baseDir = makeTempDir("flow-state-partial-invalid-keybindings-");
     const { keybindingsConfigPath: keybindingsPath } = deriveServerPathsSync(baseDir, undefined);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(
@@ -1016,7 +1016,7 @@ describe("WebSocket Server", () => {
   });
 
   it("pushes server.configUpdated issues when keybindings file changes", async () => {
-    const baseDir = makeTempDir("t3code-state-keybindings-watch-");
+    const baseDir = makeTempDir("flow-state-keybindings-watch-");
     const { keybindingsConfigPath: keybindingsPath } = deriveServerPathsSync(baseDir, undefined);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(keybindingsPath, "[]", "utf8");
@@ -1076,7 +1076,7 @@ describe("WebSocket Server", () => {
   });
 
   it("reads keybindings from the configured state directory", async () => {
-    const baseDir = makeTempDir("t3code-state-keybindings-");
+    const baseDir = makeTempDir("flow-state-keybindings-");
     const { keybindingsConfigPath: keybindingsPath } = deriveServerPathsSync(baseDir, undefined);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(
@@ -1113,7 +1113,7 @@ describe("WebSocket Server", () => {
   });
 
   it("upserts keybinding rules and updates cached server config", async () => {
-    const baseDir = makeTempDir("t3code-state-upsert-keybinding-");
+    const baseDir = makeTempDir("flow-state-upsert-keybinding-");
     const { keybindingsConfigPath: keybindingsPath } = deriveServerPathsSync(baseDir, undefined);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(
@@ -1236,7 +1236,7 @@ describe("WebSocket Server", () => {
     const [ws] = await connectAndAwaitWelcome(port);
     connections.push(ws);
 
-    const workspaceRoot = makeTempDir("t3code-ws-diff-project-");
+    const workspaceRoot = makeTempDir("flow-ws-diff-project-");
     const createdAt = new Date().toISOString();
     const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
       type: "project.create",
@@ -1321,7 +1321,7 @@ describe("WebSocket Server", () => {
     const [ws] = await connectAndAwaitWelcome(port);
     connections.push(ws);
 
-    const workspaceRoot = makeTempDir("t3code-ws-project-");
+    const workspaceRoot = makeTempDir("flow-ws-project-");
     const createdAt = new Date().toISOString();
     const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
       type: "project.create",
@@ -1406,7 +1406,7 @@ describe("WebSocket Server", () => {
   });
 
   it("routes terminal RPC methods and broadcasts terminal events", async () => {
-    const cwd = makeTempDir("t3code-ws-terminal-cwd-");
+    const cwd = makeTempDir("flow-ws-terminal-cwd-");
     const terminalManager = new MockTerminalManager();
     server = await createTestServer({
       cwd: "/test",
@@ -1581,7 +1581,7 @@ describe("WebSocket Server", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(unhandledRejections).toHaveLength(0);
 
-      const workspace = makeTempDir("t3code-ws-handler-still-usable-");
+      const workspace = makeTempDir("flow-ws-handler-still-usable-");
       fs.writeFileSync(path.join(workspace, "file.txt"), "ok\n", "utf8");
       const response = await sendRequest(ws, WS_METHODS.projectsSearchEntries, {
         cwd: workspace,
@@ -1630,7 +1630,7 @@ describe("WebSocket Server", () => {
   });
 
   it("supports projects.searchEntries", async () => {
-    const workspace = makeTempDir("t3code-ws-workspace-entries-");
+    const workspace = makeTempDir("flow-ws-workspace-entries-");
     fs.mkdirSync(path.join(workspace, "src", "components"), { recursive: true });
     fs.writeFileSync(
       path.join(workspace, "src", "components", "Composer.tsx"),
@@ -1664,7 +1664,7 @@ describe("WebSocket Server", () => {
   });
 
   it("supports projects.writeFile within the workspace root", async () => {
-    const workspace = makeTempDir("t3code-ws-write-file-");
+    const workspace = makeTempDir("flow-ws-write-file-");
 
     server = await createTestServer({ cwd: "/test" });
     const addr = server.address();
@@ -1689,7 +1689,7 @@ describe("WebSocket Server", () => {
   });
 
   it("rejects projects.writeFile paths outside the workspace root", async () => {
-    const workspace = makeTempDir("t3code-ws-write-file-reject-");
+    const workspace = makeTempDir("flow-ws-write-file-reject-");
 
     server = await createTestServer({ cwd: "/test" });
     const addr = server.address();
@@ -1761,14 +1761,17 @@ describe("WebSocket Server", () => {
   });
 
   it("supports git.status over websocket", async () => {
+    const workingTree = {
+      files: [{ path: "src/index.ts", insertions: 7, deletions: 2 }],
+      insertions: 7,
+      deletions: 2,
+    };
     const statusResult = {
       branch: "feature/test",
       hasWorkingTreeChanges: true,
-      workingTree: {
-        files: [{ path: "src/index.ts", insertions: 7, deletions: 2 }],
-        insertions: 7,
-        deletions: 2,
-      },
+      workingTree,
+      staged: workingTree,
+      unstaged: { files: [], insertions: 0, deletions: 0 },
       hasUpstream: false,
       aheadCount: 0,
       behindCount: 0,
@@ -1777,10 +1780,12 @@ describe("WebSocket Server", () => {
 
     const status = vi.fn(() => Effect.succeed(statusResult));
     const runStackedAction = vi.fn(() => Effect.void as any);
+    const reviewDiff = vi.fn(() => Effect.succeed({ diff: "diff --git a/a b/a\n" }));
     const resolvePullRequest = vi.fn(() => Effect.void as any);
     const preparePullRequestThread = vi.fn(() => Effect.void as any);
     const gitManager: GitManagerShape = {
       status,
+      reviewDiff,
       resolvePullRequest,
       preparePullRequestThread,
       runStackedAction,
@@ -1799,6 +1804,37 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual(statusResult);
     expect(status).toHaveBeenCalledWith({ cwd: "/test" });
+  });
+
+  it("supports git.reviewDiff over websocket", async () => {
+    const reviewDiffResult = {
+      diff: "diff --git a/src/index.ts b/src/index.ts\n--- a/src/index.ts\n+++ b/src/index.ts\n",
+    };
+    const gitManager: GitManagerShape = {
+      status: vi.fn(() => Effect.void as any),
+      reviewDiff: vi.fn(() => Effect.succeed(reviewDiffResult)),
+      resolvePullRequest: vi.fn(() => Effect.void as any),
+      preparePullRequestThread: vi.fn(() => Effect.void as any),
+      runStackedAction: vi.fn(() => Effect.void as any),
+    };
+
+    server = await createTestServer({ cwd: "/test", gitManager });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.gitReviewDiff, {
+      cwd: "/test",
+      selection: "staged",
+    });
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual(reviewDiffResult);
+    expect(gitManager.reviewDiff).toHaveBeenCalledWith({
+      cwd: "/test",
+      selection: "staged",
+    });
   });
 
   it("supports git pull request routing over websocket", async () => {
@@ -1820,6 +1856,7 @@ describe("WebSocket Server", () => {
 
     const gitManager: GitManagerShape = {
       status: vi.fn(() => Effect.void as any),
+      reviewDiff: vi.fn(() => Effect.void as any),
       resolvePullRequest: vi.fn(() => Effect.succeed(resolvePullRequestResult)),
       preparePullRequestThread: vi.fn(() => Effect.succeed(preparePullRequestThreadResult)),
       runStackedAction: vi.fn(() => Effect.void as any),
@@ -1868,6 +1905,7 @@ describe("WebSocket Server", () => {
     );
     const gitManager: GitManagerShape = {
       status: vi.fn(() => Effect.void as any),
+      reviewDiff: vi.fn(() => Effect.void as any),
       resolvePullRequest: vi.fn(() => Effect.void as any),
       preparePullRequestThread: vi.fn(() => Effect.void as any),
       runStackedAction,
@@ -1934,6 +1972,7 @@ describe("WebSocket Server", () => {
     );
     const gitManager: GitManagerShape = {
       status: vi.fn(() => Effect.void as any),
+      reviewDiff: vi.fn(() => Effect.void as any),
       resolvePullRequest: vi.fn(() => Effect.void as any),
       preparePullRequestThread: vi.fn(() => Effect.void as any),
       runStackedAction,

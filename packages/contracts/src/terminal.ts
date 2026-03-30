@@ -3,6 +3,14 @@ import { TrimmedNonEmptyString } from "./baseSchemas";
 
 export const DEFAULT_TERMINAL_ID = "default";
 
+/**
+ * Sentinel threadId used for workspace-scoped terminals that are not tied to
+ * any specific thread. The existing terminal infrastructure (server PTY manager,
+ * WS protocol, push routing) keys sessions by `threadId + terminalId` so this
+ * constant lets us reuse everything without protocol changes.
+ */
+export const WORKSPACE_TERMINAL_OWNER_ID = "__workspace__";
+
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(20)).check(
   Schema.isLessThanOrEqualTo(400),

@@ -12,6 +12,8 @@ import type {
   GitListBranchesResult,
   GitPullInput,
   GitPullResult,
+  GitReviewDiffInput,
+  GitReviewDiffResult,
   GitRemoveWorktreeInput,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
@@ -184,6 +186,7 @@ export interface NativeApi {
     // Stacked action API
     pull: (input: GitPullInput) => Promise<GitPullResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
+    reviewDiff: (input: GitReviewDiffInput) => Promise<GitReviewDiffResult>;
     runStackedAction: (input: GitRunStackedActionInput) => Promise<GitRunStackedActionResult>;
     onActionProgress: (callback: (event: GitActionProgressEvent) => void) => () => void;
   };
