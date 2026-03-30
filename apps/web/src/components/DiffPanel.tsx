@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@t3tools/contracts";
 import {
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   Columns2Icon,
@@ -44,7 +45,11 @@ import {
   type DiffCommentSide,
 } from "../lib/diffCommentContext";
 import { randomUUID } from "../lib/utils";
-import { resolveTurnChipLabel } from "./DiffPanel.logic";
+import {
+  expandCollapsedFileKey,
+  resolveTurnChipLabel,
+  toggleCollapsedFileKey,
+} from "./DiffPanel.logic";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
@@ -280,6 +285,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const settings = useSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
+  const [collapsedFileKeys, setCollapsedFileKeys] = useState<ReadonlySet<string>>(new Set());
   const [selectedRangesByFileKey, setSelectedRangesByFileKey] = useState<
     Record<string, SelectedLineRange | null>
   >({});
@@ -443,6 +449,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     );
   }, [renderablePatch]);
+  const fileKeyByPath = useMemo(
+    () =>
+      new Map(
+        renderableFiles.map((fileDiff) => [
+          resolveFileDiffPath(fileDiff),
+          buildFileDiffRenderKey(fileDiff),
+        ]),
+      ),
+    [renderableFiles],
+  );
 
   useEffect(() => {
     if (diffOpen && !previousDiffOpenRef.current) {
@@ -450,6 +466,13 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     }
     previousDiffOpenRef.current = diffOpen;
   }, [diffOpen, settings.diffWordWrap]);
+
+  useEffect(() => {
+    const selectedFileKey = selectedFilePath ? (fileKeyByPath.get(selectedFilePath) ?? null) : null;
+    setCollapsedFileKeys((currentCollapsedFileKeys) =>
+      expandCollapsedFileKey(currentCollapsedFileKeys, selectedFileKey),
+    );
+  }, [fileKeyByPath, selectedFilePath]);
 
   useEffect(() => {
     if (!selectedFilePath || !patchViewportRef.current) {
@@ -496,6 +519,23 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     setActiveCommentBody("");
   }, []);
 
+  const toggleFileCollapsed = useCallback(
+    (fileKey: string) => {
+      setCollapsedFileKeys((currentCollapsedFileKeys) =>
+        toggleCollapsedFileKey(currentCollapsedFileKeys, fileKey),
+      );
+      setSelectedRangesByFileKey((currentRanges) => ({
+        ...currentRanges,
+        [fileKey]: null,
+      }));
+      if (activeCommentSelection?.fileKey === fileKey) {
+        setActiveCommentSelection(null);
+        setActiveCommentBody("");
+      }
+    },
+    [activeCommentSelection?.fileKey],
+  );
+
   const addSelectedCommentToDraft = useCallback(() => {
     if (!activeThreadId || !activeCommentSelection) {
       return;
@@ -525,10 +565,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   ]);
 
   useEffect(() => {
+    setCollapsedFileKeys(new Set());
     setSelectedRangesByFileKey({});
     setActiveCommentSelection(null);
     setActiveCommentBody("");
-  }, [selectedDiffSelection, selectedTurnId, renderablePatch]);
+  }, [selectedDiffSelection, selectedTurnId, selectedPatch]);
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
@@ -840,6 +881,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                       const filePath = resolveFileDiffPath(fileDiff);
                       const fileKey = buildFileDiffRenderKey(fileDiff);
                       const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                      const isFileCollapsed = collapsedFileKeys.has(fileKey);
                       const selectedRange = selectedRangesByFileKey[fileKey] ?? null;
                       const isCommentComposerOpen = activeCommentSelection?.fileKey === fileKey;
                       return (
@@ -875,6 +917,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                                 : []
                             }
                             options={{
+                              collapsed: isFileCollapsed,
                               diffStyle: diffRenderMode === "split" ? "split" : "unified",
                               lineDiffType: "none",
                               enableGutterUtility: true,
@@ -899,6 +942,29 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                               },
                             }}
                             selectedLines={selectedRange}
+                            renderHeaderPrefix={() => (
+                              <button
+                                type="button"
+                                className={cn(
+                                  "mr-1 inline-flex size-5 items-center justify-center rounded-sm border border-transparent text-muted-foreground/70 transition-colors",
+                                  "hover:border-border/70 hover:bg-background/70 hover:text-foreground",
+                                )}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  toggleFileCollapsed(fileKey);
+                                }}
+                                aria-label={`${isFileCollapsed ? "Expand" : "Collapse"} ${filePath}`}
+                                title={isFileCollapsed ? "Expand file diff" : "Collapse file diff"}
+                              >
+                                <ChevronDownIcon
+                                  className={cn(
+                                    "size-3.5 transition-transform",
+                                    isFileCollapsed ? "-rotate-90" : "rotate-0",
+                                  )}
+                                />
+                              </button>
+                            )}
                             renderAnnotation={(annotation) => {
                               if (annotation.metadata?.kind !== "draft-form") {
                                 return null;

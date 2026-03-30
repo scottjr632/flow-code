@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { TurnId } from "@t3tools/contracts";
-import { resolveTurnChipLabel } from "./DiffPanel.logic";
+import {
+  expandCollapsedFileKey,
+  resolveTurnChipLabel,
+  toggleCollapsedFileKey,
+} from "./DiffPanel.logic";
 import type { TurnDiffSummary } from "../types";
 
 function makeTurnDiffSummary(
@@ -42,5 +46,32 @@ describe("resolveTurnChipLabel", () => {
         [turnId]: 3,
       }),
     ).toBe("Turn 3");
+  });
+});
+
+describe("toggleCollapsedFileKey", () => {
+  it("adds a file when it is expanded", () => {
+    expect(toggleCollapsedFileKey(new Set<string>(), "src/app.tsx")).toEqual(
+      new Set(["src/app.tsx"]),
+    );
+  });
+
+  it("removes a file when it is already collapsed", () => {
+    expect(toggleCollapsedFileKey(new Set(["src/app.tsx"]), "src/app.tsx")).toEqual(new Set());
+  });
+});
+
+describe("expandCollapsedFileKey", () => {
+  it("removes the matching file from the collapsed set", () => {
+    expect(expandCollapsedFileKey(new Set(["src/a.ts", "src/b.ts"]), "src/a.ts")).toEqual(
+      new Set(["src/b.ts"]),
+    );
+  });
+
+  it("returns the same set when no expansion is needed", () => {
+    const collapsedFileKeys = new Set(["src/a.ts"]);
+
+    expect(expandCollapsedFileKey(collapsedFileKeys, "src/b.ts")).toBe(collapsedFileKeys);
+    expect(expandCollapsedFileKey(collapsedFileKeys, null)).toBe(collapsedFileKeys);
   });
 });
