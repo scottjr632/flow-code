@@ -686,6 +686,7 @@ export const makeGitManager = Effect.gen(function* () {
     /** When true, also produce a semantic feature branch name. */
     includeBranch?: boolean;
     filePaths?: readonly string[];
+    gitBranchNamePrefix?: string;
     modelSelection: ModelSelection;
   }) =>
     Effect.gen(function* () {
@@ -700,7 +701,9 @@ export const makeGitManager = Effect.gen(function* () {
           subject: customCommit.subject,
           body: customCommit.body,
           ...(input.includeBranch
-            ? { branch: sanitizeFeatureBranchName(customCommit.subject) }
+            ? {
+                branch: sanitizeFeatureBranchName(customCommit.subject, input.gitBranchNamePrefix),
+              }
             : {}),
           commitMessage: formatCommitMessage(customCommit.subject, customCommit.body),
         };
@@ -720,7 +723,9 @@ export const makeGitManager = Effect.gen(function* () {
       return {
         subject: generated.subject,
         body: generated.body,
-        ...(generated.branch !== undefined ? { branch: generated.branch } : {}),
+        ...(generated.branch !== undefined
+          ? { branch: sanitizeFeatureBranchName(generated.branch, input.gitBranchNamePrefix) }
+          : {}),
         commitMessage: formatCommitMessage(generated.subject, generated.body),
       };
     });
@@ -1105,6 +1110,7 @@ export const makeGitManager = Effect.gen(function* () {
 
   const runFeatureBranchStep = (
     modelSelection: ModelSelection,
+    gitBranchNamePrefix: string,
     cwd: string,
     branch: string | null,
     commitMessage?: string,
@@ -1117,6 +1123,7 @@ export const makeGitManager = Effect.gen(function* () {
         ...(commitMessage ? { commitMessage } : {}),
         ...(filePaths ? { filePaths } : {}),
         includeBranch: true,
+        gitBranchNamePrefix,
         modelSelection,
       });
       if (!suggestion) {
@@ -1126,9 +1133,14 @@ export const makeGitManager = Effect.gen(function* () {
         );
       }
 
-      const preferredBranch = suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject);
+      const preferredBranch =
+        suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject, gitBranchNamePrefix);
       const existingBranchNames = yield* gitCore.listLocalBranchNames(cwd);
-      const resolvedBranch = resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
+      const resolvedBranch = resolveAutoFeatureBranchName(
+        existingBranchNames,
+        preferredBranch,
+        gitBranchNamePrefix,
+      );
 
       yield* gitCore.createBranch({ cwd, branch: resolvedBranch });
       yield* Effect.scoped(gitCore.checkoutBranch({ cwd, branch: resolvedBranch }));
@@ -1175,12 +1187,12 @@ export const makeGitManager = Effect.gen(function* () {
         let commitMessageForStep = input.commitMessage;
         let preResolvedCommitSuggestion: CommitAndBranchSuggestion | undefined = undefined;
 
-        const modelSelection = yield* serverSettingsService.getSettings.pipe(
-          Effect.map((settings) => settings.textGenerationModelSelection),
+        const serverSettings = yield* serverSettingsService.getSettings.pipe(
           Effect.mapError((cause) =>
             gitManagerError("runStackedAction", "Failed to get server settings.", cause),
           ),
         );
+        const modelSelection = serverSettings.textGenerationModelSelection;
 
         if (input.featureBranch) {
           currentPhase = "branch";
@@ -1191,6 +1203,7 @@ export const makeGitManager = Effect.gen(function* () {
           });
           const result = yield* runFeatureBranchStep(
             modelSelection,
+            serverSettings.gitBranchNamePrefix,
             input.cwd,
             initialStatus.branch,
             input.commitMessage,

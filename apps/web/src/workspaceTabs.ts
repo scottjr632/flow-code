@@ -1,3 +1,4 @@
+import { type ProviderKind } from "@t3tools/contracts";
 import {
   DiffIcon,
   FileCode2Icon,
@@ -6,7 +7,10 @@ import {
   TerminalSquareIcon,
   type LucideIcon,
 } from "lucide-react";
+import { getProviderIcon } from "./providerIcons";
+import { resolveTerminalGroupTitle } from "./terminalLabels";
 import { type ThreadTerminalGroup } from "./types";
+import { type Icon } from "./components/Icons";
 
 export type WorkspaceTabId = string;
 export const DEFAULT_CHAT_WORKSPACE_TAB_ID = "chat" as const;
@@ -41,48 +45,44 @@ export function isFileWorkspaceTabId(tabId: WorkspaceTabId): boolean {
   return tabId.startsWith("file:");
 }
 
-function terminalTabTitle(groupIndex: number, splitCount: number, groupCount: number): string {
-  const baseTitle = groupCount <= 1 ? "Terminal" : `Terminal ${groupIndex + 1}`;
-  return splitCount > 1 ? `${baseTitle} (${splitCount})` : baseTitle;
-}
-
 export type WorkspaceTab =
   | {
       id: typeof DEFAULT_CHAT_WORKSPACE_TAB_ID;
       kind: "chat";
       title: string;
       closeable: false;
-      icon: LucideIcon;
+      icon: LucideIcon | Icon;
     }
   | {
       id: WorkspaceTabId;
       kind: "session";
       title: string;
       closeable: false;
-      icon: LucideIcon;
+      icon: LucideIcon | Icon;
       threadId: string;
       isDraft: boolean;
+      provider: ProviderKind;
     }
   | {
       id: "diff";
       kind: "diff";
       title: string;
       closeable: boolean;
-      icon: LucideIcon;
+      icon: LucideIcon | Icon;
     }
   | {
       id: "files";
       kind: "files";
       title: string;
       closeable: boolean;
-      icon: LucideIcon;
+      icon: LucideIcon | Icon;
     }
   | {
       id: WorkspaceTabId;
       kind: "file";
       title: string;
       closeable: true;
-      icon: LucideIcon;
+      icon: LucideIcon | Icon;
       relativePath: string;
       dirty: boolean;
     }
@@ -91,7 +91,7 @@ export type WorkspaceTab =
       kind: "terminal";
       title: string;
       closeable: true;
-      icon: LucideIcon;
+      icon: LucideIcon | Icon;
       terminalGroupId: string;
       terminalIds: string[];
       primaryTerminalId: string;
@@ -106,15 +106,18 @@ function resolveSessionTabTitle(input: { isDraft: boolean; title: string }): str
 }
 
 export function buildWorkspaceTabs(input: {
+  chatProvider?: ProviderKind | null;
   sessionTabs?: ReadonlyArray<{
     threadId: string;
     title: string;
     isDraft: boolean;
+    provider: ProviderKind;
   }>;
   diffOpen?: boolean;
   fileTabs?: readonly WorkspaceFileTabState[];
   terminalOpen: boolean;
   terminalGroups: readonly ThreadTerminalGroup[];
+  terminalNamesById?: Readonly<Record<string, string>>;
   runningTerminalIds?: readonly string[];
 }): WorkspaceTab[] {
   const tabs: WorkspaceTab[] =
@@ -124,9 +127,10 @@ export function buildWorkspaceTabs(input: {
           kind: "session",
           title: resolveSessionTabTitle(tab),
           closeable: false,
-          icon: MessageSquareTextIcon,
+          icon: getProviderIcon(tab.provider),
           threadId: tab.threadId,
           isDraft: tab.isDraft,
+          provider: tab.provider,
         }))
       : [
           {
@@ -134,7 +138,7 @@ export function buildWorkspaceTabs(input: {
             kind: "chat",
             title: "Chat",
             closeable: false,
-            icon: MessageSquareTextIcon,
+            icon: input.chatProvider ? getProviderIcon(input.chatProvider) : MessageSquareTextIcon,
           },
         ];
 
@@ -170,6 +174,9 @@ export function buildWorkspaceTabs(input: {
     const normalizedTerminalGroups = input.terminalGroups.filter(
       (group) => group.terminalIds.length > 0,
     );
+    const allTerminalIds = normalizedTerminalGroups.flatMap(
+      (terminalGroup) => terminalGroup.terminalIds,
+    );
     const runningSet = new Set(input.runningTerminalIds ?? []);
     normalizedTerminalGroups.forEach((group, groupIndex) => {
       const primaryTerminalId = group.terminalIds[0];
@@ -179,11 +186,13 @@ export function buildWorkspaceTabs(input: {
       tabs.push({
         id: buildTerminalWorkspaceTabId(group.id),
         kind: "terminal",
-        title: terminalTabTitle(
+        title: resolveTerminalGroupTitle({
           groupIndex,
-          group.terminalIds.length,
-          normalizedTerminalGroups.length,
-        ),
+          terminalIds: group.terminalIds,
+          allTerminalIds,
+          ...(input.terminalNamesById ? { terminalNamesById: input.terminalNamesById } : {}),
+          groupCount: normalizedTerminalGroups.length,
+        }),
         closeable: true,
         icon: TerminalSquareIcon,
         terminalGroupId: group.id,
@@ -205,6 +214,26 @@ export function resolveWorkspaceTabId(
     return preferredTabId;
   }
   return tabs[0]?.id ?? DEFAULT_CHAT_WORKSPACE_TAB_ID;
+}
+
+export function getAdjacentWorkspaceTabId(input: {
+  activeTabId: WorkspaceTabId | null;
+  tabs: readonly WorkspaceTab[];
+  direction: "previous" | "next";
+}): WorkspaceTabId | null {
+  const { tabs, direction } = input;
+  if (tabs.length === 0) {
+    return null;
+  }
+
+  const resolvedActiveTabId = resolveWorkspaceTabId(input.activeTabId, tabs);
+  const activeIndex = tabs.findIndex((tab) => tab.id === resolvedActiveTabId);
+  if (activeIndex === -1) {
+    return tabs[0]?.id ?? null;
+  }
+
+  const delta = direction === "previous" ? -1 : 1;
+  return tabs[(activeIndex + delta + tabs.length) % tabs.length]?.id ?? null;
 }
 
 export function sortWorkspaceTabsByOrder(

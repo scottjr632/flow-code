@@ -12,7 +12,7 @@ import {
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
-import { useMemo, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useMemo, useState } from "react";
 import {
   DiffIcon,
   FolderTreeIcon,
@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "~/lib/utils";
+import { providerIconClassName } from "~/providerIcons";
 import { type WorkspaceTab, type WorkspaceTabId } from "~/workspaceTabs";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 
@@ -30,6 +31,10 @@ interface WorkspaceTabBarProps {
   tabs: readonly WorkspaceTab[];
   activeTabId: WorkspaceTabId;
   onSelectTab: (tabId: WorkspaceTabId) => void;
+  onOpenTabContextMenu?: (
+    tab: WorkspaceTab,
+    position: { x: number; y: number },
+  ) => void | Promise<void>;
   onReorderTab: (draggedTabId: WorkspaceTabId, targetTabId: WorkspaceTabId) => void;
   onCloseTab: (tabId: WorkspaceTabId) => void;
   canCreateSession: boolean;
@@ -46,6 +51,7 @@ export function WorkspaceTabBar({
   tabs,
   activeTabId,
   onSelectTab,
+  onOpenTabContextMenu,
   onReorderTab,
   onCloseTab,
   canCreateSession,
@@ -109,6 +115,7 @@ export function WorkspaceTabBar({
                   tab={tab}
                   isActive={tab.id === activeTabId}
                   onSelectTab={onSelectTab}
+                  {...(onOpenTabContextMenu ? { onOpenTabContextMenu } : {})}
                   onCloseTab={onCloseTab}
                 />
               ))}
@@ -161,11 +168,16 @@ function SortableWorkspaceTab({
   tab,
   isActive,
   onSelectTab,
+  onOpenTabContextMenu,
   onCloseTab,
 }: {
   tab: WorkspaceTab;
   isActive: boolean;
   onSelectTab: (tabId: WorkspaceTabId) => void;
+  onOpenTabContextMenu?: (
+    tab: WorkspaceTab,
+    position: { x: number; y: number },
+  ) => void | Promise<void>;
   onCloseTab: (tabId: WorkspaceTabId) => void;
 }) {
   const {
@@ -180,6 +192,15 @@ function SortableWorkspaceTab({
   });
   const Icon = tab.icon;
   const hasRunningProcess = tab.kind === "terminal" && tab.hasRunningProcess;
+  const providerIconClass =
+    tab.kind === "session" ? providerIconClassName(tab.provider, "text-current") : null;
+  const handleContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!onOpenTabContextMenu) {
+      return;
+    }
+    event.preventDefault();
+    void onOpenTabContextMenu(tab, { x: event.clientX, y: event.clientY });
+  };
 
   return (
     <div
@@ -188,6 +209,7 @@ function SortableWorkspaceTab({
         transform: CSS.Transform.toString(transform),
         transition,
       }}
+      onContextMenu={handleContextMenu}
       className={cn(
         "group -mb-px inline-flex shrink-0 items-center gap-1 rounded-t-md border px-2 py-1.5 text-[11px] transition-[border-color,background-color,color,box-shadow]",
         isActive
@@ -207,6 +229,7 @@ function SortableWorkspaceTab({
         <Icon
           className={cn(
             "size-3.5 shrink-0",
+            providerIconClass,
             hasRunningProcess && "animate-pulse text-teal-600 dark:text-teal-300/90",
           )}
         />
@@ -232,6 +255,8 @@ function SortableWorkspaceTab({
 
 function WorkspaceTabGhost({ tab, isActive }: { tab: WorkspaceTab; isActive: boolean }) {
   const Icon = tab.icon;
+  const providerIconClass =
+    tab.kind === "session" ? providerIconClassName(tab.provider, "text-current") : null;
 
   return (
     <div
@@ -242,7 +267,7 @@ function WorkspaceTabGhost({ tab, isActive }: { tab: WorkspaceTab; isActive: boo
           : "border-border/60 bg-background text-foreground",
       )}
     >
-      <Icon className="size-3.5 shrink-0" />
+      <Icon className={cn("size-3.5 shrink-0", providerIconClass)} />
       <span className="truncate">{tab.title}</span>
       {tab.closeable ? <XIcon className="size-2.75 shrink-0 text-muted-foreground/70" /> : null}
     </div>

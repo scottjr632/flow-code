@@ -468,6 +468,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
+      ...(settings.gitBranchNamePrefix !== DEFAULT_UNIFIED_SETTINGS.gitBranchNamePrefix
+        ? ["Branch name prefix"]
+        : []),
       ...(settings.turnReviewVcs !== DEFAULT_UNIFIED_SETTINGS.turnReviewVcs
         ? ["Turn review VCS"]
         : []),
@@ -494,6 +497,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.gitBranchNamePrefix,
       settings.timestampFormat,
       settings.turnReviewVcs,
       theme,
@@ -843,6 +847,33 @@ export function GeneralSettingsPanel() {
               checked={settings.diffWordWrap}
               onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
               aria-label="Wrap diff lines by default"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Branch name prefix"
+          description="Used when T3 Code auto-creates Git feature branches. Slash namespaces like team/feature are supported."
+          resetAction={
+            settings.gitBranchNamePrefix !== DEFAULT_UNIFIED_SETTINGS.gitBranchNamePrefix ? (
+              <SettingResetButton
+                label="branch name prefix"
+                onClick={() =>
+                  updateSettings({
+                    gitBranchNamePrefix: DEFAULT_UNIFIED_SETTINGS.gitBranchNamePrefix,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Input
+              className="w-full sm:w-52"
+              value={settings.gitBranchNamePrefix}
+              onChange={(event) => updateSettings({ gitBranchNamePrefix: event.target.value })}
+              placeholder={DEFAULT_UNIFIED_SETTINGS.gitBranchNamePrefix}
+              spellCheck={false}
+              aria-label="Git branch name prefix"
             />
           }
         />

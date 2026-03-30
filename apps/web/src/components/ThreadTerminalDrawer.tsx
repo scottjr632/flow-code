@@ -31,10 +31,12 @@ import {
   dispatchWorkspaceCommandPaletteOpen,
   isWorkspaceCommandPaletteShortcut,
 } from "../workspaceCommandPaletteShortcuts";
+import { buildTerminalLabelById, DEFAULT_TERMINAL_LABEL } from "../terminalLabels";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
+const TERMINAL_WRITE_BATCH_DELAY_MS = 8;
 
 function maxDrawerHeight(): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
@@ -241,6 +243,8 @@ function TerminalViewport({
     if (!mount) return;
 
     let disposed = false;
+    let pendingWriteBuffer = "";
+    let pendingWriteTimer: number | null = null;
 
     const fitAddon = new FitAddon();
     const terminal = new Terminal({
@@ -260,6 +264,38 @@ function TerminalViewport({
 
     const api = readNativeApi();
     if (!api) return;
+
+    const flushPendingWrites = () => {
+      if (pendingWriteTimer !== null) {
+        window.clearTimeout(pendingWriteTimer);
+        pendingWriteTimer = null;
+      }
+      if (pendingWriteBuffer.length === 0) {
+        return;
+      }
+      const activeTerminal = terminalRef.current;
+      if (!activeTerminal) {
+        pendingWriteBuffer = "";
+        return;
+      }
+      const chunk = pendingWriteBuffer;
+      pendingWriteBuffer = "";
+      activeTerminal.write(chunk);
+    };
+
+    const enqueueTerminalWrite = (chunk: string) => {
+      if (chunk.length === 0) {
+        return;
+      }
+      pendingWriteBuffer += chunk;
+      if (pendingWriteTimer !== null) {
+        return;
+      }
+      pendingWriteTimer = window.setTimeout(() => {
+        pendingWriteTimer = null;
+        flushPendingWrites();
+      }, TERMINAL_WRITE_BATCH_DELAY_MS);
+    };
 
     const clearSelectionAction = () => {
       selectionActionRequestIdRef.current += 1;
@@ -495,9 +531,10 @@ function TerminalViewport({
           ...(runtimeEnv ? { env: runtimeEnv } : {}),
         });
         if (disposed) return;
+        flushPendingWrites();
         activeTerminal.write("\u001bc");
         if (snapshot.history.length > 0) {
-          activeTerminal.write(snapshot.history);
+          enqueueTerminalWrite(snapshot.history);
         }
         if (autoFocus) {
           window.requestAnimationFrame(() => {
@@ -519,7 +556,7 @@ function TerminalViewport({
       if (!activeTerminal) return;
 
       if (event.type === "output") {
-        activeTerminal.write(event.data);
+        enqueueTerminalWrite(event.data);
         clearSelectionAction();
         return;
       }
@@ -527,15 +564,17 @@ function TerminalViewport({
       if (event.type === "started" || event.type === "restarted") {
         hasHandledExitRef.current = false;
         clearSelectionAction();
+        flushPendingWrites();
         activeTerminal.write("\u001bc");
         if (event.snapshot.history.length > 0) {
-          activeTerminal.write(event.snapshot.history);
+          enqueueTerminalWrite(event.snapshot.history);
         }
         return;
       }
 
       if (event.type === "cleared") {
         clearSelectionAction();
+        flushPendingWrites();
         activeTerminal.clear();
         activeTerminal.write("\u001bc");
         return;
@@ -598,6 +637,7 @@ function TerminalViewport({
       inputDisposable.dispose();
       selectionDisposable.dispose();
       terminalLinksDisposable.dispose();
+      flushPendingWrites();
       if (selectionActionTimerRef.current !== null) {
         window.clearTimeout(selectionActionTimerRef.current);
       }
@@ -660,6 +700,7 @@ interface ThreadTerminalDrawerProps {
   runtimeEnv?: Record<string, string>;
   height?: number;
   terminalIds: string[];
+  terminalNamesById: Readonly<Record<string, string>>;
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
@@ -711,6 +752,7 @@ export default function ThreadTerminalDrawer({
   runtimeEnv,
   height = DEFAULT_THREAD_TERMINAL_HEIGHT,
   terminalIds,
+  terminalNamesById,
   activeTerminalId,
   terminalGroups,
   activeTerminalGroupId,
@@ -831,17 +873,18 @@ export default function ThreadTerminalDrawer({
     : normalizedTerminalIds;
   const hasTerminalSidebar = isDrawer && normalizedTerminalIds.length > 1;
   const isSplitView = visibleTerminalIds.length > 1;
+  const showFloatingActions = !hasTerminalSidebar && isDrawer;
+  const showPanelActionBar = !hasTerminalSidebar && !isDrawer;
   const showGroupHeaders =
     resolvedTerminalGroups.length > 1 ||
     resolvedTerminalGroups.some((terminalGroup) => terminalGroup.terminalIds.length > 1);
   const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
   const terminalLabelById = useMemo(
-    () =>
-      new Map(
-        normalizedTerminalIds.map((terminalId, index) => [terminalId, `Terminal ${index + 1}`]),
-      ),
-    [normalizedTerminalIds],
+    () => buildTerminalLabelById(normalizedTerminalIds, terminalNamesById),
+    [normalizedTerminalIds, terminalNamesById],
   );
+  const resolvedActiveTerminalLabel =
+    terminalLabelById.get(resolvedActiveTerminalId) ?? DEFAULT_TERMINAL_LABEL;
   const splitTerminalActionLabel = hasReachedSplitLimit
     ? `Split Terminal (max ${MAX_TERMINALS_PER_GROUP} per group)`
     : splitShortcutLabel
@@ -1019,7 +1062,7 @@ export default function ThreadTerminalDrawer({
         />
       ) : null}
 
-      {!hasTerminalSidebar && (
+      {showFloatingActions && (
         <div
           className={`pointer-events-none z-20 ${
             isDrawer ? "absolute right-2 top-2" : "absolute right-2 top-2"
@@ -1057,12 +1100,46 @@ export default function ThreadTerminalDrawer({
         </div>
       )}
 
-      <div className="min-h-0 w-full flex-1">
-        <div
-          className={`flex h-full min-h-0 ${hasTerminalSidebar ? "gap-1.5" : ""} ${
-            isDrawer ? "" : hasTerminalSidebar ? "p-1" : "p-1 pt-8"
-          }`}
-        >
+      <div className="flex min-h-0 w-full flex-1 flex-col">
+        {showPanelActionBar && (
+          <div className="flex h-8 items-center justify-between gap-2 border-b border-border/80 bg-background/95 px-2">
+            <div className="min-w-0">
+              <span className="block max-w-40 truncate px-2 py-1 text-[11px] font-medium text-foreground">
+                {resolvedActiveTerminalLabel}
+              </span>
+            </div>
+            <div className="inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/80">
+              <TerminalActionButton
+                className={`p-1 text-foreground/90 transition-colors ${
+                  hasReachedSplitLimit
+                    ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                    : "hover:bg-accent"
+                }`}
+                onClick={onSplitTerminalAction}
+                label={splitTerminalActionLabel}
+              >
+                <SquareSplitHorizontal className="size-3.25" />
+              </TerminalActionButton>
+              <div className="h-4 w-px bg-border/80" />
+              <TerminalActionButton
+                className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+                onClick={onNewTerminalAction}
+                label={newTerminalActionLabel}
+              >
+                <Plus className="size-3.25" />
+              </TerminalActionButton>
+              <div className="h-4 w-px bg-border/80" />
+              <TerminalActionButton
+                className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+                onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
+                label={closeTerminalActionLabel}
+              >
+                <Trash2 className="size-3.25" />
+              </TerminalActionButton>
+            </div>
+          </div>
+        )}
+        <div className={`flex min-h-0 flex-1 ${hasTerminalSidebar ? "gap-1.5" : ""}`}>
           <div className="min-w-0 flex-1">
             {isSplitView ? (
               <div
@@ -1083,11 +1160,11 @@ export default function ThreadTerminalDrawer({
                       }
                     }}
                   >
-                    <div className="h-full p-0.5">
+                    <div className="h-full">
                       <TerminalViewport
                         threadId={threadId}
                         terminalId={terminalId}
-                        terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
+                        terminalLabel={terminalLabelById.get(terminalId) ?? DEFAULT_TERMINAL_LABEL}
                         cwd={cwd}
                         {...(runtimeEnv ? { runtimeEnv } : {})}
                         onSessionExited={() => onCloseTerminal(terminalId)}
@@ -1102,12 +1179,14 @@ export default function ThreadTerminalDrawer({
                 ))}
               </div>
             ) : (
-              <div className="h-full p-0.5">
+              <div className="h-full">
                 <TerminalViewport
                   key={resolvedActiveTerminalId}
                   threadId={threadId}
                   terminalId={resolvedActiveTerminalId}
-                  terminalLabel={terminalLabelById.get(resolvedActiveTerminalId) ?? "Terminal"}
+                  terminalLabel={
+                    terminalLabelById.get(resolvedActiveTerminalId) ?? DEFAULT_TERMINAL_LABEL
+                  }
                   cwd={cwd}
                   {...(runtimeEnv ? { runtimeEnv } : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
@@ -1185,7 +1264,8 @@ export default function ThreadTerminalDrawer({
                         {terminalGroup.terminalIds.map((terminalId) => {
                           const isActive = terminalId === resolvedActiveTerminalId;
                           const closeTerminalLabel = `Close ${
-                            terminalLabelById.get(terminalId) ?? "terminal"
+                            terminalLabelById.get(terminalId) ??
+                            DEFAULT_TERMINAL_LABEL.toLowerCase()
                           }${isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
                           return (
                             <div
@@ -1206,7 +1286,7 @@ export default function ThreadTerminalDrawer({
                               >
                                 <TerminalSquare className="size-3 shrink-0" />
                                 <span className="truncate">
-                                  {terminalLabelById.get(terminalId) ?? "Terminal"}
+                                  {terminalLabelById.get(terminalId) ?? DEFAULT_TERMINAL_LABEL}
                                 </span>
                               </button>
                               {normalizedTerminalIds.length > 1 && (

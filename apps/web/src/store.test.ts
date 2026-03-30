@@ -5,7 +5,7 @@ import {
   TurnId,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   markThreadUnread,
@@ -16,6 +16,64 @@ import {
   type AppState,
 } from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
+
+const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
+
+type MockStorage = {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+  clear: () => void;
+};
+
+type MockWindow = {
+  localStorage: MockStorage;
+  addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
+  removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
+  dispatch: (type: string) => void;
+};
+
+function createMockStorage(seed: Record<string, string> = {}): MockStorage {
+  const entries = new Map(Object.entries(seed));
+  return {
+    getItem: (key) => entries.get(key) ?? null,
+    setItem: (key, value) => {
+      entries.set(key, value);
+    },
+    removeItem: (key) => {
+      entries.delete(key);
+    },
+    clear: () => {
+      entries.clear();
+    },
+  };
+}
+
+function createMockWindow(seed: Record<string, string> = {}): MockWindow {
+  const localStorage = createMockStorage(seed);
+  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+
+  return {
+    localStorage,
+    addEventListener: (type, listener) => {
+      const handlers = listeners.get(type) ?? new Set<EventListenerOrEventListenerObject>();
+      handlers.add(listener);
+      listeners.set(type, handlers);
+    },
+    removeEventListener: (type, listener) => {
+      listeners.get(type)?.delete(listener);
+    },
+    dispatch: (type) => {
+      for (const listener of listeners.get(type) ?? []) {
+        if (typeof listener === "function") {
+          listener(new Event(type));
+        } else {
+          listener.handleEvent(new Event(type));
+        }
+      }
+    },
+  };
+}
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -458,5 +516,79 @@ describe("store read model sync", () => {
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
+  });
+});
+
+describe("store persisted visit state", () => {
+  it("restores lastVisitedAt from persisted sidebar state on a cold start", async () => {
+    vi.resetModules();
+    const mockWindow = createMockWindow({
+      [PERSISTED_STATE_KEY]: JSON.stringify({
+        expandedProjectCwds: [],
+        projectOrderCwds: [],
+        threadMruIds: [],
+        threadLastVisitedAtById: {
+          "thread-1": "2026-02-27T00:09:00.000Z",
+        },
+      }),
+    });
+    vi.stubGlobal("window", mockWindow);
+
+    try {
+      const { syncServerReadModel: syncColdStartReadModel } = await import("./store");
+      const next = syncColdStartReadModel(
+        {
+          projects: [],
+          workspaces: [],
+          threads: [],
+          threadsHydrated: false,
+          threadMruIds: [],
+        },
+        makeReadModel(
+          makeReadModelThread({
+            id: ThreadId.makeUnsafe("thread-1"),
+            updatedAt: "2026-02-27T00:10:00.000Z",
+          }),
+        ),
+      );
+
+      expect(next.threads[0]?.lastVisitedAt).toBe("2026-02-27T00:09:00.000Z");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+
+  it("writes lastVisitedAt back to persisted sidebar state", async () => {
+    vi.resetModules();
+    const mockWindow = createMockWindow();
+    vi.stubGlobal("window", mockWindow);
+
+    try {
+      const { useStore: isolatedStore } = await import("./store");
+      isolatedStore.getState().syncServerReadModel(
+        makeReadModel(
+          makeReadModelThread({
+            id: ThreadId.makeUnsafe("thread-1"),
+          }),
+        ),
+      );
+      isolatedStore
+        .getState()
+        .markThreadVisited(ThreadId.makeUnsafe("thread-1"), "2026-02-27T00:12:00.000Z");
+
+      mockWindow.dispatch("beforeunload");
+
+      expect(
+        JSON.parse(mockWindow.localStorage.getItem(PERSISTED_STATE_KEY) ?? "{}"),
+      ).toMatchObject({
+        threadLastVisitedAtById: {
+          "thread-1": "2026-02-27T00:12:00.000Z",
+        },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
   });
 });

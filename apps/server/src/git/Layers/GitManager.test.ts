@@ -504,6 +504,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
+  serverSettings?: { gitBranchNamePrefix?: string };
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -511,7 +512,7 @@ function makeManager(input?: {
     prefix: "t3-git-manager-test-",
   });
 
-  const serverSettingsLayer = ServerSettingsService.layerTest();
+  const serverSettingsLayer = ServerSettingsService.layerTest(input?.serverSettings ?? {});
 
   const gitCoreLayer = GitCoreLive.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -924,6 +925,42 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         Effect.map((r) => r.stdout.trim()),
       );
       expect(mergeBase).toBe(mainSha);
+    }),
+  );
+
+  it.effect("featureBranch respects the configured branch prefix", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\ncustom-prefix\n");
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          gitBranchNamePrefix: "team/feature",
+        },
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.succeed({
+              subject: "Refine toolbar actions",
+              body: "",
+              ...(input.includeBranch ? { branch: "feature/refine-toolbar-actions" } : {}),
+            }),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        featureBranch: true,
+      });
+
+      expect(result.branch.status).toBe("created");
+      expect(result.branch.name).toBe("team/feature/refine-toolbar-actions");
+      expect(
+        yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
+          Effect.map((gitResult) => gitResult.stdout.trim()),
+        ),
+      ).toBe("team/feature/refine-toolbar-actions");
     }),
   );
 

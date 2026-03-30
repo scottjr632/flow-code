@@ -59,6 +59,18 @@ const makeBinaryPathSetting = (fallback: string) =>
     Schema.withDecodingDefault(() => fallback),
   );
 
+const makeBranchPrefixSetting = (fallback: string) =>
+  TrimmedString.pipe(
+    Schema.decodeTo(
+      Schema.String,
+      SchemaTransformation.transformOrFail({
+        decode: (value) => Effect.succeed(value || fallback),
+        encode: (value) => Effect.succeed(value),
+      }),
+    ),
+    Schema.withDecodingDefault(() => fallback),
+  );
+
 export const CodexSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   binaryPath: makeBinaryPathSetting("codex"),
@@ -79,6 +91,7 @@ export const ServerSettings = Schema.Struct({
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(() => "local" as const satisfies ThreadEnvMode),
   ),
+  gitBranchNamePrefix: makeBranchPrefixSetting("feature"),
   turnReviewVcs: TurnReviewVcsPreference.pipe(
     Schema.withDecodingDefault(() => "auto" as const satisfies TurnReviewVcsPreference),
   ),
@@ -149,6 +162,7 @@ const ClaudeSettingsPatch = Schema.Struct({
 export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
+  gitBranchNamePrefix: Schema.optionalKey(Schema.String),
   turnReviewVcs: Schema.optionalKey(TurnReviewVcsPreference),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   providers: Schema.optionalKey(

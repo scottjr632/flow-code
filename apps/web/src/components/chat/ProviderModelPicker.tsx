@@ -18,9 +18,10 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
-import { ClaudeAI, CursorIcon, Gemini, Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import { CursorIcon, Gemini, Icon, OpenCodeIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 import { getProviderSnapshot } from "../../providerModels";
+import { getProviderIcon, providerIconClassName } from "../../providerIcons";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -31,8 +32,8 @@ function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): o
 }
 
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
-  codex: OpenAI,
-  claudeAgent: ClaudeAI,
+  codex: getProviderIcon("codex"),
+  claudeAgent: getProviderIcon("claudeAgent"),
   cursor: CursorIcon,
 };
 
@@ -42,13 +43,6 @@ const COMING_SOON_PROVIDER_OPTIONS = [
   { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
   { id: "gemini", label: "Gemini", icon: Gemini },
 ] as const;
-
-function providerIconClassName(
-  provider: ProviderKind | ProviderPickerKind,
-  fallbackClassName: string,
-): string {
-  return provider === "claudeAgent" ? "text-[#d97757]" : fallbackClassName;
-}
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;

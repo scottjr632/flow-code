@@ -9,6 +9,7 @@ import type { ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
+import { normalizeTerminalName } from "./terminalLabels";
 import { terminalGroupIdForTerminal } from "./terminalGroups";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
@@ -21,6 +22,7 @@ interface ThreadTerminalState {
   terminalOpen: boolean;
   terminalHeight: number;
   terminalIds: string[];
+  terminalNamesById: Record<string, string>;
   runningTerminalIds: string[];
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
@@ -51,6 +53,27 @@ function normalizeRunningTerminalIds(
   return [...new Set(runningTerminalIds)]
     .map((id) => id.trim())
     .filter((id) => id.length > 0 && validTerminalIdSet.has(id));
+}
+
+function normalizeTerminalNamesById(
+  terminalNamesById: Record<string, string> | undefined,
+  terminalIds: string[],
+): Record<string, string> {
+  const validTerminalIdSet = new Set(terminalIds);
+  const normalizedEntries = Object.entries(terminalNamesById ?? {}).flatMap(
+    ([terminalId, terminalName]) => {
+      const trimmedTerminalId = terminalId.trim();
+      const normalizedTerminalName = normalizeTerminalName(terminalName);
+      if (trimmedTerminalId.length === 0 || !validTerminalIdSet.has(trimmedTerminalId)) {
+        return [];
+      }
+      if (!normalizedTerminalName) {
+        return [];
+      }
+      return [[trimmedTerminalId, normalizedTerminalName] as const];
+    },
+  );
+  return normalizedEntries.length > 0 ? Object.fromEntries(normalizedEntries) : {};
 }
 
 function assignUniqueGroupId(baseId: string, usedGroupIds: Set<string>): string {
@@ -151,6 +174,13 @@ function threadTerminalStateEqual(left: ThreadTerminalState, right: ThreadTermin
     left.activeTerminalId === right.activeTerminalId &&
     left.activeTerminalGroupId === right.activeTerminalGroupId &&
     arraysEqual(left.terminalIds, right.terminalIds) &&
+    arraysEqual(
+      Object.keys(left.terminalNamesById).toSorted(),
+      Object.keys(right.terminalNamesById).toSorted(),
+    ) &&
+    Object.entries(left.terminalNamesById).every(
+      ([terminalId, terminalName]) => right.terminalNamesById[terminalId] === terminalName,
+    ) &&
     arraysEqual(left.runningTerminalIds, right.runningTerminalIds) &&
     terminalGroupsEqual(left.terminalGroups, right.terminalGroups)
   );
@@ -160,6 +190,7 @@ const DEFAULT_THREAD_TERMINAL_STATE: ThreadTerminalState = Object.freeze({
   terminalOpen: false,
   terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
   terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+  terminalNamesById: {},
   runningTerminalIds: [],
   activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
   terminalGroups: [
@@ -175,6 +206,7 @@ function createDefaultThreadTerminalState(): ThreadTerminalState {
   return {
     ...DEFAULT_THREAD_TERMINAL_STATE,
     terminalIds: [...DEFAULT_THREAD_TERMINAL_STATE.terminalIds],
+    terminalNamesById: { ...DEFAULT_THREAD_TERMINAL_STATE.terminalNamesById },
     runningTerminalIds: [...DEFAULT_THREAD_TERMINAL_STATE.runningTerminalIds],
     terminalGroups: copyTerminalGroups(DEFAULT_THREAD_TERMINAL_STATE.terminalGroups),
   };
@@ -187,6 +219,10 @@ function getDefaultThreadTerminalState(): ThreadTerminalState {
 function normalizeThreadTerminalState(state: ThreadTerminalState): ThreadTerminalState {
   const terminalIds = normalizeTerminalIds(state.terminalIds);
   const nextTerminalIds = terminalIds.length > 0 ? terminalIds : [DEFAULT_THREAD_TERMINAL_ID];
+  const terminalNamesById = normalizeTerminalNamesById(
+    state.terminalNamesById ?? {},
+    nextTerminalIds,
+  );
   const runningTerminalIds = normalizeRunningTerminalIds(state.runningTerminalIds, nextTerminalIds);
   const activeTerminalId = nextTerminalIds.includes(state.activeTerminalId)
     ? state.activeTerminalId
@@ -207,6 +243,7 @@ function normalizeThreadTerminalState(state: ThreadTerminalState): ThreadTermina
         ? state.terminalHeight
         : DEFAULT_THREAD_TERMINAL_HEIGHT,
     terminalIds: nextTerminalIds,
+    terminalNamesById,
     runningTerminalIds,
     activeTerminalId,
     terminalGroups,
@@ -404,6 +441,10 @@ function closeThreadTerminal(state: ThreadTerminalState, terminalId: string): Th
     terminalOpen: normalized.terminalOpen,
     terminalHeight: normalized.terminalHeight,
     terminalIds: remainingTerminalIds,
+    terminalNamesById: normalizeTerminalNamesById(
+      normalized.terminalNamesById,
+      remainingTerminalIds,
+    ),
     runningTerminalIds: normalized.runningTerminalIds.filter((id) => id !== terminalId),
     activeTerminalId: nextActiveTerminalId,
     terminalGroups,
@@ -431,6 +472,40 @@ function setThreadTerminalActivity(
     runningTerminalIds.delete(terminalId);
   }
   return { ...normalized, runningTerminalIds: [...runningTerminalIds] };
+}
+
+function setThreadTerminalName(
+  state: ThreadTerminalState,
+  terminalId: string,
+  terminalName: string,
+): ThreadTerminalState {
+  const normalized = normalizeThreadTerminalState(state);
+  if (!normalized.terminalIds.includes(terminalId)) {
+    return normalized;
+  }
+
+  const nextTerminalName = normalizeTerminalName(terminalName);
+  const currentTerminalName = normalized.terminalNamesById[terminalId] ?? null;
+  if (currentTerminalName === nextTerminalName) {
+    return normalized;
+  }
+
+  if (!nextTerminalName) {
+    if (!(terminalId in normalized.terminalNamesById)) {
+      return normalized;
+    }
+    const terminalNamesById = { ...normalized.terminalNamesById };
+    delete terminalNamesById[terminalId];
+    return { ...normalized, terminalNamesById };
+  }
+
+  return {
+    ...normalized,
+    terminalNamesById: {
+      ...normalized.terminalNamesById,
+      [terminalId]: nextTerminalName,
+    },
+  };
 }
 
 function clearThreadTerminalActivity(state: ThreadTerminalState): ThreadTerminalState {
@@ -500,6 +575,7 @@ interface TerminalStateStoreState {
   setTerminalHeight: (threadId: ThreadId, height: number) => void;
   splitTerminal: (threadId: ThreadId, terminalId: string) => void;
   newTerminal: (threadId: ThreadId, terminalId: string) => void;
+  setTerminalName: (threadId: ThreadId, terminalId: string, terminalName: string) => void;
   setActiveTerminal: (threadId: ThreadId, terminalId: string) => void;
   closeTerminal: (threadId: ThreadId, terminalId: string) => void;
   setTerminalActivity: (
@@ -543,6 +619,10 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
           updateTerminal(threadId, (state) => splitThreadTerminal(state, terminalId)),
         newTerminal: (threadId, terminalId) =>
           updateTerminal(threadId, (state) => newThreadTerminal(state, terminalId)),
+        setTerminalName: (threadId, terminalId, terminalName) =>
+          updateTerminal(threadId, (state) =>
+            setThreadTerminalName(state, terminalId, terminalName),
+          ),
         setActiveTerminal: (threadId, terminalId) =>
           updateTerminal(threadId, (state) => setThreadActiveTerminal(state, terminalId)),
         closeTerminal: (threadId, terminalId) =>
@@ -569,7 +649,7 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
     },
     {
       name: TERMINAL_STATE_STORAGE_KEY,
-      version: 2,
+      version: 3,
       storage: createJSONStorage(createTerminalStateStorage),
       partialize: (state) => ({
         terminalStateByThreadId: clearPersistedTerminalActivity(state.terminalStateByThreadId),

@@ -87,6 +87,7 @@ import {
   isFocusComposerShortcut,
   resolveShortcutCommand,
   shortcutLabelForCommand,
+  workspaceTabTraversalDirection,
 } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import { ThreadDiffWorkspace } from "./ThreadDiffWorkspace";
@@ -108,6 +109,16 @@ import {
   XIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
+import { Input } from "./ui/input";
 import { Separator } from "./ui/separator";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { cn, randomUUID } from "~/lib/utils";
@@ -136,6 +147,7 @@ import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { findTerminalGroupByTerminalId, terminalGroupIdForTerminal } from "../terminalGroups";
 import {
+  type ComposerThreadDraftState,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   type PersistedComposerImageAttachment,
@@ -168,12 +180,14 @@ import {
   buildTerminalWorkspaceTabId,
   buildWorkspaceTabs,
   DEFAULT_CHAT_WORKSPACE_TAB_ID,
+  getAdjacentWorkspaceTabId,
   reorderWorkspaceTabIds,
   isFileWorkspaceTabId,
   isTerminalWorkspaceTabId,
   resolveWorkspaceTabId,
   sortWorkspaceTabsByOrder,
   type WorkspaceFileTabState,
+  type WorkspaceTab,
   type WorkspaceTabId,
 } from "../workspaceTabs";
 import {
@@ -233,6 +247,7 @@ import {
 import { sortThreadsForSidebar } from "./Sidebar.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useWindowKeydownListener } from "../hooks/useWindowKeydownListener";
 import { resolveExistingWorkspaceContext } from "../workspaceContext";
 import {
   isBufferDirty,
@@ -252,6 +267,23 @@ const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const SESSION_OPEN_SCROLL_LOCK_MS = 1500;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+
+function resolveThreadDraftProvider(
+  draftsByThreadId: Readonly<Record<ThreadId, ComposerThreadDraftState>>,
+  draftThreadId: ThreadId,
+  fallbackProvider: ProviderKind,
+): ProviderKind {
+  const draft = draftsByThreadId[draftThreadId];
+  if (!draft) {
+    return fallbackProvider;
+  }
+  return (
+    draft.activeProvider ??
+    draft.modelSelectionByProvider.codex?.provider ??
+    draft.modelSelectionByProvider.claudeAgent?.provider ??
+    fallbackProvider
+  );
+}
 
 function formatOutgoingPrompt(params: {
   provider: ProviderKind;
@@ -381,6 +413,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (store) => store.getDraftThreadByProjectId,
   );
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
+  const composerDraftsByThreadId = useComposerDraftStore((store) => store.draftsByThreadId);
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
@@ -427,6 +460,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [renameTerminalTabTarget, setRenameTerminalTabTarget] = useState<{
+    terminalId: string;
+    title: string;
+  } | null>(null);
+  const [renameTerminalTabValue, setRenameTerminalTabValue] = useState("");
   const [pendingPullRequestSetupRequest, setPendingPullRequestSetupRequest] =
     useState<PendingPullRequestSetupRequest | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
@@ -491,6 +529,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const storeSetTerminalHeight = useTerminalStateStore((s) => s.setTerminalHeight);
   const storeSplitTerminal = useTerminalStateStore((s) => s.splitTerminal);
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
+  const storeSetTerminalName = useTerminalStateStore((s) => s.setTerminalName);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
   const activeWorkspaceTabId = lastActiveWorkspaceTabByThreadId[threadId] ?? "chat";
@@ -626,7 +665,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread?.branch, activeThread?.workspaceId, activeThread?.worktreePath, workspaces],
   );
   const projectDraftThread = activeProject ? getDraftThreadByProjectId(activeProject.id) : null;
-  const workspaceSessionTabs = useMemo(() => {
+  const workspaceSessionTabs = (() => {
     if (!activeProject || !activeWorkspaceContext.workspaceId || !activeThread) {
       return [];
     }
@@ -635,6 +674,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       string,
       Pick<Thread, "id" | "title" | "createdAt" | "updatedAt" | "messages"> & {
         isDraft: boolean;
+        provider: ProviderKind;
       }
     >();
 
@@ -653,6 +693,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           updatedAt: thread.updatedAt,
           messages: thread.messages,
           isDraft: false,
+          provider: thread.session?.provider ?? thread.modelSelection.provider,
         });
       });
 
@@ -667,6 +708,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         updatedAt: projectDraftThread.createdAt,
         messages: [],
         isDraft: true,
+        provider: resolveThreadDraftProvider(
+          composerDraftsByThreadId,
+          projectDraftThread.threadId,
+          activeProject.defaultModelSelection?.provider ?? "codex",
+        ),
       });
     }
 
@@ -678,6 +724,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         updatedAt: activeThread.updatedAt,
         messages: activeThread.messages,
         isDraft: isLocalDraftThread,
+        provider: isLocalDraftThread
+          ? resolveThreadDraftProvider(
+              composerDraftsByThreadId,
+              activeThread.id,
+              activeThread.modelSelection.provider,
+            )
+          : (activeThread.session?.provider ?? activeThread.modelSelection.provider),
       });
     }
 
@@ -688,16 +741,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       threadId: thread.id,
       title: thread.title,
       isDraft: thread.isDraft,
+      provider: thread.provider,
     }));
-  }, [
-    activeProject,
-    activeThread,
-    activeWorkspaceContext.workspaceId,
-    isLocalDraftThread,
-    projectDraftThread,
-    settings.sidebarThreadSortOrder,
-    threads,
-  ]);
+  })();
   const workspaceTabOrderContextId = useMemo(
     () =>
       buildWorkspaceTabOrderContextId({
@@ -715,21 +761,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
       })),
     [workspaceEditorState.buffersByPath, workspaceEditorState.openFilePaths],
   );
+  const conversationTabProvider = activeThread
+    ? isLocalDraftThread
+      ? resolveThreadDraftProvider(
+          composerDraftsByThreadId,
+          activeThread.id,
+          activeThread.modelSelection.provider,
+        )
+      : (activeThread.session?.provider ?? activeThread.modelSelection.provider)
+    : null;
   const workspaceTabs = useMemo(() => {
     const tabs = buildWorkspaceTabs({
+      chatProvider: conversationTabProvider,
       sessionTabs: workspaceSessionTabs,
       diffOpen,
       fileTabs: workspaceFileTabs,
       terminalOpen: terminalState.terminalOpen,
       terminalGroups: terminalState.terminalGroups,
+      terminalNamesById: terminalState.terminalNamesById,
       runningTerminalIds: terminalState.runningTerminalIds,
     });
 
     return sortWorkspaceTabsByOrder(tabs, workspaceTabOrderByContextId[workspaceTabOrderContextId]);
   }, [
     diffOpen,
+    conversationTabProvider,
     workspaceFileTabs,
     terminalState.terminalGroups,
+    terminalState.terminalNamesById,
     terminalState.runningTerminalIds,
     terminalState.terminalOpen,
     workspaceSessionTabs,
@@ -1739,6 +1798,42 @@ export default function ChatView({ threadId }: ChatViewProps) {
       workspaceTerminalTabIdForTerminal,
     ],
   );
+  const renameTerminal = useCallback(
+    (terminalId: string, terminalName: string) => {
+      if (!terminalOwnerId) return;
+      storeSetTerminalName(terminalOwnerId, terminalId, terminalName);
+    },
+    [terminalOwnerId, storeSetTerminalName],
+  );
+  const closeRenameTerminalDialog = useCallback(() => {
+    setRenameTerminalTabTarget(null);
+    setRenameTerminalTabValue("");
+  }, []);
+  const openRenameTerminalDialog = useCallback(
+    (tab: Extract<WorkspaceTab, { kind: "terminal" }>) => {
+      setRenameTerminalTabTarget({
+        terminalId: tab.primaryTerminalId,
+        title: tab.title,
+      });
+      setRenameTerminalTabValue(terminalState.terminalNamesById[tab.primaryTerminalId] ?? "");
+    },
+    [terminalState.terminalNamesById],
+  );
+  const submitRenameTerminalDialog = useCallback(() => {
+    if (!renameTerminalTabTarget) {
+      return;
+    }
+    renameTerminal(renameTerminalTabTarget.terminalId, renameTerminalTabValue);
+    closeRenameTerminalDialog();
+  }, [closeRenameTerminalDialog, renameTerminal, renameTerminalTabTarget, renameTerminalTabValue]);
+  useEffect(() => {
+    if (
+      renameTerminalTabTarget &&
+      !terminalState.terminalIds.includes(renameTerminalTabTarget.terminalId)
+    ) {
+      closeRenameTerminalDialog();
+    }
+  }, [closeRenameTerminalDialog, renameTerminalTabTarget, terminalState.terminalIds]);
   const closeTerminal = useCallback(
     (terminalId: string) => {
       const api = readNativeApi();
@@ -1782,6 +1877,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setActiveWorkspaceTabId,
       storeCloseTerminal,
     ],
+  );
+  const onWorkspaceTabContextMenu = useCallback(
+    async (tab: WorkspaceTab, position: { x: number; y: number }) => {
+      if (tab.kind !== "terminal") {
+        return;
+      }
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+      const clicked = await api.contextMenu.show(
+        [{ id: "rename-terminal", label: "Rename terminal" }],
+        position,
+      );
+      if (clicked === "rename-terminal") {
+        openRenameTerminalDialog(tab);
+      }
+    },
+    [openRenameTerminalDialog],
   );
   const runProjectScript = useCallback(
     async (
@@ -4140,6 +4254,37 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [activateTerminal, navigate, setActiveWorkspaceTabId, threadId, workspaceTabs],
   );
+  useWindowKeydownListener(
+    (event) => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        !activeThreadId ||
+        isWorkspaceCommandPaletteOpen
+      ) {
+        return;
+      }
+
+      const direction = workspaceTabTraversalDirection(event);
+      if (direction === null) {
+        return;
+      }
+
+      const nextTabId = getAdjacentWorkspaceTabId({
+        activeTabId: resolvedWorkspaceTabId,
+        tabs: workspaceTabs,
+        direction,
+      });
+      if (!nextTabId || nextTabId === resolvedWorkspaceTabId) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      selectWorkspaceTab(nextTabId);
+    },
+    { enabled: activeThreadId !== null },
+  );
   const createSessionWorkspace = useCallback(() => {
     if (!activeProject || !activeThread) {
       return;
@@ -4450,6 +4595,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           tabs={workspaceTabs}
           activeTabId={resolvedWorkspaceTabId}
           onSelectTab={selectWorkspaceTab}
+          onOpenTabContextMenu={onWorkspaceTabContextMenu}
           onReorderTab={reorderWorkspaceTabs}
           onCloseTab={closeWorkspaceTab}
           canCreateSession={activeWorkspaceContext.workspaceId !== null}
@@ -5100,7 +5246,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             <ThreadDiffWorkspace mode="sheet" />
           </div>
         ) : activeTerminalWorkspaceTab && activeProject ? (
-          <div className="min-h-0 min-w-0 flex-1 px-3 pb-3 pt-0 sm:px-5 sm:pb-5 sm:pt-0">
+          <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
             <ThreadTerminalDrawer
               key={`${terminalOwnerId}:${activeTerminalWorkspaceTab.terminalGroupId}`}
               variant="panel"
@@ -5108,6 +5254,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               cwd={gitCwd ?? activeProject.cwd}
               runtimeEnv={threadTerminalRuntimeEnv}
               terminalIds={activeTerminalWorkspaceTab.terminalIds}
+              terminalNamesById={terminalState.terminalNamesById}
               activeTerminalId={
                 activeTerminalWorkspaceTab.terminalIds.includes(terminalState.activeTerminalId)
                   ? terminalState.activeTerminalId
@@ -5202,6 +5349,48 @@ export default function ChatView({ threadId }: ChatViewProps) {
           )}
         </div>
       )}
+      <Dialog
+        open={renameTerminalTabTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeRenameTerminalDialog();
+          }
+        }}
+      >
+        <DialogPopup className="max-w-xs" showCloseButton={false}>
+          <DialogHeader className="gap-1 p-4 pb-2">
+            <DialogTitle className="text-sm">Rename terminal</DialogTitle>
+            <DialogDescription className="text-xs">
+              Leave blank to use the default name.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-2 px-4 pb-2 pt-0">
+            <Input
+              nativeInput
+              autoFocus
+              value={renameTerminalTabValue}
+              placeholder={renameTerminalTabTarget?.title ?? "Terminal"}
+              size="sm"
+              onChange={(event) => setRenameTerminalTabValue(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") {
+                  return;
+                }
+                event.preventDefault();
+                submitRenameTerminalDialog();
+              }}
+            />
+          </DialogPanel>
+          <DialogFooter variant="bare" className="px-4 pb-4 pt-0">
+            <Button size="sm" variant="outline" onClick={closeRenameTerminalDialog}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={submitRenameTerminalDialog}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
     </div>
   );
 }

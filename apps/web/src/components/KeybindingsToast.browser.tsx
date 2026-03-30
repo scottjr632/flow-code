@@ -60,6 +60,7 @@ function createBaseServerConfig(): ServerConfig {
       enableAssistantStreaming: false,
       defaultThreadEnvMode: "local" as const,
       turnReviewVcs: "auto" as const,
+      gitBranchNamePrefix: "feature",
       textGenerationModelSelection: { provider: "codex" as const, model: "gpt-5.4-mini" },
       providers: {
         codex: { enabled: true, binaryPath: "", homePath: "", customModels: [] },

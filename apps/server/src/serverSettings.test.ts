@@ -25,6 +25,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         providers: { codex: { binaryPath: "/tmp/codex" } },
       });
 
+      assert.deepEqual(decodePatch({ gitBranchNamePrefix: "team/feature" }), {
+        gitBranchNamePrefix: "team/feature",
+      });
+
       assert.deepEqual(
         decodePatch({
           textGenerationModelSelection: {
@@ -154,12 +158,25 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("defaults blank git branch prefixes to feature", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+
+      const next = yield* serverSettings.updateSettings({
+        gitBranchNamePrefix: "   ",
+      });
+
+      assert.equal(next.gitBranchNamePrefix, "feature");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("writes only non-default server settings to disk", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;
       const serverConfig = yield* ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const next = yield* serverSettings.updateSettings({
+        gitBranchNamePrefix: "team/feature",
         providers: {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
@@ -171,6 +188,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       assert.deepEqual(JSON.parse(raw), {
+        gitBranchNamePrefix: "team/feature",
         providers: {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",

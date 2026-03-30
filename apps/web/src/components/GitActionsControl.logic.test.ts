@@ -1010,8 +1010,22 @@ describe("resolveAutoFeatureBranchName", () => {
     assert.equal(branch, "feature/ticket-1-2");
   });
 
+  it("applies a custom branch prefix and strips the default feature namespace", () => {
+    const branch = resolveAutoFeatureBranchName(
+      ["main", "team/feature/other"],
+      "feature/fix-toast-copy",
+      "team/feature",
+    );
+    assert.equal(branch, "team/feature/fix-toast-copy");
+  });
+
   it("falls back to feature/update when no preferred name is provided", () => {
     const branch = resolveAutoFeatureBranchName(["main"]);
     assert.equal(branch, "feature/update");
+  });
+
+  it("falls back to the configured prefix when no preferred name is provided", () => {
+    const branch = resolveAutoFeatureBranchName(["main"], undefined, "team/feature");
+    assert.equal(branch, "team/feature/update");
   });
 });

@@ -24,6 +24,7 @@ import {
   threadJumpCommandForIndex,
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
+  workspaceTabTraversalDirection,
   type ShortcutEventLike,
 } from "./keybindings";
 
@@ -338,6 +339,43 @@ describe("thread navigation helpers", () => {
       shouldShowThreadJumpHints(event({ ctrlKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
       }),
+    );
+  });
+});
+
+describe("workspace tab traversal shortcuts", () => {
+  it("maps Option+Cmd+Arrow on macOS to workspace tab traversal", () => {
+    assert.strictEqual(
+      workspaceTabTraversalDirection(
+        event({ key: "ArrowLeft", metaKey: true, altKey: true }),
+        "MacIntel",
+      ),
+      "previous",
+    );
+    assert.strictEqual(
+      workspaceTabTraversalDirection(
+        event({ key: "ArrowRight", metaKey: true, altKey: true }),
+        "MacIntel",
+      ),
+      "next",
+    );
+  });
+
+  it("ignores non-mac platforms and extra modifiers", () => {
+    assert.isNull(
+      workspaceTabTraversalDirection(
+        event({ key: "ArrowLeft", metaKey: true, altKey: true }),
+        "Linux",
+      ),
+    );
+    assert.isNull(
+      workspaceTabTraversalDirection(
+        event({ key: "ArrowLeft", metaKey: true, altKey: true, shiftKey: true }),
+        "MacIntel",
+      ),
+    );
+    assert.isNull(
+      workspaceTabTraversalDirection(event({ key: "ArrowLeft", metaKey: true }), "MacIntel"),
     );
   });
 });

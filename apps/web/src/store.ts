@@ -44,6 +44,7 @@ const initialState: AppState = {
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
 const persistedThreadMruIds: ThreadId[] = [];
+const persistedThreadLastVisitedAtById = new Map<ThreadId, string>();
 
 // ── Persist helpers ──────────────────────────────────────────────────
 
@@ -56,10 +57,12 @@ function readPersistedState(): AppState {
       expandedProjectCwds?: string[];
       projectOrderCwds?: string[];
       threadMruIds?: string[];
+      threadLastVisitedAtById?: Record<string, string>;
     };
     persistedExpandedProjectCwds.clear();
     persistedProjectOrderCwds.length = 0;
     persistedThreadMruIds.length = 0;
+    persistedThreadLastVisitedAtById.clear();
     for (const cwd of parsed.expandedProjectCwds ?? []) {
       if (typeof cwd === "string" && cwd.length > 0) {
         persistedExpandedProjectCwds.add(cwd);
@@ -78,6 +81,20 @@ function readPersistedState(): AppState {
         }
       }
     }
+    for (const [threadId, lastVisitedAt] of Object.entries(parsed.threadLastVisitedAtById ?? {})) {
+      if (
+        threadId.length === 0 ||
+        typeof lastVisitedAt !== "string" ||
+        lastVisitedAt.length === 0
+      ) {
+        continue;
+      }
+      const parsedLastVisitedAt = Date.parse(lastVisitedAt);
+      if (Number.isNaN(parsedLastVisitedAt)) {
+        continue;
+      }
+      persistedThreadLastVisitedAtById.set(ThreadId.makeUnsafe(threadId), lastVisitedAt);
+    }
     return { ...initialState };
   } catch {
     return initialState;
@@ -89,6 +106,13 @@ let legacyKeysCleanedUp = false;
 function persistState(state: AppState): void {
   if (typeof window === "undefined") return;
   try {
+    const threadLastVisitedAtById = Object.fromEntries(
+      state.threads.flatMap((thread) =>
+        typeof thread.lastVisitedAt === "string" && thread.lastVisitedAt.length > 0
+          ? [[thread.id, thread.lastVisitedAt] as const]
+          : [],
+      ),
+    );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
@@ -97,6 +121,7 @@ function persistState(state: AppState): void {
           .map((project) => project.cwd),
         projectOrderCwds: state.projects.map((project) => project.cwd),
         threadMruIds: state.threadMruIds ?? [],
+        threadLastVisitedAtById,
       }),
     );
     if (!legacyKeysCleanedUp) {
@@ -361,7 +386,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         archivedAt: thread.archivedAt,
         updatedAt: thread.updatedAt,
         latestTurn: thread.latestTurn,
-        lastVisitedAt: existing?.lastVisitedAt,
+        lastVisitedAt: existing?.lastVisitedAt ?? persistedThreadLastVisitedAtById.get(thread.id),
         branch: thread.branch,
         worktreePath: thread.worktreePath,
         turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({

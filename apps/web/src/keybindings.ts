@@ -384,6 +384,32 @@ export function isTerminalClearShortcut(
   );
 }
 
+export function workspaceTabTraversalDirection(
+  event: ShortcutEventLike,
+  platform = navigator.platform,
+): "previous" | "next" | null {
+  if (event.type !== undefined && event.type !== "keydown") {
+    return null;
+  }
+
+  if (!isMacPlatform(platform)) {
+    return null;
+  }
+
+  if (!event.metaKey || !event.altKey || event.ctrlKey || event.shiftKey) {
+    return null;
+  }
+
+  const key = normalizeEventKey(event.key);
+  if (key === "arrowleft") {
+    return "previous";
+  }
+  if (key === "arrowright") {
+    return "next";
+  }
+  return null;
+}
+
 export function terminalNavigationShortcutData(
   event: ShortcutEventLike,
   platform = navigator.platform,

@@ -20,6 +20,7 @@ describe("terminalStateStore actions", () => {
       terminalOpen: false,
       terminalHeight: 280,
       terminalIds: ["default"],
+      terminalNamesById: {},
       runningTerminalIds: [],
       activeTerminalId: "default",
       terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
@@ -125,6 +126,24 @@ describe("terminalStateStore actions", () => {
     ).toEqual([]);
   });
 
+  it("stores custom terminal names and removes them when the terminal closes", () => {
+    const store = useTerminalStateStore.getState();
+    store.newTerminal(THREAD_ID, "terminal-2");
+    store.setTerminalName(THREAD_ID, "terminal-2", "Logs");
+
+    expect(
+      selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
+        .terminalNamesById,
+    ).toEqual({ "terminal-2": "Logs" });
+
+    store.closeTerminal(THREAD_ID, "terminal-2");
+
+    expect(
+      selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
+        .terminalNamesById,
+    ).toEqual({});
+  });
+
   it("does not persist running terminal activity across reloads", () => {
     const store = useTerminalStateStore.getState();
     store.splitTerminal(THREAD_ID, "terminal-2");
@@ -149,7 +168,7 @@ describe("terminalStateStore actions", () => {
       version: number;
     };
 
-    expect(persistedState.version).toBe(2);
+    expect(persistedState.version).toBe(3);
     expect(persistedState.state.terminalStateByThreadId[THREAD_ID]?.runningTerminalIds).toEqual([]);
   });
 
