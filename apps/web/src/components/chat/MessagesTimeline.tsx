@@ -51,6 +51,7 @@ import {
 } from "~/lib/terminalContext";
 import { parseAssistantDirectives } from "~/lib/codexDirectives";
 import { replaceSessionReferenceTokensForDisplay } from "~/lib/sessionReferences";
+import { replaceTerminalLogReferenceTokensForDisplay } from "~/lib/terminalLogReferences";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
@@ -456,9 +457,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           const parsedAssistantDirectives = row.parsedAssistantDirectives;
           const reviewComments = parsedAssistantDirectives?.codeComments ?? [];
           const hasReviewComments = reviewComments.length > 0;
-          const messageText = replaceSessionReferenceTokensForDisplay(
-            parsedAssistantDirectives?.displayText ||
-              (row.message.streaming || hasReviewComments ? "" : "(empty response)"),
+          const messageText = replaceTerminalLogReferenceTokensForDisplay(
+            replaceSessionReferenceTokensForDisplay(
+              parsedAssistantDirectives?.displayText ||
+                (row.message.streaming || hasReviewComments ? "" : "(empty response)"),
+            ),
           );
           return (
             <>

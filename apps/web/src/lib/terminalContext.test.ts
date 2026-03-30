@@ -125,6 +125,7 @@ describe("terminalContext", () => {
       ],
       diffComments: [],
       sessionReferences: [],
+      terminalLogReferences: [],
     });
   });
 
@@ -180,6 +181,7 @@ describe("terminalContext", () => {
         },
       ],
       sessionReferences: [],
+      terminalLogReferences: [],
     });
   });
 
@@ -213,6 +215,45 @@ describe("terminalContext", () => {
         {
           header: "Fix reconnect flow",
           body: "Thread id: thread-a\nBranch: feature/reconnect",
+        },
+      ],
+      terminalLogReferences: [],
+    });
+  });
+
+  it("strips trailing terminal log references before parsing other display context", () => {
+    const prompt = [
+      appendTerminalContextsToPrompt("Use @terminal:tests#thread-a:terminal-2", [makeContext()]),
+      "",
+      "<terminal_log_context>",
+      "- tests:",
+      "  Thread id: thread-a",
+      "  Terminal id: terminal-2",
+      "  Recent output:",
+      "    1 | pnpm lint",
+      "</terminal_log_context>",
+    ].join("\n");
+
+    expect(deriveDisplayedUserMessageState(prompt)).toEqual({
+      visibleText: "Use @terminal:tests",
+      copyText: prompt,
+      contextCount: 2,
+      previewTitle: [
+        "tests\nThread id: thread-a\nTerminal id: terminal-2\nRecent output:\n  1 | pnpm lint",
+        "Terminal 1 lines 12-13\n12 | git status\n13 | On branch main",
+      ].join("\n\n"),
+      contexts: [
+        {
+          header: "Terminal 1 lines 12-13",
+          body: "12 | git status\n13 | On branch main",
+        },
+      ],
+      diffComments: [],
+      sessionReferences: [],
+      terminalLogReferences: [
+        {
+          header: "tests",
+          body: "Thread id: thread-a\nTerminal id: terminal-2\nRecent output:\n  1 | pnpm lint",
         },
       ],
     });

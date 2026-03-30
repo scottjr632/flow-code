@@ -10,7 +10,9 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalHistoryReference,
   TerminalOpenInput,
+  TerminalReadHistoryInput,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalSessionSnapshot,
@@ -68,6 +70,13 @@ export interface TerminalManagerShape {
   readonly open: (
     input: TerminalOpenInput,
   ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
+
+  /**
+   * Read persisted terminal history without opening or restarting the session.
+   */
+  readonly readHistory: (
+    input: TerminalReadHistoryInput,
+  ) => Effect.Effect<TerminalHistoryReference | null, TerminalError>;
 
   /**
    * Write input bytes to a terminal session.

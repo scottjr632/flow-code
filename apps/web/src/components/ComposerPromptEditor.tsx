@@ -67,6 +67,10 @@ import {
   formatSessionReferenceMentionLabel,
   isSessionReferenceToken,
 } from "~/lib/sessionReferences";
+import {
+  formatTerminalLogReferenceMentionLabel,
+  isTerminalLogReferenceToken,
+} from "~/lib/terminalLogReferences";
 import { cn } from "~/lib/utils";
 import { basenameOfPath, getVscodeIconUrlForEntry, inferEntryKindFromPath } from "~/vscode-icons";
 import {
@@ -259,6 +263,14 @@ function renderMentionChipDom(container: HTMLElement, pathValue: string): void {
     const label = document.createElement("span");
     label.className = COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME;
     label.textContent = formatSessionReferenceMentionLabel(pathValue);
+    container.append(label);
+    return;
+  }
+
+  if (isTerminalLogReferenceToken(pathValue)) {
+    const label = document.createElement("span");
+    label.className = COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME;
+    label.textContent = formatTerminalLogReferenceMentionLabel(pathValue);
     container.append(label);
     return;
   }

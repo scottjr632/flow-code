@@ -73,6 +73,22 @@ it.effect("accepts git.preparePullRequestThread requests", () =>
   }),
 );
 
+it.effect("accepts terminal.readHistory requests", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeWebSocketRequest({
+      id: "req-terminal-1",
+      body: {
+        _tag: WS_METHODS.terminalReadHistory,
+        threadId: "thread-1",
+      },
+    });
+    assert.strictEqual(parsed.body._tag, WS_METHODS.terminalReadHistory);
+    if (parsed.body._tag === WS_METHODS.terminalReadHistory) {
+      assert.strictEqual(parsed.body.terminalId, "default");
+    }
+  }),
+);
+
 it.effect("accepts typed websocket push envelopes with sequence", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeWsResponse({

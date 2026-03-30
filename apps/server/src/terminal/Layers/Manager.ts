@@ -6,7 +6,9 @@ import {
   DEFAULT_TERMINAL_ID,
   TerminalClearInput,
   TerminalCloseInput,
+  type TerminalHistoryReference,
   TerminalOpenInput,
+  TerminalReadHistoryInput,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalWriteInput,
@@ -43,6 +45,7 @@ const decodeTerminalWriteInput = Schema.decodeUnknownSync(TerminalWriteInput);
 const decodeTerminalResizeInput = Schema.decodeUnknownSync(TerminalResizeInput);
 const decodeTerminalClearInput = Schema.decodeUnknownSync(TerminalClearInput);
 const decodeTerminalCloseInput = Schema.decodeUnknownSync(TerminalCloseInput);
+const decodeTerminalReadHistoryInput = Schema.decodeUnknownSync(TerminalReadHistoryInput);
 
 type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
 
@@ -678,7 +681,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       const existing = this.sessions.get(sessionKey);
       if (!existing) {
         await this.flushPersistQueue(input.threadId, input.terminalId);
-        const history = await this.readHistory(input.threadId, input.terminalId);
+        const history = (await this.readPersistedHistoryRecord(input.threadId, input.terminalId))
+          .history;
         const cols = input.cols ?? DEFAULT_OPEN_COLS;
         const rows = input.rows ?? DEFAULT_OPEN_ROWS;
         const session: TerminalSessionState = {
@@ -746,6 +750,33 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       }
 
       return this.snapshot(existing);
+    });
+  }
+
+  async readHistory(raw: TerminalReadHistoryInput): Promise<TerminalHistoryReference | null> {
+    const input = decodeTerminalReadHistoryInput(raw);
+    return this.runWithThreadLock(input.threadId, async () => {
+      await this.flushPersistQueue(input.threadId, input.terminalId);
+      const existing = this.sessions.get(toSessionKey(input.threadId, input.terminalId));
+      if (existing) {
+        return this.historyReference(existing);
+      }
+
+      const persisted = await this.readPersistedHistoryRecord(input.threadId, input.terminalId);
+      if (!persisted.exists) {
+        return null;
+      }
+
+      return {
+        threadId: input.threadId,
+        terminalId: input.terminalId,
+        history: persisted.history,
+        cwd: null,
+        status: null,
+        exitCode: null,
+        exitSignal: null,
+        updatedAt: persisted.updatedAt,
+      };
     });
   }
 
@@ -1218,15 +1249,28 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     this.persistTimers.delete(persistenceKey);
   }
 
-  private async readHistory(threadId: string, terminalId: string): Promise<string> {
+  private async readPersistedHistoryRecord(
+    threadId: string,
+    terminalId: string,
+  ): Promise<{ history: string; updatedAt: string | null; exists: boolean }> {
     const nextPath = this.historyPath(threadId, terminalId);
     try {
       const raw = await fs.promises.readFile(nextPath, "utf8");
       const capped = capHistory(raw, this.historyLineLimit);
       if (capped !== raw) {
         await fs.promises.writeFile(nextPath, capped, "utf8");
+        return {
+          history: capped,
+          updatedAt: new Date().toISOString(),
+          exists: true,
+        };
       }
-      return capped;
+      const stats = await fs.promises.stat(nextPath);
+      return {
+        history: capped,
+        updatedAt: stats.mtime.toISOString(),
+        exists: true,
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
@@ -1234,7 +1278,11 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     }
 
     if (terminalId !== DEFAULT_TERMINAL_ID) {
-      return "";
+      return {
+        history: "",
+        updatedAt: null,
+        exists: false,
+      };
     }
 
     const legacyPath = this.legacyHistoryPath(threadId);
@@ -1253,10 +1301,18 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
         });
       }
 
-      return capped;
+      return {
+        history: capped,
+        updatedAt: new Date().toISOString(),
+        exists: true,
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return "";
+        return {
+          history: "",
+          updatedAt: null,
+          exists: false,
+        };
       }
       throw error;
     }
@@ -1459,6 +1515,19 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     };
   }
 
+  private historyReference(session: TerminalSessionState): TerminalHistoryReference {
+    return {
+      threadId: session.threadId,
+      terminalId: session.terminalId,
+      history: session.history,
+      cwd: session.cwd,
+      status: session.status,
+      exitCode: session.exitCode,
+      exitSignal: session.exitSignal,
+      updatedAt: session.updatedAt,
+    };
+  }
+
   private emitEvent(event: TerminalEvent): void {
     this.emit("event", event);
   }
@@ -1510,6 +1579,12 @@ export const TerminalManagerLive = Layer.effect(
         Effect.tryPromise({
           try: () => runtime.open(input),
           catch: (cause) => new TerminalError({ message: "Failed to open terminal", cause }),
+        }),
+      readHistory: (input) =>
+        Effect.tryPromise({
+          try: () => runtime.readHistory(input),
+          catch: (cause) =>
+            new TerminalError({ message: "Failed to read terminal history", cause }),
         }),
       write: (input) =>
         Effect.tryPromise({

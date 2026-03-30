@@ -362,6 +362,22 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards terminal history reads to the websocket terminal method", async () => {
+    requestMock.mockResolvedValue(null);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.terminal.readHistory({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      terminalId: "default",
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.terminalReadHistory, {
+      threadId: "thread-1",
+      terminalId: "default",
+    });
+  });
+
   it("uses no client timeout for git.runStackedAction", async () => {
     requestMock.mockResolvedValue({
       action: "commit",

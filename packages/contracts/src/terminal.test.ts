@@ -6,7 +6,9 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalHistoryReference,
   TerminalOpenInput,
+  TerminalReadHistoryInput,
   TerminalResizeInput,
   TerminalSessionSnapshot,
   TerminalThreadInput,
@@ -139,6 +141,15 @@ describe("TerminalClearInput", () => {
   });
 });
 
+describe("TerminalReadHistoryInput", () => {
+  it("defaults terminal id", () => {
+    const parsed = decodeSync(TerminalReadHistoryInput, {
+      threadId: "thread-1",
+    });
+    expect(parsed.terminalId).toBe(DEFAULT_TERMINAL_ID);
+  });
+});
+
 describe("TerminalCloseInput", () => {
   it("accepts optional deleteHistory", () => {
     expect(
@@ -163,6 +174,23 @@ describe("TerminalSessionSnapshot", () => {
         exitCode: null,
         exitSignal: null,
         updatedAt: new Date().toISOString(),
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("TerminalHistoryReference", () => {
+  it("accepts persisted-only history references", () => {
+    expect(
+      decodes(TerminalHistoryReference, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        history: "npm run lint\n",
+        cwd: null,
+        status: null,
+        exitCode: null,
+        exitSignal: null,
+        updatedAt: null,
       }),
     ).toBe(true);
   });

@@ -147,6 +147,7 @@ export function createWsNativeApi(): NativeApi {
     },
     terminal: {
       open: (input) => transport.request(WS_METHODS.terminalOpen, input),
+      readHistory: (input) => transport.request(WS_METHODS.terminalReadHistory, input),
       write: (input) => transport.request(WS_METHODS.terminalWrite, input),
       resize: (input) => transport.request(WS_METHODS.terminalResize, input),
       clear: (input) => transport.request(WS_METHODS.terminalClear, input),

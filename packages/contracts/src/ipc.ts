@@ -47,7 +47,9 @@ import type {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalHistoryReference,
   TerminalOpenInput,
+  TerminalReadHistoryInput,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalSessionSnapshot,
@@ -144,6 +146,7 @@ export interface NativeApi {
   };
   terminal: {
     open: (input: TerminalOpenInput) => Promise<TerminalSessionSnapshot>;
+    readHistory: (input: TerminalReadHistoryInput) => Promise<TerminalHistoryReference | null>;
     write: (input: TerminalWriteInput) => Promise<void>;
     resize: (input: TerminalResizeInput) => Promise<void>;
     clear: (input: TerminalClearInput) => Promise<void>;

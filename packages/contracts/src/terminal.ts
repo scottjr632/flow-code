@@ -34,6 +34,9 @@ const TerminalSessionInput = Schema.Struct({
 });
 export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
 
+export const TerminalReadHistoryInput = TerminalSessionInput;
+export type TerminalReadHistoryInput = Schema.Codec.Encoded<typeof TerminalReadHistoryInput>;
+
 export const TerminalOpenInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
@@ -90,6 +93,18 @@ export const TerminalSessionSnapshot = Schema.Struct({
   updatedAt: Schema.String,
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
+
+export const TerminalHistoryReference = Schema.Struct({
+  threadId: Schema.String.check(Schema.isNonEmpty()),
+  terminalId: Schema.String.check(Schema.isNonEmpty()),
+  history: Schema.String,
+  cwd: Schema.NullOr(Schema.String.check(Schema.isNonEmpty())),
+  status: Schema.NullOr(TerminalSessionStatus),
+  exitCode: Schema.NullOr(Schema.Int),
+  exitSignal: Schema.NullOr(Schema.Int),
+  updatedAt: Schema.NullOr(Schema.String),
+});
+export type TerminalHistoryReference = typeof TerminalHistoryReference.Type;
 
 const TerminalEventBaseSchema = Schema.Struct({
   threadId: Schema.String.check(Schema.isNonEmpty()),

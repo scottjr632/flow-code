@@ -38,7 +38,9 @@ import type {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalHistoryReference,
   TerminalOpenInput,
+  TerminalReadHistoryInput,
   TerminalResizeInput,
   TerminalSessionSnapshot,
   TerminalWriteInput,
@@ -133,6 +135,25 @@ class MockTerminalManager implements TerminalManagerShape {
       return snapshot;
     });
 
+  readonly readHistory: TerminalManagerShape["readHistory"] = (input: TerminalReadHistoryInput) =>
+    Effect.sync(() => {
+      const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
+      const existing = this.sessions.get(this.key(input.threadId, terminalId));
+      if (!existing) {
+        return null;
+      }
+      return {
+        threadId: existing.threadId,
+        terminalId: existing.terminalId,
+        history: existing.history,
+        cwd: existing.cwd,
+        status: existing.status,
+        exitCode: existing.exitCode,
+        exitSignal: existing.exitSignal,
+        updatedAt: existing.updatedAt,
+      } satisfies TerminalHistoryReference;
+    });
+
   readonly write: TerminalManagerShape["write"] = (input: TerminalWriteInput) =>
     Effect.sync(() => {
       const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
@@ -140,6 +161,11 @@ class MockTerminalManager implements TerminalManagerShape {
       if (!existing) {
         throw new Error(`Unknown terminal thread: ${input.threadId}`);
       }
+      this.sessions.set(this.key(input.threadId, terminalId), {
+        ...existing,
+        history: `${existing.history}${input.data}`,
+        updatedAt: new Date().toISOString(),
+      });
       queueMicrotask(() => {
         this.emitEvent({
           type: "output",
@@ -1407,6 +1433,12 @@ describe("WebSocket Server", () => {
       data: "echo hello\n",
     });
     expect(write.error).toBeUndefined();
+
+    const readHistory = await sendRequest(ws, WS_METHODS.terminalReadHistory, {
+      threadId: "thread-1",
+    });
+    expect(readHistory.error).toBeUndefined();
+    expect((readHistory.result as TerminalHistoryReference | null)?.history).toBe("echo hello\n");
 
     const resize = await sendRequest(ws, WS_METHODS.terminalResize, {
       threadId: "thread-1",

@@ -30,6 +30,7 @@ import {
   TerminalCloseInput,
   TerminalEvent,
   TerminalOpenInput,
+  TerminalReadHistoryInput,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalWriteInput,
@@ -85,6 +86,7 @@ export const WS_METHODS = {
 
   // Terminal methods
   terminalOpen: "terminal.open",
+  terminalReadHistory: "terminal.readHistory",
   terminalWrite: "terminal.write",
   terminalResize: "terminal.resize",
   terminalClear: "terminal.clear",
@@ -161,6 +163,7 @@ const WebSocketRequestBody = Schema.Union([
 
   // Terminal methods
   tagRequestBody(WS_METHODS.terminalOpen, TerminalOpenInput),
+  tagRequestBody(WS_METHODS.terminalReadHistory, TerminalReadHistoryInput),
   tagRequestBody(WS_METHODS.terminalWrite, TerminalWriteInput),
   tagRequestBody(WS_METHODS.terminalResize, TerminalResizeInput),
   tagRequestBody(WS_METHODS.terminalClear, TerminalClearInput),

@@ -5,6 +5,11 @@ import {
   type ParsedSessionReferenceEntry,
   replaceSessionReferenceTokensForDisplay,
 } from "./sessionReferences";
+import {
+  extractTrailingTerminalLogReferences,
+  replaceTerminalLogReferenceTokensForDisplay,
+  type ParsedTerminalLogReferenceEntry,
+} from "./terminalLogReferences";
 
 export interface TerminalContextSelection {
   terminalId: string;
@@ -35,6 +40,7 @@ export interface DisplayedUserMessageState {
   contexts: ParsedTerminalContextEntry[];
   diffComments: ParsedDiffCommentEntry[];
   sessionReferences: ParsedSessionReferenceEntry[];
+  terminalLogReferences: ParsedTerminalLogReferenceEntry[];
 }
 
 export interface ParsedTerminalContextEntry {
@@ -244,12 +250,24 @@ export function extractTrailingTerminalContexts(prompt: string): ExtractedTermin
 
 export function deriveDisplayedUserMessageState(prompt: string): DisplayedUserMessageState {
   const extractedSessionReferences = extractTrailingSessionReferences(prompt);
-  const extractedDiffComments = extractTrailingDiffComments(extractedSessionReferences.promptText);
+  const extractedTerminalLogReferences = extractTrailingTerminalLogReferences(
+    extractedSessionReferences.promptText,
+  );
+  const extractedDiffComments = extractTrailingDiffComments(
+    extractedTerminalLogReferences.promptText,
+  );
   const extractedContexts = extractTrailingTerminalContexts(extractedDiffComments.promptText);
   const previewSections = [
     ...(extractedSessionReferences.references.length > 0
       ? [
           extractedSessionReferences.references
+            .map(({ header, body }) => (body.length > 0 ? `${header}\n${body}` : header))
+            .join("\n\n"),
+        ]
+      : []),
+    ...(extractedTerminalLogReferences.references.length > 0
+      ? [
+          extractedTerminalLogReferences.references
             .map(({ header, body }) => (body.length > 0 ? `${header}\n${body}` : header))
             .join("\n\n"),
         ]
@@ -270,16 +288,20 @@ export function deriveDisplayedUserMessageState(prompt: string): DisplayedUserMe
       : []),
   ].filter((section) => section.length > 0);
   return {
-    visibleText: replaceSessionReferenceTokensForDisplay(extractedContexts.promptText),
+    visibleText: replaceTerminalLogReferenceTokensForDisplay(
+      replaceSessionReferenceTokensForDisplay(extractedContexts.promptText),
+    ),
     copyText: prompt,
     contextCount:
       extractedSessionReferences.references.length +
+      extractedTerminalLogReferences.references.length +
       extractedContexts.contextCount +
       extractedDiffComments.comments.length,
     previewTitle: previewSections.length > 0 ? previewSections.join("\n\n") : null,
     contexts: extractedContexts.contexts,
     diffComments: extractedDiffComments.comments,
     sessionReferences: extractedSessionReferences.references,
+    terminalLogReferences: extractedTerminalLogReferences.references,
   };
 }
 

@@ -173,6 +173,10 @@ import {
   appendSessionReferencesToPrompt,
   searchWorkspaceSessionReferences,
 } from "../lib/sessionReferences";
+import {
+  appendTerminalLogReferencesToPrompt,
+  searchWorkspaceTerminalLogReferences,
+} from "../lib/terminalLogReferences";
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import {
@@ -1442,6 +1446,36 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }),
   );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const workspaceTerminalLogReferenceItems = useMemo(
+    () =>
+      activeThread && terminalOwnerId
+        ? searchWorkspaceTerminalLogReferences({
+            threads: [{ ...activeThread, id: terminalOwnerId }],
+            terminalStateByThreadId: {
+              [terminalOwnerId]: {
+                terminalIds: terminalState.terminalIds,
+                terminalNamesById: terminalState.terminalNamesById,
+              },
+            },
+            workspaceId: activeThread.workspaceId ?? null,
+            activeThreadId: terminalOwnerId,
+            query: pathTriggerQuery,
+          }).map((reference) => ({
+            id: `terminal-log-reference:${reference.threadId}:${reference.terminalId}`,
+            type: "terminal-log-reference" as const,
+            token: reference.token,
+            label: reference.title,
+            description: reference.description,
+          }))
+        : [],
+    [
+      activeThread,
+      pathTriggerQuery,
+      terminalOwnerId,
+      terminalState.terminalIds,
+      terminalState.terminalNamesById,
+    ],
+  );
   const workspaceSessionReferenceItems = useMemo(
     () =>
       searchWorkspaceSessionReferences({
@@ -1462,6 +1496,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       return [
+        ...workspaceTerminalLogReferenceItems,
         ...workspaceSessionReferenceItems,
         ...workspaceEntries.map((entry) => ({
           id: `path:${entry.kind}:${entry.path}`,
@@ -1523,7 +1558,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries, workspaceSessionReferenceItems]);
+  }, [
+    composerTrigger,
+    searchableModelOptions,
+    workspaceEntries,
+    workspaceSessionReferenceItems,
+    workspaceTerminalLogReferenceItems,
+  ]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -3147,11 +3188,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
       promptWithTerminalContexts,
       composerDiffCommentsSnapshot,
     );
-    const messageTextWithSessionReferences = appendSessionReferencesToPrompt(messageTextForSend, {
-      threads,
-      workspaceId: activeWorkspaceContext.workspaceId,
-      currentThreadId: threadIdForSend,
-    });
+    const messageTextWithTerminalLogReferences = await appendTerminalLogReferencesToPrompt(
+      messageTextForSend,
+      async (reference) => {
+        try {
+          return await api.terminal.readHistory({
+            threadId: reference.threadId,
+            terminalId: reference.terminalId,
+          });
+        } catch {
+          return null;
+        }
+      },
+    );
+    const messageTextWithSessionReferences = appendSessionReferencesToPrompt(
+      messageTextWithTerminalLogReferences,
+      {
+        threads,
+        workspaceId: activeWorkspaceContext.workspaceId,
+        currentThreadId: threadIdForSend,
+      },
+    );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
@@ -3998,6 +4055,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
       if (item.type === "session-reference") {
+        const replacement = `@${item.token} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          {
+            expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+          },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "terminal-log-reference") {
         const replacement = `@${item.token} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,

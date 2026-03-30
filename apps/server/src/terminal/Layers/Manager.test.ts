@@ -230,6 +230,56 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
+  it("reads persisted terminal history without spawning a session", async () => {
+    const { manager, ptyAdapter, logsDir } = makeManager();
+    fs.writeFileSync(historyLogPath(logsDir), "npm run lint\nnpm run typecheck\n", "utf8");
+
+    const history = await manager.readHistory({
+      threadId: "thread-1",
+    });
+
+    expect(history).toEqual({
+      threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
+      history: "npm run lint\nnpm run typecheck\n",
+      cwd: null,
+      status: null,
+      exitCode: null,
+      exitSignal: null,
+      updatedAt: expect.any(String),
+    });
+    expect(ptyAdapter.spawnInputs).toHaveLength(0);
+
+    manager.dispose();
+  });
+
+  it("reads active terminal history with runtime metadata", async () => {
+    const { manager, ptyAdapter } = makeManager();
+    await manager.open(openInput());
+    const process = ptyAdapter.processes[0];
+    expect(process).toBeDefined();
+    if (!process) return;
+
+    process.emitData("pnpm dev\n");
+
+    const history = await manager.readHistory({
+      threadId: "thread-1",
+    });
+
+    expect(history).toEqual({
+      threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
+      history: "pnpm dev\n",
+      cwd: globalThis.process.cwd(),
+      status: "running",
+      exitCode: null,
+      exitSignal: null,
+      updatedAt: expect.any(String),
+    });
+
+    manager.dispose();
+  });
+
   it("supports asynchronous PTY spawn effects", async () => {
     const { manager, ptyAdapter } = makeManager(5, { ptyAdapter: new FakePtyAdapter("async") });
 
