@@ -99,6 +99,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   FolderIcon,
+  ListOrderedIcon,
   ListTodoIcon,
   LockIcon,
   LockOpenIcon,
@@ -143,6 +144,7 @@ import {
   resolveSelectableProvider,
 } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { findTerminalGroupByTerminalId, terminalGroupIdForTerminal } from "../terminalGroups";
@@ -155,6 +157,7 @@ import {
   useEffectiveComposerModelState,
   useComposerThreadDraft,
 } from "../composerDraftStore";
+import { useComposerQueuedMessages, useComposerQueueStore } from "../composerQueueStore";
 import {
   appendDiffCommentsToPrompt,
   formatDiffCommentLabel,
@@ -217,6 +220,7 @@ import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPane
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
 import { ComposerPendingDiffComments } from "./chat/ComposerPendingDiffComments";
+import { ComposerQueuePanel } from "./chat/ComposerQueuePanel";
 import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
@@ -271,6 +275,27 @@ const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const SESSION_OPEN_SCROLL_LOCK_MS = 1500;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+interface PreparedComposerSubmission {
+  summary: string;
+  outgoingMessageText: string;
+  titleSeed: string;
+  modelSelection: ModelSelection;
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+  attachments: Array<{
+    id: string;
+    name: string;
+    mimeType: string;
+    sizeBytes: number;
+    dataUrl: string;
+    previewUrl?: string;
+  }>;
+  restorePrompt: string;
+  restoreImages: ComposerImageAttachment[];
+  restoreTerminalContexts: TerminalContextDraft[];
+  restoreDiffComments: DiffCommentDraft[];
+  expiredTerminalContextCount: number;
+}
 
 function resolveThreadDraftProvider(
   draftsByThreadId: Readonly<Record<ThreadId, ComposerThreadDraftState>>,
@@ -353,6 +378,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const settings = useSettings();
+  const { confirmAndArchiveThread } = useThreadActions();
   const { handleNewThread } = useHandleNewThread();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -422,6 +448,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
+  const queuedComposerMessages = useComposerQueuedMessages(threadId);
+  const enqueueQueuedComposerMessage = useComposerQueueStore((store) => store.enqueueMessage);
+  const markQueuedComposerMessageSending = useComposerQueueStore(
+    (store) => store.markQueuedMessageSending,
+  );
+  const markQueuedComposerMessageFailed = useComposerQueueStore(
+    (store) => store.markQueuedMessageFailed,
+  );
+  const retryQueuedComposerMessage = useComposerQueueStore((store) => store.retryQueuedMessage);
+  const removeQueuedComposerMessage = useComposerQueueStore((store) => store.removeQueuedMessage);
+  const consumeQueuedComposerMessage = useComposerQueueStore((store) => store.consumeQueuedMessage);
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
@@ -505,7 +542,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingUserScrollUpIntentRef = useRef(false);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
-  const sessionOpenScrollLockDeadlineRef = useRef(0);
+  const pendingPinnedScrollFrameRef = useRef<number | null>(null);
+  const pinnedScrollHeightRef = useRef<number | null>(null);
+  const stickToBottomLockDeadlineRef = useRef(0);
   const pendingInteractionAnchorRef = useRef<{
     element: HTMLElement;
     top: number;
@@ -669,7 +708,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread?.branch, activeThread?.workspaceId, activeThread?.worktreePath, workspaces],
   );
   const projectDraftThread = activeProject ? getDraftThreadByProjectId(activeProject.id) : null;
-  const workspaceSessionTabs = (() => {
+  const workspaceSessionTabs = useMemo(() => {
     if (!activeProject || !activeWorkspaceContext.workspaceId || !activeThread) {
       return [];
     }
@@ -747,7 +786,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
       isDraft: thread.isDraft,
       provider: thread.provider,
     }));
-  })();
+  }, [
+    activeProject,
+    activeThread,
+    activeWorkspaceContext.workspaceId,
+    composerDraftsByThreadId,
+    isLocalDraftThread,
+    projectDraftThread,
+    settings.sidebarThreadSortOrder,
+    threads,
+  ]);
   const workspaceTabOrderContextId = useMemo(
     () =>
       buildWorkspaceTabOrderContextId({
@@ -1781,6 +1829,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [terminalOwnerId, storeSetTerminalHeight],
   );
+  const showAndFocusActiveTerminal = useCallback(() => {
+    if (!terminalOwnerId) return;
+    if (!terminalState.terminalOpen) {
+      setTerminalOpen(true);
+    }
+    setActiveWorkspaceTabId(
+      firstTerminalWorkspaceTabId ??
+        workspaceTerminalTabIdForGroup(terminalState.activeTerminalGroupId),
+    );
+    setTerminalFocusRequestId((value) => value + 1);
+  }, [
+    terminalOwnerId,
+    firstTerminalWorkspaceTabId,
+    setActiveWorkspaceTabId,
+    setTerminalOpen,
+    terminalState.activeTerminalGroupId,
+    terminalState.terminalOpen,
+    workspaceTerminalTabIdForGroup,
+  ]);
   const toggleTerminalVisibility = useCallback(() => {
     if (!terminalOwnerId) return;
     if (terminalState.terminalOpen && activeWorkspaceTab?.kind === "terminal") {
@@ -2333,6 +2400,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     pendingAutoScrollFrameRef.current = null;
     window.cancelAnimationFrame(pendingFrame);
   }, []);
+  const cancelPendingPinnedScrollToBottom = useCallback(() => {
+    const pendingFrame = pendingPinnedScrollFrameRef.current;
+    if (pendingFrame === null) return;
+    pendingPinnedScrollFrameRef.current = null;
+    window.cancelAnimationFrame(pendingFrame);
+  }, []);
   const cancelPendingInteractionAnchorAdjustment = useCallback(() => {
     const pendingFrame = pendingInteractionAnchorFrameRef.current;
     if (pendingFrame === null) return;
@@ -2346,11 +2419,57 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scrollMessagesToBottom();
     });
   }, [scrollMessagesToBottom]);
+  const pinMessagesToBottom = useCallback(
+    ({
+      behavior = "auto",
+      lockMs,
+    }: {
+      behavior?: ScrollBehavior;
+      lockMs?: number;
+    } = {}) => {
+      if (typeof lockMs === "number") {
+        stickToBottomLockDeadlineRef.current = Date.now() + Math.max(lockMs, 0);
+      }
+      pinnedScrollHeightRef.current = null;
+      shouldAutoScrollRef.current = true;
+      setShowScrollToBottom(false);
+      cancelPendingStickToBottom();
+      cancelPendingPinnedScrollToBottom();
+
+      const tick = (nextBehavior: ScrollBehavior) => {
+        pendingPinnedScrollFrameRef.current = window.requestAnimationFrame(() => {
+          pendingPinnedScrollFrameRef.current = null;
+          const scrollContainer = messagesScrollRef.current;
+          if (!scrollContainer || !shouldAutoScrollRef.current) return;
+
+          scrollMessagesToBottom(nextBehavior);
+
+          const currentScrollHeight = scrollContainer.scrollHeight;
+          const previousScrollHeight = pinnedScrollHeightRef.current;
+          pinnedScrollHeightRef.current = currentScrollHeight;
+
+          const hasStableScrollHeight =
+            previousScrollHeight !== null &&
+            Math.abs(previousScrollHeight - currentScrollHeight) < 1;
+
+          if (
+            Date.now() <= stickToBottomLockDeadlineRef.current &&
+            (!hasStableScrollHeight || !isScrollContainerNearBottom(scrollContainer))
+          ) {
+            tick("auto");
+          }
+        });
+      };
+
+      tick(behavior);
+    },
+    [cancelPendingPinnedScrollToBottom, cancelPendingStickToBottom, scrollMessagesToBottom],
+  );
   const keepSessionOpenScrolledToBottom = useCallback(() => {
     if (!shouldAutoScrollRef.current) return;
-    if (Date.now() > sessionOpenScrollLockDeadlineRef.current) return;
-    scheduleStickToBottom();
-  }, [scheduleStickToBottom]);
+    if (Date.now() > stickToBottomLockDeadlineRef.current) return;
+    pinMessagesToBottom();
+  }, [pinMessagesToBottom]);
   const onMessagesClickCapture = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       const scrollContainer = messagesScrollRef.current;
@@ -2387,10 +2506,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [cancelPendingInteractionAnchorAdjustment],
   );
   const forceStickToBottom = useCallback(() => {
-    cancelPendingStickToBottom();
-    scrollMessagesToBottom();
-    scheduleStickToBottom();
-  }, [cancelPendingStickToBottom, scheduleStickToBottom, scrollMessagesToBottom]);
+    pinMessagesToBottom({ lockMs: SESSION_OPEN_SCROLL_LOCK_MS });
+  }, [pinMessagesToBottom]);
   const onMessagesScroll = useCallback(() => {
     const scrollContainer = messagesScrollRef.current;
     if (!scrollContainer) return;
@@ -2456,25 +2573,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
   useEffect(() => {
     return () => {
       cancelPendingStickToBottom();
+      cancelPendingPinnedScrollToBottom();
       cancelPendingInteractionAnchorAdjustment();
     };
-  }, [cancelPendingInteractionAnchorAdjustment, cancelPendingStickToBottom]);
+  }, [
+    cancelPendingInteractionAnchorAdjustment,
+    cancelPendingPinnedScrollToBottom,
+    cancelPendingStickToBottom,
+  ]);
   useLayoutEffect(() => {
     if (!activeThread?.id) return;
-    sessionOpenScrollLockDeadlineRef.current = Date.now() + SESSION_OPEN_SCROLL_LOCK_MS;
-    shouldAutoScrollRef.current = true;
-    setShowScrollToBottom(false);
-    scheduleStickToBottom();
+    pinMessagesToBottom({ lockMs: SESSION_OPEN_SCROLL_LOCK_MS });
     const timeout = window.setTimeout(() => {
       const scrollContainer = messagesScrollRef.current;
       if (!scrollContainer) return;
       if (isScrollContainerNearBottom(scrollContainer)) return;
-      scheduleStickToBottom();
+      pinMessagesToBottom();
     }, 96);
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [activeThread?.id, scheduleStickToBottom]);
+  }, [activeThread?.id, pinMessagesToBottom]);
   useLayoutEffect(() => {
     const composerForm = composerFormRef.current;
     if (!composerForm) return;
@@ -2866,6 +2985,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
+        if (terminalState.terminalOpen && !shortcutContext.terminalFocus) {
+          showAndFocusActiveTerminal();
+          return;
+        }
         toggleTerminalVisibility();
         return;
       }
@@ -2927,6 +3050,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     isWorkspaceCommandPaletteOpen,
     setTerminalOpen,
     runProjectScript,
+    showAndFocusActiveTerminal,
     splitTerminal,
     keybindings,
     onToggleDiff,
@@ -3088,63 +3212,231 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
-    e?.preventDefault();
-    const api = readNativeApi();
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
-    if (activePendingProgress) {
-      onAdvanceActivePendingUserInput();
-      return;
-    }
-    const promptForSend = promptRef.current;
-    const {
-      trimmedPrompt: trimmed,
-      sendableTerminalContexts: sendableComposerTerminalContexts,
-      sendableDiffComments: sendableComposerDiffComments,
-      expiredTerminalContextCount,
-      hasSendableContent,
-    } = deriveComposerSendState({
-      prompt: promptForSend,
-      imageCount: composerImages.length,
-      terminalContexts: composerTerminalContexts,
-      diffComments: composerDiffComments,
-    });
-    if (showPlanFollowUpPrompt && activeProposedPlan) {
-      const followUp = resolvePlanFollowUpSubmission({
-        draftText: trimmed,
-        planMarkdown: activeProposedPlan.planMarkdown,
-      });
+  const clearComposerInput = useCallback(
+    (targetThreadId: ThreadId) => {
       promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
+      clearComposerDraftContent(targetThreadId);
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
       setComposerTrigger(null);
-      await onSubmitPlanFollowUp({
-        text: followUp.text,
-        interactionMode: followUp.interactionMode,
+    },
+    [clearComposerDraftContent],
+  );
+
+  const restorePreparedSubmissionToComposer = useCallback(
+    (prepared: PreparedComposerSubmission) => {
+      promptRef.current = prepared.restorePrompt;
+      setPrompt(prepared.restorePrompt);
+      setComposerCursor(
+        collapseExpandedComposerCursor(prepared.restorePrompt, prepared.restorePrompt.length),
+      );
+      addComposerImagesToDraft(prepared.restoreImages.map(cloneComposerImageForRetry));
+      addComposerTerminalContextsToDraft(prepared.restoreTerminalContexts);
+      addComposerDiffCommentsToDraft(prepared.restoreDiffComments);
+      setComposerTrigger(
+        detectComposerTrigger(prepared.restorePrompt, prepared.restorePrompt.length),
+      );
+    },
+    [
+      addComposerDiffCommentsToDraft,
+      addComposerImagesToDraft,
+      addComposerTerminalContextsToDraft,
+      setPrompt,
+    ],
+  );
+
+  const prepareComposerSubmission =
+    useCallback(async (): Promise<PreparedComposerSubmission | null> => {
+      const api = readNativeApi();
+      if (!api || !activeThread) {
+        return null;
+      }
+
+      const promptForSend = promptRef.current;
+      const {
+        trimmedPrompt: trimmed,
+        sendableTerminalContexts,
+        sendableDiffComments,
+        expiredTerminalContextCount,
+        hasSendableContent,
+      } = deriveComposerSendState({
+        prompt: promptForSend,
+        imageCount: composerImages.length,
+        terminalContexts: composerTerminalContexts,
+        diffComments: composerDiffComments,
       });
-      return;
-    }
-    const standaloneSlashCommand =
-      composerImages.length === 0 &&
-      sendableComposerTerminalContexts.length === 0 &&
-      sendableComposerDiffComments.length === 0
-        ? parseStandaloneComposerSlashCommand(trimmed)
-        : null;
-    if (standaloneSlashCommand) {
-      handleInteractionModeChange(standaloneSlashCommand);
-      promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
-      return;
-    }
-    if (!hasSendableContent) {
-      if (expiredTerminalContextCount > 0) {
+      if (!hasSendableContent) {
+        if (expiredTerminalContextCount > 0) {
+          const toastCopy = buildExpiredTerminalContextToastCopy(
+            expiredTerminalContextCount,
+            "empty",
+          );
+          toastManager.add({
+            type: "warning",
+            title: toastCopy.title,
+            description: toastCopy.description,
+          });
+        }
+        return null;
+      }
+
+      const composerImagesSnapshot = [...composerImages];
+      const composerTerminalContextsSnapshot = [...sendableTerminalContexts];
+      const composerDiffCommentsSnapshot = [...sendableDiffComments];
+      const promptWithTerminalContexts = appendTerminalContextsToPrompt(
+        promptForSend,
+        composerTerminalContextsSnapshot,
+      );
+      const messageTextForSend = appendDiffCommentsToPrompt(
+        promptWithTerminalContexts,
+        composerDiffCommentsSnapshot,
+      );
+      const messageTextWithTerminalLogReferences = await appendTerminalLogReferencesToPrompt(
+        messageTextForSend,
+        async (reference) => {
+          try {
+            return await api.terminal.readHistory({
+              threadId: reference.threadId,
+              terminalId: reference.terminalId,
+            });
+          } catch {
+            return null;
+          }
+        },
+      );
+      const messageTextWithSessionReferences = appendSessionReferencesToPrompt(
+        messageTextWithTerminalLogReferences,
+        {
+          threads,
+          workspaceId: activeWorkspaceContext.workspaceId,
+          currentThreadId: activeThread.id,
+        },
+      );
+
+      let titleSeed = trimmed;
+      if (!titleSeed) {
+        if (composerImagesSnapshot[0]) {
+          titleSeed = `Image: ${composerImagesSnapshot[0].name}`;
+        } else if (composerTerminalContextsSnapshot[0]) {
+          titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]);
+        } else if (composerDiffCommentsSnapshot[0]) {
+          titleSeed = formatDiffCommentLabel(composerDiffCommentsSnapshot[0]);
+        } else {
+          titleSeed = "New thread";
+        }
+      }
+
+      const formattedText = formatOutgoingPrompt({
+        provider: selectedProvider,
+        model: selectedModel,
+        models: selectedProviderModels,
+        effort: selectedPromptEffort,
+        text: messageTextWithSessionReferences || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      });
+      const attachments = await Promise.all(
+        composerImagesSnapshot.map(async (image) => ({
+          id: image.id,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(image.file),
+          previewUrl: image.previewUrl,
+        })),
+      );
+
+      return {
+        summary: truncate(trimmed || titleSeed, 120),
+        outgoingMessageText: formattedText,
+        titleSeed: truncate(titleSeed),
+        modelSelection: selectedModelSelection,
+        runtimeMode,
+        interactionMode,
+        attachments,
+        restorePrompt: promptForSend,
+        restoreImages: composerImagesSnapshot,
+        restoreTerminalContexts: composerTerminalContextsSnapshot,
+        restoreDiffComments: composerDiffCommentsSnapshot,
+        expiredTerminalContextCount,
+      };
+    }, [
+      activeThread,
+      activeWorkspaceContext.workspaceId,
+      composerDiffComments,
+      composerImages,
+      composerTerminalContexts,
+      interactionMode,
+      runtimeMode,
+      selectedModel,
+      selectedModelSelection,
+      selectedPromptEffort,
+      selectedProvider,
+      selectedProviderModels,
+      threads,
+    ]);
+
+  const dispatchPreparedComposerSubmission = useCallback(
+    async (
+      prepared: PreparedComposerSubmission,
+      options: {
+        queuedMessageId?: string;
+        restoreComposerOnFailure: boolean;
+        failureMessage: string;
+      },
+    ): Promise<boolean> => {
+      const api = readNativeApi();
+      if (!api || !activeThread || !activeProject) {
+        return false;
+      }
+
+      const threadIdForSend = activeThread.id;
+      const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+      const baseBranchForWorktree =
+        isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
+          ? activeThread.branch
+          : null;
+      const shouldCreateWorktree =
+        isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
+      if (shouldCreateWorktree && !activeThread.branch) {
+        const message = "Select a base branch before sending in New worktree mode.";
+        setStoreThreadError(threadIdForSend, message);
+        if (options.queuedMessageId) {
+          markQueuedComposerMessageFailed(threadIdForSend, options.queuedMessageId, message);
+        }
+        return false;
+      }
+
+      sendInFlightRef.current = true;
+      beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
+
+      const messageIdForSend = newMessageId();
+      const messageCreatedAt = new Date().toISOString();
+      const optimisticAttachments = prepared.attachments.map((attachment) => ({
+        type: "image" as const,
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        ...(attachment.previewUrl ? { previewUrl: attachment.previewUrl } : {}),
+      }));
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: prepared.outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      shouldAutoScrollRef.current = true;
+      forceStickToBottom();
+
+      setThreadError(threadIdForSend, null);
+      if (prepared.expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
-          expiredTerminalContextCount,
-          "empty",
+          prepared.expiredTerminalContextCount,
+          "omitted",
         );
         toastManager.add({
           type: "warning",
@@ -3152,219 +3444,63 @@ export default function ChatView({ threadId }: ChatViewProps) {
           description: toastCopy.description,
         });
       }
-      return;
-    }
-    if (!activeProject) return;
-    const threadIdForSend = activeThread.id;
-    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
-        ? activeThread.branch
-        : null;
 
-    // In worktree mode, require an explicit base branch so we don't silently
-    // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThread.branch) {
-      setStoreThreadError(
-        threadIdForSend,
-        "Select a base branch before sending in New worktree mode.",
-      );
-      return;
-    }
+      let createdServerThreadForLocalDraft = false;
+      let turnStartSucceeded = false;
+      let nextThreadBranch = activeThread.branch;
+      let nextThreadWorktreePath = activeThread.worktreePath;
 
-    sendInFlightRef.current = true;
-    beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
-
-    const composerImagesSnapshot = [...composerImages];
-    const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
-    const composerDiffCommentsSnapshot = [...sendableComposerDiffComments];
-    const promptWithTerminalContexts = appendTerminalContextsToPrompt(
-      promptForSend,
-      composerTerminalContextsSnapshot,
-    );
-    const messageTextForSend = appendDiffCommentsToPrompt(
-      promptWithTerminalContexts,
-      composerDiffCommentsSnapshot,
-    );
-    const messageTextWithTerminalLogReferences = await appendTerminalLogReferencesToPrompt(
-      messageTextForSend,
-      async (reference) => {
-        try {
-          return await api.terminal.readHistory({
-            threadId: reference.threadId,
-            terminalId: reference.terminalId,
+      await (async () => {
+        if (baseBranchForWorktree) {
+          beginSendPhase("preparing-worktree");
+          const newBranch = buildTemporaryWorktreeBranchName();
+          const result = await createWorktreeMutation.mutateAsync({
+            cwd: activeProject.cwd,
+            branch: baseBranchForWorktree,
+            newBranch,
           });
-        } catch {
-          return null;
-        }
-      },
-    );
-    const messageTextWithSessionReferences = appendSessionReferencesToPrompt(
-      messageTextWithTerminalLogReferences,
-      {
-        threads,
-        workspaceId: activeWorkspaceContext.workspaceId,
-        currentThreadId: threadIdForSend,
-      },
-    );
-    const messageIdForSend = newMessageId();
-    const messageCreatedAt = new Date().toISOString();
-    const outgoingMessageText = formatOutgoingPrompt({
-      provider: selectedProvider,
-      model: selectedModel,
-      models: selectedProviderModels,
-      effort: selectedPromptEffort,
-      text: messageTextWithSessionReferences || IMAGE_ONLY_BOOTSTRAP_PROMPT,
-    });
-    const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
-        type: "image" as const,
-        name: image.name,
-        mimeType: image.mimeType,
-        sizeBytes: image.sizeBytes,
-        dataUrl: await readFileAsDataUrl(image.file),
-      })),
-    );
-    const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        createdAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
-    // Sending a message should always bring the latest user turn into view.
-    shouldAutoScrollRef.current = true;
-    forceStickToBottom();
-
-    setThreadError(threadIdForSend, null);
-    if (expiredTerminalContextCount > 0) {
-      const toastCopy = buildExpiredTerminalContextToastCopy(
-        expiredTerminalContextCount,
-        "omitted",
-      );
-      toastManager.add({
-        type: "warning",
-        title: toastCopy.title,
-        description: toastCopy.description,
-      });
-    }
-    promptRef.current = "";
-    clearComposerDraftContent(threadIdForSend);
-    setComposerHighlightedItemId(null);
-    setComposerCursor(0);
-    setComposerTrigger(null);
-
-    let createdServerThreadForLocalDraft = false;
-    let turnStartSucceeded = false;
-    let nextThreadBranch = activeThread.branch;
-    let nextThreadWorktreePath = activeThread.worktreePath;
-    await (async () => {
-      // On first message: lock in branch + create worktree if needed.
-      if (baseBranchForWorktree) {
-        beginSendPhase("preparing-worktree");
-        const newBranch = buildTemporaryWorktreeBranchName();
-        const result = await createWorktreeMutation.mutateAsync({
-          cwd: activeProject.cwd,
-          branch: baseBranchForWorktree,
-          newBranch,
-        });
-        nextThreadBranch = result.worktree.branch;
-        nextThreadWorktreePath = result.worktree.path;
-        if (isServerThread) {
-          await api.orchestration.dispatchCommand({
-            type: "thread.meta.update",
-            commandId: newCommandId(),
-            threadId: threadIdForSend,
-            branch: result.worktree.branch,
-            worktreePath: result.worktree.path,
-          });
-          // Keep local thread state in sync immediately so terminal drawer opens
-          // with the worktree cwd/env instead of briefly using the project root.
-          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
-        }
-      }
-
-      let firstComposerImageName: string | null = null;
-      if (composerImagesSnapshot.length > 0) {
-        const firstComposerImage = composerImagesSnapshot[0];
-        if (firstComposerImage) {
-          firstComposerImageName = firstComposerImage.name;
-        }
-      }
-      let titleSeed = trimmed;
-      if (!titleSeed) {
-        if (firstComposerImageName) {
-          titleSeed = `Image: ${firstComposerImageName}`;
-        } else if (composerTerminalContextsSnapshot.length > 0) {
-          titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
-        } else if (composerDiffCommentsSnapshot.length > 0) {
-          titleSeed = formatDiffCommentLabel(composerDiffCommentsSnapshot[0]!);
-        } else {
-          titleSeed = "New thread";
-        }
-      }
-      const title = truncate(titleSeed);
-      const threadCreateModelSelection: ModelSelection = {
-        provider: selectedProvider,
-        model:
-          selectedModel ||
-          activeProject.defaultModelSelection?.model ||
-          DEFAULT_MODEL_BY_PROVIDER.codex,
-        ...(selectedModelSelection.options ? { options: selectedModelSelection.options } : {}),
-      };
-
-      if (isLocalDraftThread) {
-        const threadCreateWorkspaceContext = resolveExistingWorkspaceContext({
-          workspaceId: activeThread.workspaceId,
-          branch: nextThreadBranch,
-          worktreePath: nextThreadWorktreePath,
-          workspaces,
-        });
-        await api.orchestration.dispatchCommand({
-          type: "thread.create",
-          commandId: newCommandId(),
-          threadId: threadIdForSend,
-          projectId: activeProject.id,
-          workspaceId: threadCreateWorkspaceContext.workspaceId,
-          title,
-          modelSelection: threadCreateModelSelection,
-          runtimeMode,
-          interactionMode,
-          branch: threadCreateWorkspaceContext.branch,
-          worktreePath: threadCreateWorkspaceContext.worktreePath,
-          createdAt: activeThread.createdAt,
-        });
-        createdServerThreadForLocalDraft = true;
-      }
-
-      let setupScript: ProjectScript | null = null;
-      if (baseBranchForWorktree) {
-        setupScript = setupProjectScript(activeProject.scripts);
-      }
-      if (setupScript) {
-        let shouldRunSetupScript = false;
-        if (isServerThread) {
-          shouldRunSetupScript = true;
-        } else {
-          if (createdServerThreadForLocalDraft) {
-            shouldRunSetupScript = true;
+          nextThreadBranch = result.worktree.branch;
+          nextThreadWorktreePath = result.worktree.path;
+          if (isServerThread) {
+            await api.orchestration.dispatchCommand({
+              type: "thread.meta.update",
+              commandId: newCommandId(),
+              threadId: threadIdForSend,
+              branch: result.worktree.branch,
+              worktreePath: result.worktree.path,
+            });
+            setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
           }
         }
-        if (shouldRunSetupScript) {
+
+        if (isLocalDraftThread) {
+          const threadCreateWorkspaceContext = resolveExistingWorkspaceContext({
+            workspaceId: activeThread.workspaceId,
+            branch: nextThreadBranch,
+            worktreePath: nextThreadWorktreePath,
+            workspaces,
+          });
+          await api.orchestration.dispatchCommand({
+            type: "thread.create",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            projectId: activeProject.id,
+            workspaceId: threadCreateWorkspaceContext.workspaceId,
+            title: prepared.titleSeed,
+            modelSelection: prepared.modelSelection,
+            runtimeMode: prepared.runtimeMode,
+            interactionMode: prepared.interactionMode,
+            branch: threadCreateWorkspaceContext.branch,
+            worktreePath: threadCreateWorkspaceContext.worktreePath,
+            createdAt: activeThread.createdAt,
+          });
+          createdServerThreadForLocalDraft = true;
+        }
+
+        const setupScript = baseBranchForWorktree
+          ? setupProjectScript(activeProject.scripts)
+          : null;
+        if (setupScript && (isServerThread || createdServerThreadForLocalDraft)) {
           const setupScriptOptions: Parameters<typeof runProjectScript>[1] = {
             worktreePath: nextThreadWorktreePath,
             rememberAsLastInvoked: false,
@@ -3374,64 +3510,60 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           await runProjectScript(setupScript, setupScriptOptions);
         }
-      }
 
-      // Auto-title from first message
-      if (isFirstMessage && isServerThread) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.meta.update",
-          commandId: newCommandId(),
-          threadId: threadIdForSend,
-          title,
-        });
-      }
-
-      if (isServerThread) {
-        await persistThreadSettingsForNextTurn({
-          threadId: threadIdForSend,
-          createdAt: messageCreatedAt,
-          ...(selectedModel ? { modelSelection: selectedModelSelection } : {}),
-          runtimeMode,
-          interactionMode,
-        });
-      }
-
-      beginSendPhase("sending-turn");
-      const turnAttachments = await turnAttachmentsPromise;
-      await api.orchestration.dispatchCommand({
-        type: "thread.turn.start",
-        commandId: newCommandId(),
-        threadId: threadIdForSend,
-        message: {
-          messageId: messageIdForSend,
-          role: "user",
-          text: outgoingMessageText,
-          attachments: turnAttachments,
-        },
-        modelSelection: selectedModelSelection,
-        titleSeed: title,
-        runtimeMode,
-        interactionMode,
-        createdAt: messageCreatedAt,
-      });
-      turnStartSucceeded = true;
-    })().catch(async (err: unknown) => {
-      if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.delete",
+        if (isFirstMessage && isServerThread) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.meta.update",
             commandId: newCommandId(),
             threadId: threadIdForSend,
-          })
-          .catch(() => undefined);
-      }
-      if (
-        !turnStartSucceeded &&
-        promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0 &&
-        composerDiffCommentsRef.current.length === 0
-      ) {
+            title: prepared.titleSeed,
+          });
+        }
+
+        if (isServerThread) {
+          await persistThreadSettingsForNextTurn({
+            threadId: threadIdForSend,
+            createdAt: messageCreatedAt,
+            modelSelection: prepared.modelSelection,
+            runtimeMode: prepared.runtimeMode,
+            interactionMode: prepared.interactionMode,
+          });
+        }
+
+        beginSendPhase("sending-turn");
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: prepared.outgoingMessageText,
+            attachments: prepared.attachments.map(
+              ({ id: _id, previewUrl: _previewUrl, ...rest }) => ({
+                type: "image" as const,
+                ...rest,
+              }),
+            ),
+          },
+          modelSelection: prepared.modelSelection,
+          titleSeed: prepared.titleSeed,
+          runtimeMode: prepared.runtimeMode,
+          interactionMode: prepared.interactionMode,
+          createdAt: messageCreatedAt,
+        });
+        turnStartSucceeded = true;
+      })().catch(async (err: unknown) => {
+        if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
+          await api.orchestration
+            .dispatchCommand({
+              type: "thread.delete",
+              commandId: newCommandId(),
+              threadId: threadIdForSend,
+            })
+            .catch(() => undefined);
+        }
+
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
           for (const message of removed) {
@@ -3440,24 +3572,212 @@ export default function ChatView({ threadId }: ChatViewProps) {
           const next = existing.filter((message) => message.id !== messageIdForSend);
           return next.length === existing.length ? existing : next;
         });
-        promptRef.current = promptForSend;
-        setPrompt(promptForSend);
-        setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
-        addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
-        addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
-        addComposerDiffCommentsToDraft(composerDiffCommentsSnapshot);
-        setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
+
+        if (
+          options.restoreComposerOnFailure &&
+          promptRef.current.length === 0 &&
+          composerImagesRef.current.length === 0 &&
+          composerTerminalContextsRef.current.length === 0 &&
+          composerDiffCommentsRef.current.length === 0
+        ) {
+          restorePreparedSubmissionToComposer(prepared);
+        }
+
+        const message = err instanceof Error ? err.message : options.failureMessage;
+        setThreadError(threadIdForSend, message);
+        if (options.queuedMessageId) {
+          markQueuedComposerMessageFailed(threadIdForSend, options.queuedMessageId, message);
+        }
+      });
+
+      sendInFlightRef.current = false;
+      if (!turnStartSucceeded) {
+        resetSendPhase();
+        return false;
       }
-      setThreadError(
-        threadIdForSend,
-        err instanceof Error ? err.message : "Failed to send message.",
-      );
-    });
-    sendInFlightRef.current = false;
-    if (!turnStartSucceeded) {
-      resetSendPhase();
+      if (options.queuedMessageId) {
+        consumeQueuedComposerMessage(threadIdForSend, options.queuedMessageId);
+      }
+      return true;
+    },
+    [
+      activeProject,
+      activeThread,
+      beginSendPhase,
+      consumeQueuedComposerMessage,
+      createWorktreeMutation,
+      envMode,
+      forceStickToBottom,
+      isLocalDraftThread,
+      isServerThread,
+      markQueuedComposerMessageFailed,
+      persistThreadSettingsForNextTurn,
+      resetSendPhase,
+      restorePreparedSubmissionToComposer,
+      runProjectScript,
+      setStoreThreadBranch,
+      setStoreThreadError,
+      setThreadError,
+      workspaces,
+    ],
+  );
+
+  const onQueueMessage = async () => {
+    if (!activeThread || activePendingProgress) {
+      return;
     }
+
+    const promptForSend = promptRef.current;
+    const {
+      trimmedPrompt: trimmed,
+      sendableTerminalContexts,
+      sendableDiffComments,
+    } = deriveComposerSendState({
+      prompt: promptForSend,
+      imageCount: composerImages.length,
+      terminalContexts: composerTerminalContexts,
+      diffComments: composerDiffComments,
+    });
+    const standaloneSlashCommand =
+      composerImages.length === 0 &&
+      sendableTerminalContexts.length === 0 &&
+      sendableDiffComments.length === 0
+        ? parseStandaloneComposerSlashCommand(trimmed)
+        : null;
+    if (standaloneSlashCommand) {
+      return;
+    }
+
+    const prepared = await prepareComposerSubmission();
+    if (!prepared) {
+      return;
+    }
+
+    clearComposerInput(activeThread.id);
+    enqueueQueuedComposerMessage(activeThread.id, {
+      id: randomUUID(),
+      threadId: activeThread.id,
+      createdAt: new Date().toISOString(),
+      summary: prepared.summary,
+      text: prepared.outgoingMessageText,
+      titleSeed: prepared.titleSeed,
+      attachments: prepared.attachments,
+      modelSelection: prepared.modelSelection,
+      runtimeMode: prepared.runtimeMode,
+      interactionMode: prepared.interactionMode,
+      status: "queued",
+      error: null,
+    });
   };
+
+  const onSend = async (e?: { preventDefault: () => void }) => {
+    e?.preventDefault();
+    const api = readNativeApi();
+    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (activePendingProgress) {
+      onAdvanceActivePendingUserInput();
+      return;
+    }
+
+    const promptForSend = promptRef.current;
+    const {
+      trimmedPrompt: trimmed,
+      sendableTerminalContexts,
+      sendableDiffComments,
+    } = deriveComposerSendState({
+      prompt: promptForSend,
+      imageCount: composerImages.length,
+      terminalContexts: composerTerminalContexts,
+      diffComments: composerDiffComments,
+    });
+
+    if (showPlanFollowUpPrompt && activeProposedPlan) {
+      const followUp = resolvePlanFollowUpSubmission({
+        draftText: trimmed,
+        planMarkdown: activeProposedPlan.planMarkdown,
+      });
+      clearComposerInput(activeThread.id);
+      await onSubmitPlanFollowUp({
+        text: followUp.text,
+        interactionMode: followUp.interactionMode,
+      });
+      return;
+    }
+
+    const standaloneSlashCommand =
+      composerImages.length === 0 &&
+      sendableTerminalContexts.length === 0 &&
+      sendableDiffComments.length === 0
+        ? parseStandaloneComposerSlashCommand(trimmed)
+        : null;
+    if (standaloneSlashCommand) {
+      handleInteractionModeChange(standaloneSlashCommand);
+      clearComposerInput(activeThread.id);
+      return;
+    }
+
+    const prepared = await prepareComposerSubmission();
+    if (!prepared) {
+      return;
+    }
+
+    clearComposerInput(activeThread.id);
+    await dispatchPreparedComposerSubmission(prepared, {
+      restoreComposerOnFailure: true,
+      failureMessage: "Failed to send message.",
+    });
+  };
+
+  useEffect(() => {
+    const nextQueuedMessage = queuedComposerMessages[0];
+    if (!activeThread || !nextQueuedMessage || nextQueuedMessage.status !== "queued") {
+      return;
+    }
+    if (
+      sendInFlightRef.current ||
+      sendPhase !== "idle" ||
+      phase === "running" ||
+      isConnecting ||
+      activePendingApproval !== null ||
+      activePendingUserInput !== null ||
+      activeThread.error
+    ) {
+      return;
+    }
+
+    markQueuedComposerMessageSending(activeThread.id, nextQueuedMessage.id);
+    void dispatchPreparedComposerSubmission(
+      {
+        summary: nextQueuedMessage.summary,
+        outgoingMessageText: nextQueuedMessage.text,
+        titleSeed: nextQueuedMessage.titleSeed,
+        modelSelection: nextQueuedMessage.modelSelection,
+        runtimeMode: nextQueuedMessage.runtimeMode,
+        interactionMode: nextQueuedMessage.interactionMode,
+        attachments: nextQueuedMessage.attachments,
+        restorePrompt: "",
+        restoreImages: [],
+        restoreTerminalContexts: [],
+        restoreDiffComments: [],
+        expiredTerminalContextCount: 0,
+      },
+      {
+        queuedMessageId: nextQueuedMessage.id,
+        restoreComposerOnFailure: false,
+        failureMessage: "Failed to send queued message.",
+      },
+    );
+  }, [
+    activePendingApproval,
+    activePendingUserInput,
+    activeThread,
+    dispatchPreparedComposerSubmission,
+    isConnecting,
+    markQueuedComposerMessageSending,
+    phase,
+    queuedComposerMessages,
+    sendPhase,
+  ]);
 
   const onInterrupt = async () => {
     const api = readNativeApi();
@@ -4239,6 +4559,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     }
 
+    if (key === "Tab" && !event.shiftKey) {
+      const queueSendState = deriveComposerSendState({
+        prompt: promptRef.current,
+        imageCount: composerImages.length,
+        terminalContexts: composerTerminalContexts,
+        diffComments: composerDiffComments,
+      });
+      const standaloneSlashCommand =
+        composerImages.length === 0 &&
+        queueSendState.sendableTerminalContexts.length === 0 &&
+        queueSendState.sendableDiffComments.length === 0
+          ? parseStandaloneComposerSlashCommand(queueSendState.trimmedPrompt)
+          : null;
+      if (!queueSendState.hasSendableContent || standaloneSlashCommand || showPlanFollowUpPrompt) {
+        return false;
+      }
+      void onQueueMessage();
+      return true;
+    }
+
     if (key === "Enter" && !event.shiftKey) {
       void onSend();
       return true;
@@ -4412,6 +4752,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
   const closeWorkspaceTab = useCallback(
     (tabId: WorkspaceTabId) => {
+      const targetTab = workspaceTabs.find((tab) => tab.id === tabId);
+      if (targetTab?.kind === "session") {
+        if (targetTab.isDraft) {
+          return;
+        }
+        void confirmAndArchiveThread(targetTab.threadId, { forceConfirm: true }).catch((error) => {
+          toastManager.add({
+            type: "error",
+            title: "Failed to archive thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        });
+        return;
+      }
+
       if (tabId === "diff") {
         if (diffOpen) {
           onToggleDiff();
@@ -4455,8 +4810,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
-      const targetTab = workspaceTabs.find((tab) => tab.kind === "terminal" && tab.id === tabId);
-      if (!targetTab || targetTab.kind !== "terminal") {
+      const targetTerminalTab = workspaceTabs.find(
+        (tab) => tab.kind === "terminal" && tab.id === tabId,
+      );
+      if (!targetTerminalTab || targetTerminalTab.kind !== "terminal") {
         return;
       }
 
@@ -4467,7 +4824,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setActiveWorkspaceTabId(fallbackTabId);
       }
 
-      targetTab.terminalIds.forEach((terminalId) => {
+      targetTerminalTab.terminalIds.forEach((terminalId) => {
         closeTerminal(terminalId);
       });
     },
@@ -4476,6 +4833,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeProject,
       closeWorkspaceEditorFile,
       closeTerminal,
+      confirmAndArchiveThread,
       diffOpen,
       defaultConversationWorkspaceTabId,
       onToggleDiff,
@@ -4746,7 +5104,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
                     <button
                       type="button"
-                      onClick={() => scrollMessagesToBottom("smooth")}
+                      onClick={() =>
+                        pinMessagesToBottom({
+                          behavior: "smooth",
+                          lockMs: SESSION_OPEN_SCROLL_LOCK_MS,
+                        })
+                      }
                       className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
                     >
                       <ChevronDownIcon className="size-3.5" />
@@ -4808,6 +5171,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           />
                         </div>
                       ) : null}
+                      <ComposerQueuePanel
+                        queuedMessages={queuedComposerMessages}
+                        onRetryMessage={(messageId) =>
+                          retryQueuedComposerMessage(threadId, messageId)
+                        }
+                        onRemoveMessage={(messageId) =>
+                          removeQueuedComposerMessage(threadId, messageId)
+                        }
+                      />
                       <div
                         className={cn(
                           "relative px-3 pb-2 sm:px-4",
@@ -5103,6 +5475,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               <span className="text-muted-foreground/70 text-xs">
                                 Preparing worktree...
                               </span>
+                            ) : null}
+                            {pendingUserInputs.length === 0 && !showPlanFollowUpPrompt ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="rounded-full px-3"
+                                onClick={() => void onQueueMessage()}
+                                disabled={!composerSendState.hasSendableContent}
+                                title="Queue message (Tab)"
+                              >
+                                <ListOrderedIcon className="size-3.5" />
+                                <span className="hidden sm:inline">Queue</span>
+                              </Button>
                             ) : null}
                             {activePendingProgress ? (
                               <div className="flex items-center gap-2">

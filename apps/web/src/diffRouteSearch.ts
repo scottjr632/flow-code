@@ -42,10 +42,7 @@ export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRoute
   const diffTurnIdRaw = diff ? normalizeSearchString(search.diffTurnId) : undefined;
   const diffTurnId =
     diffSelection === undefined && diffTurnIdRaw ? TurnId.makeUnsafe(diffTurnIdRaw) : undefined;
-  const diffFilePath =
-    diff && diffTurnId && diffSelection === undefined
-      ? normalizeSearchString(search.diffFilePath)
-      : undefined;
+  const diffFilePath = diff ? normalizeSearchString(search.diffFilePath) : undefined;
 
   return {
     ...(diff ? { diff } : {}),

@@ -8,6 +8,8 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   Columns2Icon,
+  PanelRightCloseIcon,
+  PanelRightIcon,
   Rows3Icon,
   TextWrapIcon,
   XIcon,
@@ -34,6 +36,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
+import { buildReviewFileRenderKey, resolveReviewFilePath } from "../lib/reviewDiffFiles";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
 import { useSettings } from "../hooks/useSettings";
@@ -51,6 +54,7 @@ import {
   toggleCollapsedFileKey,
 } from "./DiffPanel.logic";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { ReviewFileTree } from "./ReviewFileTree";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
@@ -165,18 +169,6 @@ function getRenderablePatch(
   }
 }
 
-function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
-  const raw = fileDiff.name ?? fileDiff.prevName ?? "";
-  if (raw.startsWith("a/") || raw.startsWith("b/")) {
-    return raw.slice(2);
-  }
-  return raw;
-}
-
-function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
-  return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
-}
-
 interface DraftDiffCommentSelection {
   fileKey: string;
   filePath: string;
@@ -265,7 +257,7 @@ function buildCommentSelectionFromRange(
   }
   return {
     fileKey,
-    filePath: resolveFileDiffPath(fileDiff),
+    filePath: resolveReviewFilePath(fileDiff),
     lineStart,
     lineEnd,
     side,
@@ -285,6 +277,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const settings = useSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
+  const [fileTreeOpen, setFileTreeOpen] = useState(true);
   const [collapsedFileKeys, setCollapsedFileKeys] = useState<ReadonlySet<string>>(new Set());
   const [selectedRangesByFileKey, setSelectedRangesByFileKey] = useState<
     Record<string, SelectedLineRange | null>
@@ -333,10 +326,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   const selectedDiffSelection = diffSearch.diffSelection ?? null;
   const selectedTurnId = diffSearch.diffTurnId ?? null;
-  const selectedFilePath =
-    selectedDiffSelection === null && selectedTurnId !== null
-      ? (diffSearch.diffFilePath ?? null)
-      : null;
+  const selectedFilePath = diffSearch.diffFilePath ?? null;
   const selectedTurn =
     selectedDiffSelection !== null || selectedTurnId === null
       ? undefined
@@ -443,7 +433,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       return [];
     }
     return renderablePatch.files.toSorted((left, right) =>
-      resolveFileDiffPath(left).localeCompare(resolveFileDiffPath(right), undefined, {
+      resolveReviewFilePath(left).localeCompare(resolveReviewFilePath(right), undefined, {
         numeric: true,
         sensitivity: "base",
       }),
@@ -453,8 +443,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     () =>
       new Map(
         renderableFiles.map((fileDiff) => [
-          resolveFileDiffPath(fileDiff),
-          buildFileDiffRenderKey(fileDiff),
+          resolveReviewFilePath(fileDiff),
+          buildReviewFileRenderKey(fileDiff),
         ]),
       ),
     [renderableFiles],
@@ -570,6 +560,32 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     setActiveCommentSelection(null);
     setActiveCommentBody("");
   }, [selectedDiffSelection, selectedTurnId, selectedPatch]);
+
+  const selectReviewFile = useCallback(
+    (filePath: string) => {
+      if (!activeThread) return;
+      void navigate({
+        to: "/$threadId",
+        params: { threadId: activeThread.id },
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          if (selectedDiffSelection !== null) {
+            return {
+              ...rest,
+              diff: "1",
+              diffSelection: selectedDiffSelection,
+              diffFilePath: filePath,
+            };
+          }
+          if (selectedTurnId !== null) {
+            return { ...rest, diff: "1", diffTurnId: selectedTurnId, diffFilePath: filePath };
+          }
+          return { ...rest, diff: "1", diffFilePath: filePath };
+        },
+      });
+    },
+    [activeThread, navigate, selectedDiffSelection, selectedTurnId],
+  );
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
@@ -824,9 +840,31 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         >
           <TextWrapIcon className="size-3" />
         </Toggle>
+        {mode !== "inline" ? (
+          <Toggle
+            aria-label={fileTreeOpen ? "Hide file tree" : "Show file tree"}
+            title={fileTreeOpen ? "Hide file tree" : "Show file tree"}
+            variant="outline"
+            size="xs"
+            pressed={fileTreeOpen}
+            onPressedChange={(pressed) => setFileTreeOpen(Boolean(pressed))}
+          >
+            {fileTreeOpen ? (
+              <PanelRightCloseIcon className="size-3" />
+            ) : (
+              <PanelRightIcon className="size-3" />
+            )}
+          </Toggle>
+        ) : null}
       </div>
     </>
   );
+
+  const showFileTree =
+    mode !== "inline" &&
+    fileTreeOpen &&
+    renderablePatch?.kind === "files" &&
+    renderableFiles.length > 0;
 
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
@@ -835,7 +873,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           Select a thread to inspect turn diffs.
         </div>
       ) : (
-        <>
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
           <div
             ref={patchViewportRef}
             className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden"
@@ -878,8 +916,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                     }}
                   >
                     {renderableFiles.map((fileDiff) => {
-                      const filePath = resolveFileDiffPath(fileDiff);
-                      const fileKey = buildFileDiffRenderKey(fileDiff);
+                      const filePath = resolveReviewFilePath(fileDiff);
+                      const fileKey = buildReviewFileRenderKey(fileDiff);
                       const themedFileKey = `${fileKey}:${resolvedTheme}`;
                       const isFileCollapsed = collapsedFileKeys.has(fileKey);
                       const selectedRange = selectedRangesByFileKey[fileKey] ?? null;
@@ -1044,7 +1082,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               </>
             )}
           </div>
-        </>
+          {showFileTree ? (
+            <aside className="hidden h-full w-56 shrink-0 border-l border-border/60 lg:flex">
+              <ReviewFileTree
+                fileDiffs={renderableFiles}
+                resolvedTheme={resolvedTheme}
+                selectedPath={selectedFilePath}
+                onSelectFile={selectReviewFile}
+              />
+            </aside>
+          ) : null}
+        </div>
       )}
     </DiffPanelShell>
   );

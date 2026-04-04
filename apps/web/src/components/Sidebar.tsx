@@ -57,7 +57,7 @@ import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
-import { useStore } from "../store";
+import { selectThreadMruIds, useStore } from "../store";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -330,7 +330,7 @@ export default function Sidebar({
   const workspaces = useStore((store) => store.workspaces);
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
-  const threadMruIds = useStore((store) => store.threadMruIds ?? []);
+  const threadMruIds = useStore(selectThreadMruIds);
   const toggleProject = useStore((store) => store.toggleProject);
   const reorderProjects = useStore((store) => store.reorderProjects);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);

@@ -69,22 +69,34 @@ export function useLocalStorage<T, E>(
       return initialValue;
     }
   });
+  const storedValueRef = useRef(storedValue);
+  const initialValueRef = useRef(initialValue);
+  const serializedValueRef = useRef<string | null>(
+    storedValue === null ? null : encode(schema, storedValue),
+  );
 
   // Return a wrapped version of useState's setter function that persists the new value to localStorage
   const setValue = useCallback(
     (value: T | ((val: T) => T)) => {
       try {
-        setStoredValue((prev) => {
-          const valueToStore = typeof value === "function" ? (value as (val: T) => T)(prev) : value;
-          if (valueToStore === null) {
-            removeLocalStorageItem(key);
-          } else {
-            setLocalStorageItem(key, valueToStore, schema);
-          }
-          // Dispatch event after state update completes to avoid nested state updates
-          queueMicrotask(() => dispatchLocalStorageChange(key));
-          return valueToStore;
-        });
+        const previousValue = storedValueRef.current;
+        const valueToStore =
+          typeof value === "function" ? (value as (val: T) => T)(previousValue) : value;
+        if (Object.is(previousValue, valueToStore)) {
+          return;
+        }
+        storedValueRef.current = valueToStore;
+        const serializedValue = valueToStore === null ? null : encode(schema, valueToStore);
+        serializedValueRef.current = serializedValue;
+
+        if (valueToStore === null) {
+          removeLocalStorageItem(key);
+        } else {
+          isomorphicLocalStorage.setItem(key, serializedValue as string);
+        }
+
+        setStoredValue(valueToStore);
+        queueMicrotask(() => dispatchLocalStorageChange(key));
       } catch (error) {
         console.error("[LOCALSTORAGE] Error:", error);
       }
@@ -94,25 +106,44 @@ export function useLocalStorage<T, E>(
 
   const prevKeyRef = useRef(key);
 
+  useEffect(() => {
+    storedValueRef.current = storedValue;
+  }, [storedValue]);
+
+  useEffect(() => {
+    initialValueRef.current = initialValue;
+  }, [initialValue]);
+
   // Re-sync from localStorage when key changes
   useEffect(() => {
     if (prevKeyRef.current !== key) {
       prevKeyRef.current = key;
       try {
-        const newValue = getLocalStorageItem(key, schema);
-        setStoredValue(newValue ?? initialValue);
+        const rawValue = isomorphicLocalStorage.getItem(key);
+        const resolvedValue =
+          rawValue === null ? initialValueRef.current : decode(schema, rawValue);
+        storedValueRef.current = resolvedValue;
+        serializedValueRef.current = rawValue;
+        setStoredValue(resolvedValue);
       } catch (error) {
         console.error("[LOCALSTORAGE] Error:", error);
       }
     }
-  }, [key, initialValue, schema]);
+  }, [key, schema]);
 
   // Listen for storage events from other tabs AND custom events from the same tab
   useEffect(() => {
     const syncFromStorage = () => {
       try {
-        const newValue = getLocalStorageItem(key, schema);
-        setStoredValue(newValue ?? initialValue);
+        const rawValue = isomorphicLocalStorage.getItem(key);
+        if (serializedValueRef.current === rawValue) {
+          return;
+        }
+        const resolvedValue =
+          rawValue === null ? initialValueRef.current : decode(schema, rawValue);
+        storedValueRef.current = resolvedValue;
+        serializedValueRef.current = rawValue;
+        setStoredValue(resolvedValue);
       } catch (error) {
         console.error("[LOCALSTORAGE] Error:", error);
       }
@@ -137,7 +168,7 @@ export function useLocalStorage<T, E>(
       window.removeEventListener("storage", handleStorageChange);
       window.removeEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
     };
-  }, [key, initialValue, schema]);
+  }, [key, schema]);
 
   return [storedValue, setValue];
 }

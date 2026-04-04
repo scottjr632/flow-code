@@ -23,6 +23,30 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+export const DEFAULT_TERMINAL_FONT_FAMILY = [
+  '"FiraCode Nerd Font Mono"',
+  '"FiraCode Nerd Font"',
+  '"Symbols Nerd Font Mono"',
+  '"SF Mono"',
+  '"SFMono-Regular"',
+  "Consolas",
+  '"Liberation Mono"',
+  "Menlo",
+  "monospace",
+].join(", ");
+
+const makeBlankFallbackTrimmedStringSetting = (fallback: string) =>
+  TrimmedString.pipe(
+    Schema.decodeTo(
+      Schema.String,
+      SchemaTransformation.transformOrFail({
+        decode: (value) => Effect.succeed(value || fallback),
+        encode: (value) => Effect.succeed(value),
+      }),
+    ),
+    Schema.withDecodingDefault(() => fallback),
+  );
+
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
@@ -33,6 +57,7 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_THREAD_SORT_ORDER),
   ),
+  terminalFontFamily: makeBlankFallbackTrimmedStringSetting(DEFAULT_TERMINAL_FONT_FAMILY),
   timestampFormat: TimestampFormat.pipe(Schema.withDecodingDefault(() => DEFAULT_TIMESTAMP_FORMAT)),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -47,29 +72,10 @@ export type ThreadEnvMode = typeof ThreadEnvMode.Type;
 export const TurnReviewVcsPreference = Schema.Literals(["auto", "git", "jj"]);
 export type TurnReviewVcsPreference = typeof TurnReviewVcsPreference.Type;
 
-const makeBinaryPathSetting = (fallback: string) =>
-  TrimmedString.pipe(
-    Schema.decodeTo(
-      Schema.String,
-      SchemaTransformation.transformOrFail({
-        decode: (value) => Effect.succeed(value || fallback),
-        encode: (value) => Effect.succeed(value),
-      }),
-    ),
-    Schema.withDecodingDefault(() => fallback),
-  );
+const makeBinaryPathSetting = (fallback: string) => makeBlankFallbackTrimmedStringSetting(fallback);
 
 const makeBranchPrefixSetting = (fallback: string) =>
-  TrimmedString.pipe(
-    Schema.decodeTo(
-      Schema.String,
-      SchemaTransformation.transformOrFail({
-        decode: (value) => Effect.succeed(value || fallback),
-        encode: (value) => Effect.succeed(value),
-      }),
-    ),
-    Schema.withDecodingDefault(() => fallback),
-  );
+  makeBlankFallbackTrimmedStringSetting(fallback);
 
 export const CodexSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),

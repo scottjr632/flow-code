@@ -1,4 +1,4 @@
-import { type ProviderKind } from "@t3tools/contracts";
+import { type ProviderKind, type ThreadId } from "@t3tools/contracts";
 import {
   DiffIcon,
   FileCode2Icon,
@@ -57,9 +57,9 @@ export type WorkspaceTab =
       id: WorkspaceTabId;
       kind: "session";
       title: string;
-      closeable: false;
+      closeable: boolean;
       icon: LucideIcon | Icon;
-      threadId: string;
+      threadId: ThreadId;
       isDraft: boolean;
       provider: ProviderKind;
     }
@@ -108,7 +108,7 @@ function resolveSessionTabTitle(input: { isDraft: boolean; title: string }): str
 export function buildWorkspaceTabs(input: {
   chatProvider?: ProviderKind | null;
   sessionTabs?: ReadonlyArray<{
-    threadId: string;
+    threadId: ThreadId;
     title: string;
     isDraft: boolean;
     provider: ProviderKind;
@@ -126,7 +126,7 @@ export function buildWorkspaceTabs(input: {
           id: buildThreadWorkspaceTabId(tab.threadId),
           kind: "session",
           title: resolveSessionTabTitle(tab),
-          closeable: false,
+          closeable: !tab.isDraft,
           icon: getProviderIcon(tab.provider),
           threadId: tab.threadId,
           isDraft: tab.isDraft,
@@ -283,12 +283,7 @@ export function reorderWorkspaceTabIds(
   if (!next) {
     return nextTabIds;
   }
-  const nextTargetIndex = nextTabIds.indexOf(targetTabId);
-  if (nextTargetIndex === -1) {
-    nextTabIds.push(next);
-    return nextTabIds;
-  }
-  nextTabIds.splice(nextTargetIndex, 0, next);
+  nextTabIds.splice(targetIndex, 0, next);
 
   return nextTabIds;
 }

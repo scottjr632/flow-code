@@ -23,6 +23,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useComposerQueueStore } from "../composerQueueStore";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -31,6 +32,7 @@ import {
 import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX } from "../chat-scroll";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
@@ -61,6 +63,7 @@ interface TestFixture {
 let fixture: TestFixture;
 const wsRequests: WsRequestEnvelope["body"][] = [];
 let customWsRpcResolver: ((body: WsRequestEnvelope["body"]) => unknown | undefined) | null = null;
+let attachmentResponseDelayMs = 0;
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
 
 interface ViewportSpec {
@@ -514,6 +517,18 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
       ],
     };
   }
+  if (tag === WS_METHODS.gitCreateWorktree) {
+    const branchSuffix =
+      typeof body.newBranch === "string"
+        ? (body.newBranch.split("/").at(-1) ?? "workspace")
+        : "workspace";
+    return {
+      worktree: {
+        branch: typeof body.newBranch === "string" ? body.newBranch : "flow/workspace",
+        path: `/repo/project/.t3/worktrees/${branchSuffix}`,
+      },
+    };
+  }
   if (tag === WS_METHODS.gitStatus) {
     const emptyChangeSet = {
       files: [],
@@ -587,13 +602,18 @@ const worker = setupWorker(
       );
     });
   }),
-  http.get("*/attachments/:attachmentId", () =>
-    HttpResponse.text(ATTACHMENT_SVG, {
+  http.get("*/attachments/:attachmentId", async () => {
+    if (attachmentResponseDelayMs > 0) {
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, attachmentResponseDelayMs);
+      });
+    }
+    return HttpResponse.text(ATTACHMENT_SVG, {
       headers: {
         "Content-Type": "image/svg+xml",
       },
-    }),
-  ),
+    });
+  }),
   http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
 );
 
@@ -673,10 +693,40 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
+async function waitForTerminalTextarea(): Promise<HTMLTextAreaElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea"),
+    "Unable to find terminal textarea.",
+  );
+}
+
 async function waitForSendButton(): Promise<HTMLButtonElement> {
   return waitForElement(
     () => document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]'),
     "Unable to find send button.",
+  );
+}
+
+async function waitForMessagesScrollContainer(): Promise<HTMLDivElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLDivElement>("div.overflow-y-auto.overscroll-y-contain"),
+    "Unable to find ChatView message scroll container.",
+  );
+}
+
+async function expectMessagesScrollContainerAtBottom(
+  scrollContainer: HTMLDivElement,
+): Promise<void> {
+  await vi.waitFor(
+    () => {
+      const distanceFromBottom =
+        scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop;
+      expect(distanceFromBottom).toBeLessThanOrEqual(AUTO_SCROLL_BOTTOM_THRESHOLD_PX);
+    },
+    {
+      timeout: 8_000,
+      interval: 16,
+    },
   );
 }
 
@@ -721,6 +771,19 @@ function dispatchFocusComposerShortcut(): void {
     new KeyboardEvent("keydown", {
       key: "l",
       metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchToggleTerminalShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "j",
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
       bubbles: true,
       cancelable: true,
     }),
@@ -968,12 +1031,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
     document.body.innerHTML = "";
     wsRequests.length = 0;
     customWsRpcResolver = null;
+    attachmentResponseDelayMs = 0;
     useComposerDraftStore.setState({
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
+    });
+    useComposerQueueStore.setState({
+      queuedMessagesByThreadId: {},
     });
     useStore.setState({
       projects: [],
@@ -985,6 +1052,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   afterEach(() => {
     customWsRpcResolver = null;
+    attachmentResponseDelayMs = 0;
     document.body.innerHTML = "";
     Reflect.deleteProperty(window, "desktopBridge");
   });
@@ -1145,6 +1213,155 @@ describe("ChatView timeline estimator parity (full app)", () => {
       }
     },
   );
+
+  it("scrolls back to the bottom when reopening a thread", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-reopen-scroll" as MessageId,
+      targetText: "reopen thread scroll regression",
+    });
+    const primaryThread = baseSnapshot.threads[0];
+    if (!primaryThread) {
+      throw new Error("Expected fixture snapshot to include a primary thread.");
+    }
+    if (!primaryThread.session) {
+      throw new Error("Expected fixture snapshot to include a primary thread session.");
+    }
+    const secondThreadMessages = primaryThread.messages.map((message, index) =>
+      Object.assign({}, message, {
+        id: `${SECOND_THREAD_ID}-message-${index}` as MessageId,
+        text: `${message.text} second`,
+        createdAt: isoAt(1_000 + index * 2),
+        updatedAt: isoAt(1_001 + index * 2),
+      }),
+    );
+
+    const secondThread: OrchestrationReadModel["threads"][number] = {
+      ...primaryThread,
+      id: SECOND_THREAD_ID,
+      title: "Second browser test thread",
+      createdAt: isoAt(900),
+      updatedAt: isoAt(901),
+      messages: secondThreadMessages,
+      session: {
+        ...primaryThread.session,
+        threadId: SECOND_THREAD_ID,
+        updatedAt: isoAt(902),
+      },
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: [primaryThread, secondThread],
+      },
+    });
+
+    try {
+      const initialScrollContainer = await waitForMessagesScrollContainer();
+      await expectMessagesScrollContainerAtBottom(initialScrollContainer);
+
+      initialScrollContainer.scrollTop = 0;
+      initialScrollContainer.dispatchEvent(new Event("scroll"));
+      await waitForLayout();
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: SECOND_THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (pathname) => pathname === `/${SECOND_THREAD_ID}`,
+        "Route should change to the second thread.",
+      );
+      await waitForLayout();
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (pathname) => pathname === `/${THREAD_ID}`,
+        "Route should change back to the original thread.",
+      );
+
+      const reopenedScrollContainer = await waitForMessagesScrollContainer();
+      await expectMessagesScrollContainerAtBottom(reopenedScrollContainer);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps a single scroll-to-bottom click pinned while late image layout settles", async () => {
+    attachmentResponseDelayMs = 350;
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-scroll-button" as MessageId,
+      targetText: "scroll button regression",
+    });
+    const primaryThread = baseSnapshot.threads[0];
+    if (!primaryThread) {
+      throw new Error("Expected fixture snapshot to include a primary thread.");
+    }
+    const lastUserMessageIndex = primaryThread.messages.findLastIndex(
+      (message) => message.role === "user",
+    );
+    if (lastUserMessageIndex < 0) {
+      throw new Error("Expected fixture snapshot to include a user message.");
+    }
+    const tailAttachmentMessage = primaryThread.messages[lastUserMessageIndex];
+    if (!tailAttachmentMessage || tailAttachmentMessage.role !== "user") {
+      throw new Error("Expected fixture snapshot to include a tail user message.");
+    }
+    const messagesWithTailAttachment = primaryThread.messages.slice();
+    messagesWithTailAttachment[lastUserMessageIndex] = {
+      ...tailAttachmentMessage,
+      attachments: [
+        {
+          type: "image" as const,
+          id: "tail-attachment",
+          name: "tail-attachment.png",
+          mimeType: "image/png",
+          sizeBytes: 128,
+        },
+      ],
+    };
+
+    const snapshotWithTailAttachment: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: [
+        {
+          ...primaryThread,
+          messages: messagesWithTailAttachment,
+        },
+      ],
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: snapshotWithTailAttachment,
+    });
+
+    try {
+      const scrollContainer = await waitForMessagesScrollContainer();
+      scrollContainer.scrollTop = 0;
+      scrollContainer.dispatchEvent(new Event("scroll"));
+      await waitForLayout();
+
+      const scrollToBottomButton = page.getByRole("button", { name: "Scroll to bottom" });
+      await expect.element(scrollToBottomButton).toBeInTheDocument();
+      await scrollToBottomButton.click();
+
+      await waitForElement(
+        () => document.querySelector<HTMLImageElement>('img[alt="tail-attachment.png"]'),
+        "Unable to find delayed tail attachment image.",
+      );
+      await waitForImagesToLoad(document);
+      await expectMessagesScrollContainerAtBottom(scrollContainer);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 
   it("opens the project cwd for draft threads without a worktree path", async () => {
     setDraftThreadWithoutWorktree();
@@ -1690,6 +1907,56 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("queues the current composer draft when Tab is pressed in the composer", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "queue this with tab");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-queue-tab" as MessageId,
+        targetText: "queue hotkey target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const queuedMessages =
+            useComposerQueueStore.getState().queuedMessagesByThreadId[THREAD_ID] ?? [];
+          expect(queuedMessages).toHaveLength(1);
+          expect(queuedMessages[0]?.summary).toBe("queue this with tab");
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
+            "",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(
+        wsRequests.some((request) => {
+          const command = request.command as { type?: string } | undefined;
+          return (
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            command?.type === "thread.turn.start"
+          );
+        }),
+      ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps removed terminal context pills removed when a new one is added", async () => {
     const removedLabel = "Terminal 1 lines 1-2";
     const addedLabel = "Terminal 2 lines 9-10";
@@ -2132,12 +2399,22 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Route should have changed to a new draft thread UUID.",
       );
       const newThreadId = newThreadPath.slice(1) as ThreadId;
+      const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[newThreadId];
+      const workspaceCreateRequest = wsRequests.find(
+        (request) =>
+          request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          request.type === "workspace.create",
+      );
 
-      expect(useComposerDraftStore.getState().draftThreadsByThreadId[newThreadId]).toMatchObject({
+      expect(workspaceCreateRequest).toMatchObject({
         projectId: PROJECT_ID,
-        workspaceId: null,
-        branch: "main",
-        worktreePath: null,
+        branch: expect.stringMatching(/^flow\//),
+      });
+      expect(draftThread).toMatchObject({
+        projectId: PROJECT_ID,
+        workspaceId: workspaceCreateRequest?.workspaceId,
+        branch: workspaceCreateRequest?.branch,
+        worktreePath: workspaceCreateRequest?.worktreePath,
         envMode: "worktree",
       });
     } finally {
@@ -2261,6 +2538,278 @@ describe("ChatView timeline estimator parity (full app)", () => {
         workspaceId: null,
         branch: null,
         worktreePath: null,
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("archives a session from the workspace tab x with confirmation", async () => {
+    const confirmMessages: string[] = [];
+    const confirmResult = vi.fn(async (message: string) => {
+      confirmMessages.push(message);
+      return true;
+    });
+    const desktopBridge = {
+      getWsUrl: () => null,
+      pickFolder: async () => null,
+      confirm: confirmResult,
+      setTheme: async () => undefined,
+      showContextMenu: async () => null,
+      openExternal: async () => true,
+      onMenuAction: () => () => undefined,
+      getUpdateState: async () => ({
+        enabled: false,
+        status: "disabled" as const,
+        currentVersion: "0.0.0",
+        hostArch: "arm64" as const,
+        appArch: "arm64" as const,
+        runningUnderArm64Translation: false,
+        availableVersion: null,
+        downloadedVersion: null,
+        downloadPercent: null,
+        checkedAt: null,
+        message: null,
+        errorContext: null,
+        canRetry: false,
+      }),
+      checkForUpdate: async () => ({
+        checked: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      downloadUpdate: async () => ({
+        accepted: false,
+        completed: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      installUpdate: async () => ({
+        accepted: false,
+        completed: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      onUpdateState: () => () => undefined,
+    } as NonNullable<Window["desktopBridge"]>;
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: desktopBridge,
+    });
+
+    const workspaceSnapshot = withWorkspace(
+      createSnapshotForTargetUser({
+        targetMessageId: "msg-user-tab-archive-test" as MessageId,
+        targetText: "tab archive test",
+      }),
+      { title: "Flow Workspace" },
+    );
+    const primaryThread = workspaceSnapshot.threads[0];
+    if (!primaryThread) {
+      throw new Error("Expected fixture snapshot to include a primary thread.");
+    }
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...workspaceSnapshot,
+        threads: [
+          primaryThread,
+          {
+            ...primaryThread,
+            id: SECOND_THREAD_ID,
+            title: "Second session",
+            createdAt: isoAt(240),
+            updatedAt: isoAt(300),
+          },
+        ],
+      },
+    });
+
+    try {
+      const archiveButton = page.getByRole("button", { name: "Archive Second session" });
+      await expect.element(archiveButton).toBeInTheDocument();
+      await archiveButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(confirmResult).toHaveBeenCalledTimes(1);
+          expect(
+            wsRequests.some((request) => {
+              const command = request.command as { type?: string; threadId?: ThreadId } | undefined;
+              return (
+                request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+                command?.type === "thread.archive" &&
+                command.threadId === SECOND_THREAD_ID
+              );
+            }),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(confirmMessages).toEqual([
+        'Archive thread "Second session"?\nYou can restore it later from Settings > Archive.',
+      ]);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps workspace context when archiving the active workspace session", async () => {
+    const confirmResult = vi.fn(async () => true);
+    const desktopBridge = {
+      getWsUrl: () => null,
+      pickFolder: async () => null,
+      confirm: confirmResult,
+      setTheme: async () => undefined,
+      showContextMenu: async () => null,
+      openExternal: async () => true,
+      onMenuAction: () => () => undefined,
+      getUpdateState: async () => ({
+        enabled: false,
+        status: "disabled" as const,
+        currentVersion: "0.0.0",
+        hostArch: "arm64" as const,
+        appArch: "arm64" as const,
+        runningUnderArm64Translation: false,
+        availableVersion: null,
+        downloadedVersion: null,
+        downloadPercent: null,
+        checkedAt: null,
+        message: null,
+        errorContext: null,
+        canRetry: false,
+      }),
+      checkForUpdate: async () => ({
+        checked: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      downloadUpdate: async () => ({
+        accepted: false,
+        completed: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      installUpdate: async () => ({
+        accepted: false,
+        completed: false,
+        state: {
+          enabled: false,
+          status: "disabled" as const,
+          currentVersion: "0.0.0",
+          hostArch: "arm64" as const,
+          appArch: "arm64" as const,
+          runningUnderArm64Translation: false,
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        },
+      }),
+      onUpdateState: () => () => undefined,
+    } as NonNullable<Window["desktopBridge"]>;
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: desktopBridge,
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withWorkspace(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-active-tab-archive-test" as MessageId,
+          targetText: "active tab archive test",
+        }),
+        { title: "Flow Workspace" },
+      ),
+    });
+
+    try {
+      await page.getByRole("button", { name: "Archive Browser test thread" }).click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID after archiving the active workspace session.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      expect(confirmResult).toHaveBeenCalledTimes(1);
+      expect(useComposerDraftStore.getState().draftThreadsByThreadId[newThreadId]).toMatchObject({
+        projectId: PROJECT_ID,
+        workspaceId: WORKSPACE_ID,
+        branch: "feature-flow",
+        worktreePath: "/repo/project/.t3/worktrees/feature-flow",
+        envMode: "worktree",
       });
     } finally {
       await mounted.cleanup();
@@ -2982,6 +3531,55 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         () => {
           expect(document.activeElement).toBe(composerEditor);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("focuses the terminal with Cmd+J when it is already open", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-focus-terminal-shortcut" as MessageId,
+        targetText: "focus terminal shortcut",
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const toggleTerminalButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Toggle terminal tab"]'),
+        "Unable to find terminal toggle button.",
+      );
+      toggleTerminalButton.click();
+
+      const terminalTextarea = await waitForTerminalTextarea();
+      await vi.waitFor(
+        () => {
+          expect(document.activeElement).toBe(terminalTextarea);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const initialTerminalOpenCount = wsRequests.filter(
+        (request) => request._tag === WS_METHODS.terminalOpen,
+      ).length;
+
+      const modeButton = await waitForInteractionModeButton("Chat");
+      modeButton.focus();
+      expect(document.activeElement).toBe(modeButton);
+
+      dispatchToggleTerminalShortcut();
+
+      await vi.waitFor(
+        () => {
+          expect(document.activeElement).toBe(terminalTextarea);
+          expect(
+            wsRequests.filter((request) => request._tag === WS_METHODS.terminalOpen),
+          ).toHaveLength(initialTerminalOpenCount);
         },
         { timeout: 8_000, interval: 16 },
       );

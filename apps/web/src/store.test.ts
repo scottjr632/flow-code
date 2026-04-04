@@ -12,6 +12,7 @@ import {
   markThreadVisited,
   recordThreadTraversal,
   reorderProjects,
+  selectThreadMruIds,
   syncServerReadModel,
   type AppState,
 } from "./store";
@@ -242,6 +243,14 @@ describe("store pure functions", () => {
       ThreadId.makeUnsafe("thread-2"),
       ThreadId.makeUnsafe("thread-3"),
     ]);
+  });
+
+  it("selectThreadMruIds returns a stable empty fallback when MRU state is absent", () => {
+    const first = selectThreadMruIds({});
+    const second = selectThreadMruIds({});
+
+    expect(first).toBe(second);
+    expect(first).toEqual([]);
   });
 
   it("markThreadUnread moves lastVisitedAt before completion for a completed thread", () => {

@@ -1,0 +1,251 @@
+- generic [ref=e1]:
+    - generic [ref=e3]:
+        - generic [ref=e6]:
+            - generic [ref=e10] [cursor=pointer]:
+                - generic [ref=e11]: Flow
+                - generic [ref=e12]: Dev
+            - generic [ref=e14]:
+                - button "New thread" [ref=e16] [cursor=pointer]:
+                    - img
+                    - text: New thread
+                - generic [ref=e17]:
+                    - generic [ref=e18]:
+                        - generic [ref=e19]: Projects
+                        - generic [ref=e20]:
+                            - button [ref=e21] [cursor=pointer]:
+                                - img [ref=e22]
+                            - button "Add project" [ref=e25] [cursor=pointer]:
+                                - img [ref=e26]
+                    - list:
+                        - listitem [ref=e27]:
+                            - generic [ref=e28]:
+                                - button "testing-codex-sdk" [ref=e29] [cursor=pointer]:
+                                    - img [ref=e30]
+                                    - generic [ref=e32]: testing-codex-sdk
+                                - button "Create new thread in testing-codex-sdk" [ref=e33] [cursor=pointer]:
+                                    - img [ref=e34]
+                            - list [ref=e37]:
+                                - listitem [ref=e38]:
+                                    - generic [ref=e39]:
+                                        - button "Local" [ref=e40] [cursor=pointer]:
+                                            - img [ref=e41]
+                                            - img [ref=e43]
+                                            - generic [ref=e45]: Local
+                                        - button "New local thread" [ref=e46] [cursor=pointer]:
+                                            - img [ref=e47]
+                                - listitem [ref=e48]:
+                                    - button "Thread kickoff 2d ago" [ref=e49] [cursor=pointer]:
+                                        - generic [ref=e51]: Thread kickoff
+                                        - generic [ref=e54]: 2d ago
+                                - listitem [ref=e55]:
+                                    - button "Completed Local Test Run 2d ago" [ref=e56] [cursor=pointer]:
+                                        - generic [ref=e57]:
+                                            - generic [ref=e60]: Completed
+                                            - generic [ref=e61]: Local Test Run
+                                        - generic [ref=e64]: 2d ago
+                                - listitem [ref=e65]:
+                                    - button "Completed Make a Cool UI Change 2d ago" [ref=e66] [cursor=pointer]:
+                                        - generic [ref=e67]:
+                                            - generic [ref=e70]: Completed
+                                            - generic [ref=e71]: Make a Cool UI Change
+                                        - generic [ref=e74]: 2d ago
+                                - listitem [ref=e75]:
+                                    - generic [ref=e76]:
+                                        - button "Workspaces" [ref=e77] [cursor=pointer]:
+                                            - img [ref=e78]
+                                            - img [ref=e80]
+                                            - generic [ref=e85]: Workspaces
+                                        - button "New workspace thread" [ref=e86] [cursor=pointer]:
+                                            - img [ref=e87]
+                                - listitem [ref=e88]:
+                                    - button "Completed idk man 3d ago" [ref=e89] [cursor=pointer]:
+                                        - generic [ref=e90]:
+                                            - img [ref=e91]
+                                            - generic [ref=e95]: Completed
+                                            - generic [ref=e96]: idk man
+                                        - generic [ref=e99]: 3d ago
+                                - listitem [ref=e100]:
+                                    - button "Completed cool feature 3d ago" [ref=e101] [cursor=pointer]:
+                                        - generic [ref=e102]:
+                                            - img [ref=e103]
+                                            - generic [ref=e107]: Completed
+                                            - generic [ref=e108]: cool feature
+                                        - generic [ref=e111]: 3d ago
+                        - listitem [ref=e112]:
+                            - generic [ref=e113]:
+                                - button "server" [ref=e114] [cursor=pointer]:
+                                    - img [ref=e115]
+                                    - generic [ref=e117]: server
+                                - button "Create new thread in server" [ref=e118] [cursor=pointer]:
+                                    - img [ref=e119]
+                            - list [ref=e122]:
+                                - listitem [ref=e123]:
+                                    - button "New thread 3d ago" [ref=e124] [cursor=pointer]:
+                                        - generic [ref=e126]: New thread
+                                        - generic [ref=e129]: 3d ago
+            - separator [ref=e130]
+            - list [ref=e132]:
+                - listitem [ref=e133]:
+                    - button "Terminal" [ref=e134] [cursor=pointer]:
+                        - img [ref=e135]
+                        - generic [ref=e137]: Terminal
+                - listitem [ref=e138]:
+                    - button "Settings" [ref=e139] [cursor=pointer]:
+                        - img [ref=e140]
+                        - generic [ref=e143]: Settings
+            - button "Resize Sidebar" [ref=e144]
+        - main [ref=e147]:
+            - generic [ref=e148]:
+                - generic [ref=e149]:
+                    - generic [ref=e151]:
+                        - generic [ref=e152]:
+                            - heading "Thread kickoff" [level=2] [ref=e153]
+                            - generic [ref=e155]: testing-codex-sdk
+                        - generic [ref=e156]:
+                            - button "Add action" [ref=e157] [cursor=pointer]:
+                                - img
+                                - generic [ref=e158]: Add action
+                            - group "Subscription actions" [ref=e159]:
+                                - button "Open" [ref=e160] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=e161]: Open
+                                - separator
+                                - button "Copy options" [ref=e162] [cursor=pointer]:
+                                    - img
+                            - group "Git actions" [ref=e163]:
+                                - button "Commit" [disabled] [ref=e164]:
+                                    - img
+                                    - generic [ref=e165]: Commit
+                                - separator
+                                - button "Git action options" [ref=e166] [cursor=pointer]:
+                                    - img
+                            - button "Toggle terminal tab" [ref=e167] [cursor=pointer]:
+                                - img
+                            - button "Toggle review tab" [ref=e168] [cursor=pointer]:
+                                - img
+                    - generic [ref=e170]:
+                        - generic [ref=e171]:
+                            - button "Chat" [ref=e173] [cursor=pointer]:
+                                - img [ref=e174]
+                                - generic [ref=e176]: Chat
+                            - button "Files" [ref=e178] [cursor=pointer]:
+                                - img [ref=e179]
+                                - generic [ref=e184]: Files
+                            - button "Review" [ref=e186] [cursor=pointer]:
+                                - img [ref=e187]
+                                - generic [ref=e188]: Review
+                        - status [ref=e189]
+                        - button "New tab" [ref=e190] [cursor=pointer]:
+                            - img [ref=e191]
+                - generic [ref=e193]:
+                    - generic [ref=e196]:
+                        - generic [ref=e200]:
+                            - generic [ref=e201]: cool new thread
+                            - generic [ref=e202]:
+                                - generic [ref=e203]:
+                                    - button "Copy message" [ref=e204] [cursor=pointer]:
+                                        - img
+                                    - button "Revert to this message" [ref=e205] [cursor=pointer]:
+                                        - img
+                                - paragraph [ref=e206]: 9:37:36 AM
+                        - generic [ref=e209]:
+                            - paragraph [ref=e211]: What do you want to do in this one?
+                            - paragraph [ref=e212]: 9:37:45 AM • 8.8s
+                        - generic [ref=e216]:
+                            - generic [ref=e217]: "@terminal:terminal-1 what's the output there?"
+                            - generic [ref=e218]:
+                                - generic [ref=e219]:
+                                    - button "Copy message" [ref=e220] [cursor=pointer]:
+                                        - img
+                                    - button "Revert to this message" [ref=e221] [cursor=pointer]:
+                                        - img
+                                - paragraph [ref=e222]: 1:53:30 PM
+                        - generic [ref=e225]:
+                            - generic [ref=e226]:
+                                - paragraph [ref=e227]:
+                                    - text: The terminal ran
+                                    - code [ref=e228]: ls -al
+                                    - text: in
+                                    - code [ref=e229]: /Users/scottrichardson/workspace/github.com/scottjr632/testing-codex-sdk
+                                    - text: .
+                                - paragraph [ref=e230]: "Visible output:"
+                                - list [ref=e231]:
+                                    - listitem [ref=e232]:
+                                        - code [ref=e233]: total 128
+                                    - listitem [ref=e234]:
+                                        - code [ref=e235]: .
+                                        - text: and
+                                        - code [ref=e236]: ..
+                                    - listitem [ref=e237]:
+                                        - text: "directories:"
+                                        - code [ref=e238]: .agents
+                                        - text: ","
+                                        - code [ref=e239]: .git
+                                        - text: ","
+                                        - code [ref=e240]: .jj
+                                        - text: ","
+                                        - code [ref=e241]: .pnpm-store
+                                        - text: ","
+                                        - code [ref=e242]: dist
+                                        - text: ","
+                                        - code [ref=e243]: node_modules
+                                    - listitem [ref=e244]:
+                                        - text: "files:"
+                                        - code [ref=e245]: AGENTS.md
+                                        - text: ","
+                                        - code [ref=e246]: main.ts
+                                        - text: ","
+                                        - code [ref=e247]: package.json
+                                        - text: ","
+                                        - code [ref=e248]: pnpm-lock.yaml
+                                - paragraph [ref=e249]:
+                                    - text: It finished successfully with exit code
+                                    - code [ref=e250]: "0"
+                                    - text: and returned to the prompt on branch
+                                    - code [ref=e251]: main
+                                    - text: with uncommitted changes indicated.
+                            - paragraph [ref=e252]: 1:53:39 PM • 8.6s
+                    - generic [ref=e256]:
+                        - generic [ref=e258]:
+                            - textbox [active] [ref=e259]:
+                                - paragraph [ref=e260]
+                            - generic: Ask anything, @tag files/folders, or use / to show available commands
+                        - generic [ref=e261]:
+                            - generic [ref=e262]:
+                                - button "GPT-5.4" [ref=e263] [cursor=pointer]:
+                                    - generic [ref=e264]:
+                                        - img
+                                        - generic [ref=e265]: GPT-5.4
+                                        - img
+                                - separator [ref=e266]
+                                - button "High" [ref=e267] [cursor=pointer]:
+                                    - generic [ref=e268]:
+                                        - text: High
+                                        - img
+                                - separator [ref=e269]
+                                - button "Chat" [ref=e270] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=e271]: Chat
+                                - separator [ref=e272]
+                                - button "Full access" [ref=e273] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=e274]: Full access
+                            - generic [ref=e275]:
+                                - button "Context window 10% used" [ref=e276]:
+                                    - generic [ref=e277]:
+                                        - img [ref=e278]
+                                        - generic [ref=e281]: "10"
+                                - button "Send message" [disabled]:
+                                    - img
+                    - generic [ref=e282]:
+                        - generic [ref=e283]:
+                            - img [ref=e284]
+                            - text: Local
+                        - combobox [ref=e286] [cursor=pointer]:
+                            - generic [ref=e287]: Select branch
+                            - img
+                        - textbox [ref=e288]
+    - generic:
+        - region "Notifications"
+    - generic:
+        - region "Notifications"

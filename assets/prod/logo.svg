@@ -1,95 +1,15 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="120" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0B1721" />
-      <stop offset="1" stop-color="#10202C" />
-    </linearGradient>
-    <linearGradient id="accent" x1="316" y1="224" x2="724" y2="712" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#A8F5EA" />
-      <stop offset="1" stop-color="#7DE3D4" />
+    <linearGradient id="glyph" x1="320" y1="172" x2="704" y2="808" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FAFC" />
+      <stop offset="1" stop-color="#DDE4EC" />
     </linearGradient>
   </defs>
 
-  <rect x="48" y="48" width="928" height="928" rx="232" fill="url(#bg)" />
-  <rect x="49.5" y="49.5" width="925" height="925" rx="230.5" stroke="white" stroke-opacity="0.06" stroke-width="3" />
+  <rect x="48" y="48" width="928" height="928" rx="232" fill="#0A0F14" />
+  <rect x="49.5" y="49.5" width="925" height="925" rx="230.5" stroke="white" stroke-opacity="0.08" stroke-width="3" />
 
-  <g opacity="0.18">
-    <path
-      d="M358 254V806"
-      fill="none"
-      stroke="#00060A"
-      stroke-width="148"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    />
-    <path
-      d="M358 326H680C730 326 770 286 770 236"
-      fill="none"
-      stroke="#00060A"
-      stroke-width="148"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    />
-    <path
-      d="M358 542H596C696 542 764 610 764 710"
-      fill="none"
-      stroke="#00060A"
-      stroke-width="148"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    />
-  </g>
-
-  <path
-    d="M336 232V784"
-    fill="none"
-    stroke="#F6FFFE"
-    stroke-width="128"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
-  <path
-    d="M336 304H658C708 304 748 264 748 214"
-    fill="none"
-    stroke="#F6FFFE"
-    stroke-width="128"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
-  <path
-    d="M336 520H580C680 520 748 588 748 688"
-    fill="none"
-    stroke="#F6FFFE"
-    stroke-width="128"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
-
-  <path
-    d="M336 304H658C708 304 748 264 748 214"
-    fill="none"
-    stroke="url(#accent)"
-    stroke-opacity="0.5"
-    stroke-width="18"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
-  <path
-    d="M336 520H580C680 520 748 588 748 688"
-    fill="none"
-    stroke="url(#accent)"
-    stroke-opacity="0.5"
-    stroke-width="18"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
-  <path
-    d="M336 232V784"
-    fill="none"
-    stroke="url(#accent)"
-    stroke-opacity="0.42"
-    stroke-width="18"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
+  <rect x="392" y="164" width="128" height="696" rx="64" fill="url(#glyph)" />
+  <rect x="392" y="164" width="352" height="128" rx="64" fill="url(#glyph)" />
+  <rect x="320" y="452" width="332" height="120" rx="60" fill="url(#glyph)" />
 </svg>

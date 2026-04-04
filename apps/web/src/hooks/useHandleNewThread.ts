@@ -18,7 +18,6 @@ import { resolveExistingWorkspaceContext } from "../workspaceContext";
 export function useHandleNewThread() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
-  const workspaces = useStore((store) => store.workspaces);
   const navigate = useNavigate();
   const routeThreadId = useParams({
     strict: false,
@@ -64,11 +63,19 @@ export function useHandleNewThread() {
         workspaceId: WorkspaceId | null;
         branch: string | null;
         worktreePath: string | null;
-      }) =>
-        resolveExistingWorkspaceContext({
+      }) => {
+        const resolved = resolveExistingWorkspaceContext({
           ...context,
-          workspaces,
+          workspaces: useStore.getState().workspaces,
         });
+        if (resolved.workspaceId !== null) {
+          return resolved;
+        }
+        if (context.workspaceId !== null && context.worktreePath !== null) {
+          return context;
+        }
+        return resolved;
+      };
       const initialPrompt =
         typeof options?.initialPrompt === "string" && options.initialPrompt.length > 0
           ? options.initialPrompt
@@ -184,7 +191,7 @@ export function useHandleNewThread() {
         });
       })();
     },
-    [navigate, routeThreadId, workspaces],
+    [navigate, routeThreadId],
   );
 
   return {

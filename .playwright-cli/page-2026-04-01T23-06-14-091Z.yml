@@ -1,0 +1,59 @@
+- generic [active] [ref=e1]:
+    - generic [ref=e3]:
+        - generic [ref=e6]:
+            - generic [ref=e10] [cursor=pointer]:
+                - generic [ref=e11]: Flow
+                - generic [ref=e12]: Dev
+            - generic [ref=e14]:
+                - button "New thread" [ref=e16] [cursor=pointer]:
+                    - img
+                    - text: New thread
+                - generic [ref=e17]:
+                    - generic [ref=e18]:
+                        - generic [ref=e19]: Projects
+                        - generic [ref=e20]:
+                            - button [ref=e21] [cursor=pointer]:
+                                - img [ref=e22]
+                            - button "Add project" [ref=e25] [cursor=pointer]:
+                                - img [ref=e26]
+                    - list
+                    - generic [ref=e27]: No projects yet
+            - separator [ref=e28]
+            - list [ref=e30]:
+                - listitem [ref=e31]:
+                    - button "Terminal" [ref=e32] [cursor=pointer]:
+                        - img [ref=e33]
+                        - generic [ref=e35]: Terminal
+                - listitem [ref=e36]:
+                    - button "Settings" [ref=e37] [cursor=pointer]:
+                        - img [ref=e38]
+                        - generic [ref=e41]: Settings
+            - button "Resize Sidebar" [ref=e42]
+        - generic [ref=e47]:
+            - generic [ref=e49]:
+                - heading "Let's build" [level=1] [ref=e50]
+                - generic [ref=e51]:
+                    - combobox "Choose a project for the new thread" [disabled]:
+                        - img
+                        - generic: No projects
+                        - generic:
+                            - img
+                    - textbox [ref=e52]
+            - generic [ref=e54]:
+                - textbox "Ask Codex anything, @ to add files, / for commands" [disabled] [ref=e56]
+                - generic [ref=e57]:
+                    - generic [ref=e58]:
+                        - generic [ref=e59]:
+                            - img [ref=e60]
+                            - generic [ref=e62]: No projects
+                        - generic [ref=e63]: /
+                        - generic [ref=e64]:
+                            - generic [ref=e65]: Local
+                            - generic [ref=e66]: ⇧⌘L
+                        - generic [ref=e67]: Use the main repo checkout
+                    - button "Create local thread" [disabled]:
+                        - img
+    - generic:
+        - region "Notifications"
+    - generic:
+        - region "Notifications"

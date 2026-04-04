@@ -9,6 +9,7 @@ import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
+  findWorkspaceById,
   findWorkspaceByProjectAndWorktreePath,
   findWorkspaceByProjectAndWorktreePathIncludingDeleted,
   requireProject,
@@ -74,6 +75,228 @@ function resolveWorkspaceBranch(
   branch: string | null | undefined,
 ): string | null {
   return branch === undefined ? workspace.branch : branch;
+}
+
+interface ThreadWorkspaceResolution {
+  readonly workspaceId: WorkspaceId;
+  readonly branch: string | null | undefined;
+  readonly worktreePath: string;
+  readonly events: Array<Omit<OrchestrationEvent, "sequence">>;
+}
+
+function workspaceCreatedEvent(input: {
+  readonly workspaceId: WorkspaceId;
+  readonly projectId: OrchestrationWorkspace["projectId"];
+  readonly branch: string | null;
+  readonly worktreePath: string;
+  readonly occurredAt: string;
+  readonly commandId: OrchestrationCommand["commandId"];
+}): Omit<OrchestrationEvent, "sequence"> {
+  return {
+    ...withEventBase({
+      aggregateKind: "workspace",
+      aggregateId: input.workspaceId,
+      occurredAt: input.occurredAt,
+      commandId: input.commandId,
+    }),
+    type: "workspace.created",
+    payload: {
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      title: deriveWorkspaceTitle({ branch: input.branch, worktreePath: input.worktreePath }),
+      branch: input.branch,
+      worktreePath: input.worktreePath,
+      createdAt: input.occurredAt,
+      updatedAt: input.occurredAt,
+    },
+  };
+}
+
+function workspaceBranchUpdatedEvent(input: {
+  readonly workspaceId: WorkspaceId;
+  readonly branch: string | null;
+  readonly occurredAt: string;
+  readonly commandId: OrchestrationCommand["commandId"];
+}): Omit<OrchestrationEvent, "sequence"> {
+  return {
+    ...withEventBase({
+      aggregateKind: "workspace",
+      aggregateId: input.workspaceId,
+      occurredAt: input.occurredAt,
+      commandId: input.commandId,
+    }),
+    type: "workspace.meta-updated",
+    payload: {
+      workspaceId: input.workspaceId,
+      branch: input.branch,
+      updatedAt: input.occurredAt,
+    },
+  };
+}
+
+function resolveWorkspaceByWorktreePath(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly projectId: OrchestrationWorkspace["projectId"];
+  readonly branch: string | null | undefined;
+  readonly worktreePath: string;
+  readonly occurredAt: string;
+  readonly commandId: OrchestrationCommand["commandId"];
+  readonly preferredWorkspaceId?: WorkspaceId;
+}): ThreadWorkspaceResolution {
+  const existingWorkspace = findWorkspaceByProjectAndWorktreePath(
+    input.readModel,
+    input.projectId,
+    input.worktreePath,
+  );
+  if (existingWorkspace) {
+    const events =
+      input.branch !== undefined && input.branch !== existingWorkspace.branch
+        ? [
+            workspaceBranchUpdatedEvent({
+              workspaceId: existingWorkspace.id,
+              branch: input.branch,
+              occurredAt: input.occurredAt,
+              commandId: input.commandId,
+            }),
+          ]
+        : [];
+    return {
+      workspaceId: existingWorkspace.id,
+      branch: input.branch,
+      worktreePath: existingWorkspace.worktreePath,
+      events,
+    };
+  }
+
+  const deletedWorkspace = findWorkspaceByProjectAndWorktreePathIncludingDeleted(
+    input.readModel,
+    input.projectId,
+    input.worktreePath,
+  );
+  const workspaceId =
+    deletedWorkspace?.id ?? input.preferredWorkspaceId ?? (crypto.randomUUID() as WorkspaceId);
+  const branch = deletedWorkspace
+    ? resolveWorkspaceBranch(deletedWorkspace, input.branch)
+    : (input.branch ?? null);
+
+  return {
+    workspaceId,
+    branch,
+    worktreePath: input.worktreePath,
+    events: [
+      workspaceCreatedEvent({
+        workspaceId,
+        projectId: input.projectId,
+        branch,
+        worktreePath: input.worktreePath,
+        occurredAt: input.occurredAt,
+        commandId: input.commandId,
+      }),
+    ],
+  };
+}
+
+function resolveExplicitWorkspaceReference(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly projectId: OrchestrationWorkspace["projectId"];
+  readonly workspaceId: WorkspaceId;
+  readonly branch: string | null | undefined;
+  readonly worktreePath: string | null | undefined;
+  readonly occurredAt: string;
+}): Effect.Effect<ThreadWorkspaceResolution, OrchestrationCommandInvariantError> {
+  const workspace = findWorkspaceById(input.readModel, input.workspaceId);
+
+  if (workspace && workspace.deletedAt === null) {
+    if (workspace.projectId !== input.projectId) {
+      return Effect.fail(
+        invariantError(
+          input.command.type,
+          `Workspace '${input.workspaceId}' does not belong to project '${input.projectId}'.`,
+        ),
+      );
+    }
+    if (input.worktreePath !== null && input.worktreePath !== undefined) {
+      if (input.worktreePath !== workspace.worktreePath) {
+        return Effect.fail(
+          invariantError(
+            input.command.type,
+            `Workspace '${input.workspaceId}' path does not match thread worktree path.`,
+          ),
+        );
+      }
+    }
+    return Effect.succeed({
+      workspaceId: workspace.id,
+      branch: resolveWorkspaceBranch(workspace, input.branch),
+      worktreePath: workspace.worktreePath,
+      events: [],
+    });
+  }
+
+  if (workspace) {
+    if (workspace.projectId !== input.projectId) {
+      return Effect.fail(
+        invariantError(
+          input.command.type,
+          `Workspace '${input.workspaceId}' does not belong to project '${input.projectId}'.`,
+        ),
+      );
+    }
+    if (input.worktreePath === null || input.worktreePath === undefined) {
+      return Effect.fail(
+        invariantError(
+          input.command.type,
+          `Workspace '${input.workspaceId}' does not exist for command '${input.command.type}'.`,
+        ),
+      );
+    }
+    if (input.worktreePath !== workspace.worktreePath) {
+      return Effect.fail(
+        invariantError(
+          input.command.type,
+          `Workspace '${input.workspaceId}' path does not match thread worktree path.`,
+        ),
+      );
+    }
+    const branch = resolveWorkspaceBranch(workspace, input.branch);
+    return Effect.succeed({
+      workspaceId: workspace.id,
+      branch,
+      worktreePath: workspace.worktreePath,
+      events: [
+        workspaceCreatedEvent({
+          workspaceId: workspace.id,
+          projectId: input.projectId,
+          branch,
+          worktreePath: workspace.worktreePath,
+          occurredAt: input.occurredAt,
+          commandId: input.command.commandId,
+        }),
+      ],
+    });
+  }
+
+  if (input.worktreePath === null || input.worktreePath === undefined) {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        `Workspace '${input.workspaceId}' does not exist for command '${input.command.type}'.`,
+      ),
+    );
+  }
+
+  return Effect.succeed(
+    resolveWorkspaceByWorktreePath({
+      readModel: input.readModel,
+      projectId: input.projectId,
+      branch: input.branch,
+      worktreePath: input.worktreePath,
+      occurredAt: input.occurredAt,
+      commandId: input.command.commandId,
+      preferredWorkspaceId: input.workspaceId,
+    }),
+  );
 }
 
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
@@ -288,77 +511,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const events: Array<Omit<OrchestrationEvent, "sequence">> = [];
 
       if (command.workspaceId !== undefined && command.workspaceId !== null) {
-        const workspace = yield* requireWorkspace({
+        const resolvedWorkspace = yield* resolveExplicitWorkspaceReference({
           readModel,
           command,
+          projectId: command.projectId,
           workspaceId: command.workspaceId,
-        });
-        if (workspace.projectId !== command.projectId) {
-          return yield* invariantError(
-            command.type,
-            `Workspace '${command.workspaceId}' does not belong to project '${command.projectId}'.`,
-          );
-        }
-        if (worktreePath !== null && worktreePath !== workspace.worktreePath) {
-          return yield* invariantError(
-            command.type,
-            `Workspace '${command.workspaceId}' path does not match thread worktree path.`,
-          );
-        }
-        workspaceId = workspace.id;
-        branch = resolveWorkspaceBranch(workspace, branch);
-        worktreePath = workspace.worktreePath;
-      } else if (worktreePath !== null) {
-        const existingWorkspace = findWorkspaceByProjectAndWorktreePath(
-          readModel,
-          command.projectId,
+          branch,
           worktreePath,
-        );
-        if (existingWorkspace) {
-          workspaceId = existingWorkspace.id;
-          if (branch !== undefined && branch !== existingWorkspace.branch) {
-            events.push({
-              ...withEventBase({
-                aggregateKind: "workspace",
-                aggregateId: existingWorkspace.id,
-                occurredAt: command.createdAt,
-                commandId: command.commandId,
-              }),
-              type: "workspace.meta-updated",
-              payload: {
-                workspaceId: existingWorkspace.id,
-                branch,
-                updatedAt: command.createdAt,
-              },
-            });
-          }
-        } else {
-          const deletedWorkspace = findWorkspaceByProjectAndWorktreePathIncludingDeleted(
-            readModel,
-            command.projectId,
-            worktreePath,
-          );
-          workspaceId = deletedWorkspace?.id ?? (crypto.randomUUID() as WorkspaceId);
-          branch = deletedWorkspace ? resolveWorkspaceBranch(deletedWorkspace, branch) : branch;
-          events.push({
-            ...withEventBase({
-              aggregateKind: "workspace",
-              aggregateId: workspaceId,
-              occurredAt: command.createdAt,
-              commandId: command.commandId,
-            }),
-            type: "workspace.created",
-            payload: {
-              workspaceId,
-              projectId: command.projectId,
-              title: deriveWorkspaceTitle({ branch, worktreePath }),
-              branch,
-              worktreePath,
-              createdAt: command.createdAt,
-              updatedAt: command.createdAt,
-            },
-          });
-        }
+          occurredAt: command.createdAt,
+        });
+        workspaceId = resolvedWorkspace.workspaceId;
+        branch = resolvedWorkspace.branch ?? null;
+        worktreePath = resolvedWorkspace.worktreePath;
+        events.push(...resolvedWorkspace.events);
+      } else if (worktreePath !== null) {
+        const resolvedWorkspace = resolveWorkspaceByWorktreePath({
+          readModel,
+          projectId: command.projectId,
+          branch,
+          worktreePath,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        });
+        workspaceId = resolvedWorkspace.workspaceId;
+        branch = resolvedWorkspace.branch ?? null;
+        worktreePath = resolvedWorkspace.worktreePath;
+        events.push(...resolvedWorkspace.events);
       }
 
       events.push({
@@ -468,85 +646,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (command.workspaceId === null || command.worktreePath === null) {
         workspaceId = null;
       } else if (command.workspaceId !== undefined) {
-        const workspace =
-          command.workspaceId === null
-            ? null
-            : yield* requireWorkspace({
-                readModel,
-                command,
-                workspaceId: command.workspaceId,
-              });
-        if (workspace) {
-          if (workspace.projectId !== existingThread.projectId) {
-            return yield* invariantError(
-              command.type,
-              `Workspace '${command.workspaceId}' does not belong to thread project '${existingThread.projectId}'.`,
-            );
-          }
-          if (worktreePath !== undefined && worktreePath !== workspace.worktreePath) {
-            return yield* invariantError(
-              command.type,
-              `Workspace '${command.workspaceId}' path does not match thread worktree path.`,
-            );
-          }
-          workspaceId = workspace.id;
-          branch = resolveWorkspaceBranch(workspace, branch);
-          worktreePath = workspace.worktreePath;
-        }
-      } else if (worktreePath !== undefined && worktreePath !== null) {
-        const existingWorkspace = findWorkspaceByProjectAndWorktreePath(
+        const resolvedWorkspace = yield* resolveExplicitWorkspaceReference({
           readModel,
-          existingThread.projectId,
+          command,
+          projectId: existingThread.projectId,
+          workspaceId: command.workspaceId,
+          branch,
           worktreePath,
-        );
-        if (existingWorkspace) {
-          workspaceId = existingWorkspace.id;
-          if (branch !== undefined && branch !== existingWorkspace.branch) {
-            events.push({
-              ...withEventBase({
-                aggregateKind: "workspace",
-                aggregateId: existingWorkspace.id,
-                occurredAt,
-                commandId: command.commandId,
-              }),
-              type: "workspace.meta-updated",
-              payload: {
-                workspaceId: existingWorkspace.id,
-                branch,
-                updatedAt: occurredAt,
-              },
-            });
-          }
-        } else {
-          const deletedWorkspace = findWorkspaceByProjectAndWorktreePathIncludingDeleted(
-            readModel,
-            existingThread.projectId,
-            worktreePath,
-          );
-          const resolvedBranch = deletedWorkspace
-            ? resolveWorkspaceBranch(deletedWorkspace, branch)
-            : (branch ?? null);
-          workspaceId = deletedWorkspace?.id ?? (crypto.randomUUID() as WorkspaceId);
-          branch = resolvedBranch;
-          events.push({
-            ...withEventBase({
-              aggregateKind: "workspace",
-              aggregateId: workspaceId,
-              occurredAt,
-              commandId: command.commandId,
-            }),
-            type: "workspace.created",
-            payload: {
-              workspaceId,
-              projectId: existingThread.projectId,
-              title: deriveWorkspaceTitle({ branch: resolvedBranch, worktreePath }),
-              branch: resolvedBranch,
-              worktreePath,
-              createdAt: occurredAt,
-              updatedAt: occurredAt,
-            },
-          });
-        }
+          occurredAt,
+        });
+        workspaceId = resolvedWorkspace.workspaceId;
+        branch = resolvedWorkspace.branch;
+        worktreePath = resolvedWorkspace.worktreePath;
+        events.push(...resolvedWorkspace.events);
+      } else if (worktreePath !== undefined && worktreePath !== null) {
+        const resolvedWorkspace = resolveWorkspaceByWorktreePath({
+          readModel,
+          projectId: existingThread.projectId,
+          branch,
+          worktreePath,
+          occurredAt,
+          commandId: command.commandId,
+        });
+        workspaceId = resolvedWorkspace.workspaceId;
+        branch = resolvedWorkspace.branch;
+        worktreePath = resolvedWorkspace.worktreePath;
+        events.push(...resolvedWorkspace.events);
       }
 
       events.push({

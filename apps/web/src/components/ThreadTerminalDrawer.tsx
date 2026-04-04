@@ -1,6 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
-import { type ThreadId } from "@t3tools/contracts";
+import { DEFAULT_TERMINAL_FONT_FAMILY, type ThreadId } from "@t3tools/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -13,6 +13,7 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
+import { useSettings } from "../hooks/useSettings";
 import { openInPreferredEditor } from "../editorPreferences";
 import {
   extractTerminalLinks,
@@ -216,6 +217,8 @@ function TerminalViewport({
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const terminalFontFamily = useSettings((settings) => settings.terminalFontFamily);
+  const resolvedTerminalFontFamily = terminalFontFamily.trim() || DEFAULT_TERMINAL_FONT_FAMILY;
   const onSessionExitedRef = useRef(onSessionExited);
   const onAddTerminalContextRef = useRef(onAddTerminalContext);
   const terminalLabelRef = useRef(terminalLabel);
@@ -252,7 +255,7 @@ function TerminalViewport({
       lineHeight: 1.2,
       fontSize: 12,
       scrollback: 5_000,
-      fontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+      fontFamily: resolvedTerminalFontFamily,
       theme: terminalThemeFromApp(),
     });
     terminal.loadAddon(fitAddon);
@@ -648,8 +651,8 @@ function TerminalViewport({
       fitAddonRef.current = null;
       terminal.dispose();
     };
-    // autoFocus is intentionally omitted;
-    // it is only read at mount time and must not trigger terminal teardown/recreation.
+    // autoFocus and resolvedTerminalFontFamily are intentionally omitted.
+    // autoFocus is only read at mount time, and font updates are handled by a separate effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd, runtimeEnv, terminalId, threadId]);
 
@@ -689,6 +692,32 @@ function TerminalViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [drawerHeight, resizeEpoch, terminalId, threadId]);
+
+  useEffect(() => {
+    const api = readNativeApi();
+    const terminal = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!api || !terminal || !fitAddon) return;
+    const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
+    terminal.options.fontFamily = resolvedTerminalFontFamily;
+    const frame = window.requestAnimationFrame(() => {
+      fitAddon.fit();
+      if (wasAtBottom) {
+        terminal.scrollToBottom();
+      }
+      void api.terminal
+        .resize({
+          threadId,
+          terminalId,
+          cols: terminal.cols,
+          rows: terminal.rows,
+        })
+        .catch(() => undefined);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [resolvedTerminalFontFamily, terminalId, threadId]);
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden rounded-[4px]" />
   );

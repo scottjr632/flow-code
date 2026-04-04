@@ -23,6 +23,14 @@ If a tradeoff is required, choose correctness and robustness over short-term con
 
 Long term maintainability is a core priority. If you add new functionality, first check if there is shared logic that can be extracted to a separate module. Duplicate logic across multiple files is a code smell and should be avoided. Don't be afraid to change existing code. Don't take shortcuts by just adding local logic to solve a problem.
 
+## React Guidance
+
+- Avoid `useEffect` unless it is genuinely needed to synchronize with an external system or imperative API.
+- Prefer deriving values during render, handling work in event handlers, using refs for non-render state, or using more specific React primitives before reaching for `useEffect`.
+- When an effect is necessary, keep it narrowly scoped and verify that its dependency list is correct.
+- Any new or changed `useEffect` should be reviewed specifically for infinite re-render risks, especially effects that set state, trigger fetches, or update values that appear in their own dependency arrays.
+- If an effect updates state, double check that the state change cannot immediately retrigger the same effect in a loop.
+
 ## Package Roles
 
 - `apps/server`: Node.js WebSocket server. Wraps Codex app-server (JSON-RPC over stdio), serves the React web app, and manages provider sessions.

@@ -1,4 +1,5 @@
-import type { ProjectId, ThreadId, WorkspaceId } from "@t3tools/contracts";
+import type { GitBranch, ProjectId, ThreadId, WorkspaceId } from "@t3tools/contracts";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpIcon, FolderIcon } from "lucide-react";
 import {
   type FormEvent,
@@ -13,10 +14,15 @@ import { cn } from "~/lib/utils";
 import { isElectron } from "../env";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { formatShortcutLabel } from "../keybindings";
-import { useStore } from "../store";
+import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "../lib/gitReactQuery";
+import { newCommandId } from "../lib/utils";
+import { readNativeApi } from "../nativeApi";
+import { selectThreadMruIds, useStore } from "../store";
 import { type Thread, type Workspace } from "../types";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { buildTemporaryWorktreeBranchName } from "./ChatView.logic";
 import { deriveDefaultWorkspaceTitle, type SidebarNewThreadEnvMode } from "./Sidebar.logic";
+import { toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "./ui/select";
 import { SidebarTrigger } from "./ui/sidebar";
@@ -117,6 +123,18 @@ function resolveWorkspaceLabel(workspace: Workspace): string {
   return workspace.name.trim().length > 0 ? workspace.name : deriveDefaultWorkspaceTitle(workspace);
 }
 
+function resolveNewWorkspaceBaseBranch(
+  branches: ReadonlyArray<Pick<GitBranch, "name" | "current" | "isDefault" | "isRemote">>,
+): string | null {
+  const localBranches = branches.filter((branch) => !branch.isRemote);
+  return (
+    localBranches.find((branch) => branch.current)?.name ??
+    localBranches.find((branch) => branch.isDefault)?.name ??
+    localBranches[0]?.name ??
+    null
+  );
+}
+
 function matchesModShiftShortcut(event: globalThis.KeyboardEvent, key: string): boolean {
   if (event.defaultPrevented || event.isComposing || event.altKey || !event.shiftKey) {
     return false;
@@ -139,8 +157,10 @@ export function NewThreadScreen({
 }) {
   const { handleNewThread, projects } = useHandleNewThread();
   const threads = useStore((store) => store.threads);
-  const threadMruIds = useStore((store) => store.threadMruIds ?? []);
+  const threadMruIds = useStore(selectThreadMruIds);
   const workspaces = useStore((store) => store.workspaces);
+  const queryClient = useQueryClient();
+  const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
   const [prompt, setPrompt] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(() =>
     resolveInitialProjectId(projects, threads, threadMruIds, requestedProjectId),
@@ -205,6 +225,9 @@ export function NewThreadScreen({
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
+  const selectedProjectBranchesQuery = useQuery(
+    gitBranchesQueryOptions(selectedProject?.cwd ?? null),
+  );
   const selectedWorkspaceId = decodeWorkspaceTargetValue(selectedTargetValue);
   const selectedWorkspace = useMemo(
     () => projectWorkspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
@@ -235,6 +258,10 @@ export function NewThreadScreen({
     [],
   );
   const isNewWorkspaceTarget = selectedTargetValue === NEW_WORKSPACE_TARGET_VALUE;
+  const selectedProjectBaseBranch = useMemo(
+    () => resolveNewWorkspaceBaseBranch(selectedProjectBranchesQuery.data?.branches ?? []),
+    [selectedProjectBranchesQuery.data?.branches],
+  );
   const effectiveEnvMode = selectedWorkspace || isNewWorkspaceTarget ? "worktree" : "local";
   const targetLabel = selectedWorkspace
     ? resolveWorkspaceLabel(selectedWorkspace)
@@ -244,7 +271,7 @@ export function NewThreadScreen({
   const targetDescription = selectedWorkspace
     ? (selectedWorkspace.branch ?? selectedWorkspace.worktreePath)
     : isNewWorkspaceTarget
-      ? "Create a fresh worktree on first send"
+      ? "Create a fresh worktree now"
       : "Use the main repo checkout";
   const targetShortcutLabel = selectedWorkspace
     ? null
@@ -270,6 +297,76 @@ export function NewThreadScreen({
         return;
       }
 
+      if (isNewWorkspaceTarget) {
+        void (async () => {
+          if (!selectedProject) {
+            return;
+          }
+          const api = readNativeApi();
+          if (!api) {
+            throw new Error("Native API not found");
+          }
+          if (!selectedProjectBaseBranch) {
+            toastManager.add({
+              type: "error",
+              title: "Could not create workspace",
+              description: "No local base branch is available for this project.",
+            });
+            return;
+          }
+          let createdWorktreePath: string | null = null;
+          try {
+            const worktree = await createWorktreeMutation.mutateAsync({
+              cwd: selectedProject.cwd,
+              branch: selectedProjectBaseBranch,
+              newBranch: buildTemporaryWorktreeBranchName(),
+            });
+            createdWorktreePath = worktree.worktree.path;
+            const workspaceId = crypto.randomUUID() as WorkspaceId;
+            const createdAt = new Date().toISOString();
+
+            await api.orchestration.dispatchCommand({
+              type: "workspace.create",
+              commandId: newCommandId(),
+              workspaceId,
+              projectId: selectedProjectId,
+              title: worktree.worktree.branch,
+              branch: worktree.worktree.branch,
+              worktreePath: worktree.worktree.path,
+              createdAt,
+            });
+
+            await handleNewThread(selectedProjectId, {
+              workspaceId,
+              branch: worktree.worktree.branch,
+              worktreePath: worktree.worktree.path,
+              envMode: "worktree",
+              ...(prompt.trim().length > 0 ? { initialPrompt: prompt } : {}),
+            });
+          } catch (error) {
+            if (createdWorktreePath) {
+              await api.git
+                .removeWorktree({
+                  cwd: selectedProject.cwd,
+                  path: createdWorktreePath,
+                  force: true,
+                })
+                .catch(() => undefined);
+            }
+            throw error;
+          }
+        })().catch((error) => {
+          const description =
+            error instanceof Error ? error.message : "Unknown error creating workspace.";
+          toastManager.add({
+            type: "error",
+            title: "Could not create workspace",
+            description,
+          });
+        });
+        return;
+      }
+
       void handleNewThread(selectedProjectId, {
         workspaceId: null,
         branch: null,
@@ -278,7 +375,16 @@ export function NewThreadScreen({
         ...(prompt.trim().length > 0 ? { initialPrompt: prompt } : {}),
       });
     },
-    [handleNewThread, isNewWorkspaceTarget, prompt, selectedProjectId, selectedWorkspace],
+    [
+      createWorktreeMutation,
+      handleNewThread,
+      isNewWorkspaceTarget,
+      prompt,
+      selectedProject,
+      selectedProjectBaseBranch,
+      selectedProjectId,
+      selectedWorkspace,
+    ],
   );
 
   const handlePromptKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -416,7 +522,7 @@ export function NewThreadScreen({
                               New workspace
                             </div>
                             <div className="truncate text-xs text-muted-foreground">
-                              Create a fresh worktree on first send
+                              Create a fresh worktree now
                             </div>
                           </div>
                           <span className="rounded bg-white/[0.04] px-1 py-0.5 font-medium text-[10px] tracking-[0.08em] text-muted-foreground/58">
@@ -498,7 +604,7 @@ export function NewThreadScreen({
                   type="submit"
                   size="icon-sm"
                   className={cn("rounded-full", prompt.trim().length === 0 && "bg-primary/85")}
-                  disabled={!selectedProject}
+                  disabled={!selectedProject || createWorktreeMutation.isPending}
                   data-testid="create-thread-submit-button"
                   aria-label={`Create ${effectiveEnvMode === "worktree" ? "workspace" : "local"} thread`}
                 >

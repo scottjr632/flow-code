@@ -18,6 +18,7 @@ import {
 } from "../worktreeCleanup";
 import { toastManager } from "../components/ui/toast";
 import { useSettings } from "./useSettings";
+import { resolveExistingWorkspaceContext } from "../workspaceContext";
 
 export function useThreadActions() {
   const threads = useStore((store) => store.threads);
@@ -63,6 +64,22 @@ export function useThreadActions() {
       if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
         throw new Error("Cannot archive a running thread.");
       }
+      const nextWorkspaceThread =
+        routeThreadId === threadId && thread.workspaceId
+          ? (threads.find(
+              (entry) =>
+                entry.id !== threadId &&
+                entry.archivedAt === null &&
+                entry.projectId === thread.projectId &&
+                entry.workspaceId === thread.workspaceId,
+            ) ?? null)
+          : null;
+      const nextWorkspaceContext = resolveExistingWorkspaceContext({
+        workspaceId: thread.workspaceId,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        workspaces,
+      });
 
       await api.orchestration.dispatchCommand({
         type: "thread.archive",
@@ -71,10 +88,53 @@ export function useThreadActions() {
       });
 
       if (routeThreadId === threadId) {
-        await handleNewThread(thread.projectId);
+        if (nextWorkspaceThread) {
+          await navigate({
+            to: "/$threadId",
+            params: { threadId: nextWorkspaceThread.id },
+            replace: true,
+          });
+          return;
+        }
+
+        await handleNewThread(thread.projectId, {
+          workspaceId: nextWorkspaceContext.workspaceId,
+          branch: nextWorkspaceContext.branch,
+          worktreePath: nextWorkspaceContext.worktreePath,
+          envMode: nextWorkspaceContext.worktreePath ? "worktree" : "local",
+        });
       }
     },
-    [handleNewThread, routeThreadId, threads],
+    [handleNewThread, navigate, routeThreadId, threads, workspaces],
+  );
+
+  const confirmAndArchiveThread = useCallback(
+    async (
+      threadId: ThreadId,
+      options: {
+        forceConfirm?: boolean;
+      } = {},
+    ) => {
+      const api = readNativeApi();
+      if (!api) return;
+      const thread = threads.find((entry) => entry.id === threadId);
+      if (!thread) return;
+
+      if (options.forceConfirm || appSettings.confirmThreadArchive) {
+        const confirmed = await api.dialogs.confirm(
+          [
+            `Archive thread "${thread.title}"?`,
+            "You can restore it later from Settings > Archive.",
+          ].join("\n"),
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      await archiveThread(threadId);
+    },
+    [appSettings.confirmThreadArchive, archiveThread, threads],
   );
 
   const unarchiveThread = useCallback(async (threadId: ThreadId) => {
@@ -394,6 +454,7 @@ export function useThreadActions() {
 
   return {
     archiveThread,
+    confirmAndArchiveThread,
     archiveWorkspace,
     unarchiveThread,
     deleteThread,

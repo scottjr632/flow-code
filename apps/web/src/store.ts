@@ -41,6 +41,7 @@ const initialState: AppState = {
   threadsHydrated: false,
   threadMruIds: [],
 };
+const EMPTY_THREAD_MRU_IDS: readonly ThreadId[] = [];
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
 const persistedThreadMruIds: ThreadId[] = [];
@@ -548,6 +549,10 @@ interface AppStore extends AppState {
   reorderProjects: (draggedProjectId: Project["id"], targetProjectId: Project["id"]) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
+}
+
+export function selectThreadMruIds(state: Pick<AppState, "threadMruIds">): readonly ThreadId[] {
+  return state.threadMruIds ?? EMPTY_THREAD_MRU_IDS;
 }
 
 export const useStore = create<AppStore>((set) => ({

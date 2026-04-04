@@ -1,3 +1,4 @@
+import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -98,13 +99,13 @@ describe("workspaceTabs", () => {
     const tabs = buildWorkspaceTabs({
       sessionTabs: [
         {
-          threadId: "thread-b",
+          threadId: ThreadId.makeUnsafe("thread-b"),
           title: "Second session",
           isDraft: false,
           provider: "codex",
         },
         {
-          threadId: "draft-a",
+          threadId: ThreadId.makeUnsafe("draft-a"),
           title: "New thread",
           isDraft: true,
           provider: "claudeAgent",
@@ -124,11 +125,13 @@ describe("workspaceTabs", () => {
 
     expect(tabs[0]).toMatchObject({
       kind: "session",
+      closeable: true,
       provider: "codex",
       icon: getProviderIcon("codex"),
     });
     expect(tabs[1]).toMatchObject({
       kind: "session",
+      closeable: false,
       provider: "claudeAgent",
       icon: getProviderIcon("claudeAgent"),
     });
@@ -230,5 +233,15 @@ describe("workspaceTabs", () => {
       "diff",
       buildTerminalWorkspaceTabId("group-a"),
     ]);
+  });
+
+  it("moves the dragged tab id after the target when dragging forward", () => {
+    expect(
+      reorderWorkspaceTabIds(
+        [DEFAULT_CHAT_WORKSPACE_TAB_ID, "diff", buildTerminalWorkspaceTabId("group-a")],
+        DEFAULT_CHAT_WORKSPACE_TAB_ID,
+        buildTerminalWorkspaceTabId("group-a"),
+      ),
+    ).toEqual(["diff", buildTerminalWorkspaceTabId("group-a"), DEFAULT_CHAT_WORKSPACE_TAB_ID]);
   });
 });

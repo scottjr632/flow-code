@@ -484,4 +484,229 @@ describe("decider project scripts", () => {
     }
     expect(threadEvent.payload.workspaceId).toBe(deletedWorkspaceId);
   });
+
+  it("relinks thread.create to a live workspace when the workspace id is stale", async () => {
+    const now = new Date().toISOString();
+    const workspacePath = "/tmp/project/.t3/worktrees/feature-live";
+    const liveWorkspaceId = asWorkspaceId("workspace-live");
+    const initial = createEmptyReadModel(now);
+    const withProject = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-workspace-live"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-1"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-workspace-live"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-workspace-live"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withProject, {
+        sequence: 2,
+        eventId: asEventId("evt-workspace-create-workspace-live"),
+        aggregateKind: "workspace",
+        aggregateId: liveWorkspaceId,
+        type: "workspace.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-workspace-create-workspace-live"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-workspace-create-workspace-live"),
+        metadata: {},
+        payload: {
+          workspaceId: liveWorkspaceId,
+          projectId: asProjectId("project-1"),
+          title: "feature-live",
+          branch: "feature-live",
+          worktreePath: workspacePath,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-create-workspace-live"),
+          threadId: ThreadId.makeUnsafe("thread-workspace-live"),
+          projectId: asProjectId("project-1"),
+          workspaceId: asWorkspaceId("workspace-stale"),
+          title: "Thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: "feature-live",
+          worktreePath: workspacePath,
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    expect(Array.isArray(result)).toBe(false);
+    const singleResult = Array.isArray(result) ? null : result;
+    if (singleResult === null) {
+      throw new Error("Expected a single thread.created event.");
+    }
+    expect(singleResult).toMatchObject({
+      type: "thread.created",
+      payload: {
+        workspaceId: liveWorkspaceId,
+        worktreePath: workspacePath,
+      },
+    });
+  });
+
+  it("restores a deleted workspace during thread.meta.update when the workspace id is stale", async () => {
+    const now = new Date().toISOString();
+    const workspacePath = "/tmp/project/.t3/worktrees/feature-restore";
+    const deletedWorkspaceId = asWorkspaceId("workspace-restore");
+    const initial = createEmptyReadModel(now);
+    const withProject = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-workspace-restore"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-1"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-workspace-restore"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-workspace-restore"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const withDeletedWorkspace = await Effect.runPromise(
+      projectEvent(
+        await Effect.runPromise(
+          projectEvent(withProject, {
+            sequence: 2,
+            eventId: asEventId("evt-workspace-create-workspace-restore"),
+            aggregateKind: "workspace",
+            aggregateId: deletedWorkspaceId,
+            type: "workspace.created",
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe("cmd-workspace-create-workspace-restore"),
+            causationEventId: null,
+            correlationId: CommandId.makeUnsafe("cmd-workspace-create-workspace-restore"),
+            metadata: {},
+            payload: {
+              workspaceId: deletedWorkspaceId,
+              projectId: asProjectId("project-1"),
+              title: "feature-restore",
+              branch: "feature-restore",
+              worktreePath: workspacePath,
+              createdAt: now,
+              updatedAt: now,
+            },
+          }),
+        ),
+        {
+          sequence: 3,
+          eventId: asEventId("evt-workspace-delete-workspace-restore"),
+          aggregateKind: "workspace",
+          aggregateId: deletedWorkspaceId,
+          type: "workspace.deleted",
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-workspace-delete-workspace-restore"),
+          causationEventId: null,
+          correlationId: CommandId.makeUnsafe("cmd-workspace-delete-workspace-restore"),
+          metadata: {},
+          payload: {
+            workspaceId: deletedWorkspaceId,
+            deletedAt: now,
+          },
+        },
+      ),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withDeletedWorkspace, {
+        sequence: 4,
+        eventId: asEventId("evt-thread-create-workspace-restore"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-restore"),
+        type: "thread.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-thread-create-workspace-restore"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-thread-create-workspace-restore"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-restore"),
+          projectId: asProjectId("project-1"),
+          workspaceId: null,
+          title: "Thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.meta.update",
+          commandId: CommandId.makeUnsafe("cmd-thread-meta-update-workspace-restore"),
+          threadId: ThreadId.makeUnsafe("thread-restore"),
+          workspaceId: deletedWorkspaceId,
+          branch: "feature-restore",
+          worktreePath: workspacePath,
+        },
+        readModel,
+      }),
+    );
+
+    expect(Array.isArray(result)).toBe(true);
+    const events = Array.isArray(result) ? result : [result];
+    expect(events.map((event) => event.type)).toEqual(["workspace.created", "thread.meta-updated"]);
+
+    const workspaceEvent = events[0];
+    expect(workspaceEvent?.type).toBe("workspace.created");
+    if (workspaceEvent?.type !== "workspace.created") {
+      return;
+    }
+    expect(workspaceEvent.payload.workspaceId).toBe(deletedWorkspaceId);
+
+    const threadEvent = events[1];
+    expect(threadEvent?.type).toBe("thread.meta-updated");
+    if (threadEvent?.type !== "thread.meta-updated") {
+      return;
+    }
+    expect(threadEvent.payload.workspaceId).toBe(deletedWorkspaceId);
+    expect(threadEvent.payload.worktreePath).toBe(workspacePath);
+  });
 });

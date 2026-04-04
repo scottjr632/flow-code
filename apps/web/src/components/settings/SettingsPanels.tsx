@@ -12,6 +12,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  DEFAULT_TERMINAL_FONT_FAMILY,
   PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
   type ServerProvider,
@@ -468,6 +469,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
+      ...(settings.terminalFontFamily !== DEFAULT_UNIFIED_SETTINGS.terminalFontFamily
+        ? ["Terminal font"]
+        : []),
       ...(settings.gitBranchNamePrefix !== DEFAULT_UNIFIED_SETTINGS.gitBranchNamePrefix
         ? ["Branch name prefix"]
         : []),
@@ -498,6 +502,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.gitBranchNamePrefix,
+      settings.terminalFontFamily,
       settings.timestampFormat,
       settings.turnReviewVcs,
       theme,
@@ -847,6 +852,33 @@ export function GeneralSettingsPanel() {
               checked={settings.diffWordWrap}
               onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
               aria-label="Wrap diff lines by default"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Terminal font"
+          description="CSS font-family stack for the built-in terminal. The default prefers Nerd Fonts so shell icons render correctly."
+          resetAction={
+            settings.terminalFontFamily !== DEFAULT_UNIFIED_SETTINGS.terminalFontFamily ? (
+              <SettingResetButton
+                label="terminal font"
+                onClick={() =>
+                  updateSettings({
+                    terminalFontFamily: DEFAULT_UNIFIED_SETTINGS.terminalFontFamily,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Input
+              className="w-full sm:w-96"
+              value={settings.terminalFontFamily}
+              onChange={(event) => updateSettings({ terminalFontFamily: event.target.value })}
+              placeholder={DEFAULT_TERMINAL_FONT_FAMILY}
+              spellCheck={false}
+              aria-label="Terminal font family"
             />
           }
         />

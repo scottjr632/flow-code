@@ -15,7 +15,7 @@ export function AppLogo({ alt = "Flow", className, decorative = false }: AppLogo
       )}
     >
       <img
-        src="/apple-touch-icon.png"
+        src="/icon.png"
         alt={decorative ? "" : alt}
         aria-hidden={decorative ? true : undefined}
         className="block size-full rounded-[inherit]"

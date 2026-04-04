@@ -1,10 +1,12 @@
 import {
+  closestCorners,
   DndContext,
   DragOverlay,
   PointerSensor,
-  closestCenter,
+  pointerWithin,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragCancelEvent,
   type DragEndEvent,
   type DragStartEvent,
@@ -12,7 +14,15 @@ import {
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
-import { type MouseEvent as ReactMouseEvent, useMemo, useState } from "react";
+import {
+  type MutableRefObject,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   DiffIcon,
   FolderTreeIcon,
@@ -68,6 +78,16 @@ export function WorkspaceTabBar({
       activationConstraint: { distance: 6 },
     }),
   );
+  const dragInProgressRef = useRef(false);
+  const suppressTabClickAfterDragRef = useRef(false);
+  const collisionDetection = useCallback<CollisionDetection>((args) => {
+    const pointerCollisions = pointerWithin(args);
+    if (pointerCollisions.length > 0) {
+      return pointerCollisions;
+    }
+
+    return closestCorners(args);
+  }, []);
   const [activeDragTabId, setActiveDragTabId] = useState<WorkspaceTabId | null>(null);
   const tabsById = useMemo(() => new Map(tabs.map((tab) => [tab.id, tab] as const)), [tabs]);
   const activeDragTab = activeDragTabId ? (tabsById.get(activeDragTabId) ?? null) : null;
@@ -77,15 +97,19 @@ export function WorkspaceTabBar({
   }
 
   const handleDragStart = (event: DragStartEvent) => {
+    dragInProgressRef.current = true;
+    suppressTabClickAfterDragRef.current = true;
     setActiveDragTabId(String(event.active.id));
   };
 
   const handleDragCancel = (_event: DragCancelEvent) => {
+    dragInProgressRef.current = false;
     setActiveDragTabId(null);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
+    dragInProgressRef.current = false;
     setActiveDragTabId(null);
     if (!over || active.id === over.id) {
       return;
@@ -98,7 +122,7 @@ export function WorkspaceTabBar({
       <div className="flex min-w-0 items-end gap-1 border-b border-border/45">
         <DndContext
           sensors={sensors}
-          collisionDetection={closestCenter}
+          collisionDetection={collisionDetection}
           modifiers={[restrictToHorizontalAxis]}
           onDragStart={handleDragStart}
           onDragCancel={handleDragCancel}
@@ -115,6 +139,8 @@ export function WorkspaceTabBar({
                   tab={tab}
                   isActive={tab.id === activeTabId}
                   onSelectTab={onSelectTab}
+                  dragInProgressRef={dragInProgressRef}
+                  suppressTabClickAfterDragRef={suppressTabClickAfterDragRef}
                   {...(onOpenTabContextMenu ? { onOpenTabContextMenu } : {})}
                   onCloseTab={onCloseTab}
                 />
@@ -168,12 +194,16 @@ function SortableWorkspaceTab({
   tab,
   isActive,
   onSelectTab,
+  dragInProgressRef,
+  suppressTabClickAfterDragRef,
   onOpenTabContextMenu,
   onCloseTab,
 }: {
   tab: WorkspaceTab;
   isActive: boolean;
   onSelectTab: (tabId: WorkspaceTabId) => void;
+  dragInProgressRef: MutableRefObject<boolean>;
+  suppressTabClickAfterDragRef: MutableRefObject<boolean>;
   onOpenTabContextMenu?: (
     tab: WorkspaceTab,
     position: { x: number; y: number },
@@ -183,6 +213,7 @@ function SortableWorkspaceTab({
   const {
     attributes,
     listeners,
+    setActivatorNodeRef,
     setNodeRef,
     transform,
     transition,
@@ -194,12 +225,30 @@ function SortableWorkspaceTab({
   const hasRunningProcess = tab.kind === "terminal" && tab.hasRunningProcess;
   const providerIconClass =
     tab.kind === "session" ? providerIconClassName(tab.provider, "text-current") : null;
+  const closeActionLabel = tab.kind === "session" ? "Archive" : "Close";
   const handleContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (!onOpenTabContextMenu) {
       return;
     }
     event.preventDefault();
     void onOpenTabContextMenu(tab, { x: event.clientX, y: event.clientY });
+  };
+  const handlePointerDownCapture = (_event: ReactPointerEvent<HTMLButtonElement>) => {
+    suppressTabClickAfterDragRef.current = false;
+  };
+  const handleClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (dragInProgressRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (suppressTabClickAfterDragRef.current) {
+      suppressTabClickAfterDragRef.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    onSelectTab(tab.id);
   };
 
   return (
@@ -219,9 +268,11 @@ function SortableWorkspaceTab({
       )}
     >
       <button
+        ref={setActivatorNodeRef}
         type="button"
         className="-m-1 inline-flex min-h-7 min-w-0 cursor-pointer items-center gap-1.5 rounded-[inherit] px-1 py-1 touch-none"
-        onClick={() => onSelectTab(tab.id)}
+        onPointerDownCapture={handlePointerDownCapture}
+        onClick={handleClick}
         aria-current={isActive ? "page" : undefined}
         {...attributes}
         {...listeners}
@@ -244,7 +295,7 @@ function SortableWorkspaceTab({
             event.stopPropagation();
             onCloseTab(tab.id);
           }}
-          aria-label={`Close ${tab.title}`}
+          aria-label={`${closeActionLabel} ${tab.title}`}
         >
           <XIcon className="size-2.75" />
         </button>
