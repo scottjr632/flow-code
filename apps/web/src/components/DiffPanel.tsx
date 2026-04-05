@@ -15,6 +15,7 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
@@ -167,6 +168,82 @@ function getRenderablePatch(
       reason: "Failed to parse patch. Showing raw patch.",
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Resizable file-tree sidebar panel
+// ---------------------------------------------------------------------------
+
+const FILE_TREE_MIN_WIDTH = 160;
+const FILE_TREE_MAX_WIDTH = 480;
+const FILE_TREE_DEFAULT_WIDTH = 224; // w-56
+
+function clampFileTreeWidth(width: number): number {
+  return Math.min(Math.max(Math.round(width), FILE_TREE_MIN_WIDTH), FILE_TREE_MAX_WIDTH);
+}
+
+interface ResizableFileTreePanelProps {
+  children: React.ReactNode;
+}
+
+function ResizableFileTreePanel({ children }: ResizableFileTreePanelProps) {
+  const [width, setWidth] = useState(FILE_TREE_DEFAULT_WIDTH);
+  const widthRef = useRef(FILE_TREE_DEFAULT_WIDTH);
+  const resizeStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+
+  const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resizeStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: widthRef.current,
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const state = resizeStateRef.current;
+    if (!state || state.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    // Dragging left increases width (panel is on the right side)
+    const nextWidth = clampFileTreeWidth(state.startWidth + (state.startX - event.clientX));
+    if (nextWidth !== widthRef.current) {
+      widthRef.current = nextWidth;
+      setWidth(nextWidth);
+    }
+  }, []);
+
+  const handlePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const state = resizeStateRef.current;
+    if (!state || state.pointerId !== event.pointerId) return;
+    resizeStateRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }, []);
+
+  return (
+    <aside className="relative hidden h-full shrink-0 lg:flex" style={{ width: `${width}px` }}>
+      {/* Drag handle */}
+      <div
+        className="absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize border-l border-border/60 transition-colors hover:border-primary/50 active:border-primary"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+      />
+      <div className="min-w-0 flex-1">{children}</div>
+    </aside>
+  );
 }
 
 interface DraftDiffCommentSelection {
@@ -1083,14 +1160,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             )}
           </div>
           {showFileTree ? (
-            <aside className="hidden h-full w-56 shrink-0 border-l border-border/60 lg:flex">
+            <ResizableFileTreePanel>
               <ReviewFileTree
                 fileDiffs={renderableFiles}
                 resolvedTheme={resolvedTheme}
                 selectedPath={selectedFilePath}
                 onSelectFile={selectReviewFile}
               />
-            </aside>
+            </ResizableFileTreePanel>
           ) : null}
         </div>
       )}

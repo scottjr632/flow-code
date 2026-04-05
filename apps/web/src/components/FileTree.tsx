@@ -96,34 +96,34 @@ export const FileTree = memo(function FileTree(props: {
   };
 
   const renderTreeNode = (node: TurnDiffTreeNode, depth: number) => {
-    const leftPadding = 4 + depth * 14;
+    const leftPadding = 6 + depth * 16;
     if (node.kind === "directory") {
       const isExpanded = expandedDirectories[node.path] ?? defaultDirectoriesExpanded;
       return (
         <div key={`dir:${node.path}`}>
           <button
             type="button"
-            className="group flex w-full cursor-pointer items-center gap-1.5 rounded-sm py-0.5 pr-1.5 text-left hover:bg-background/80"
+            className="group flex w-full cursor-pointer items-center gap-1.5 rounded-sm py-1 pr-2 text-left hover:bg-background/80"
             style={{ paddingLeft: `${leftPadding}px` }}
             onClick={() => toggleDirectory(node.path)}
           >
             <ChevronRightIcon
               aria-hidden="true"
               className={cn(
-                "size-3.5 shrink-0 text-muted-foreground/60 transition-transform group-hover:text-foreground/80",
+                "size-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:text-foreground/80",
                 isExpanded && "rotate-90",
               )}
             />
             {isExpanded ? (
-              <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
+              <FolderIcon className="size-4 shrink-0 text-muted-foreground/70" />
             ) : (
-              <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
+              <FolderClosedIcon className="size-4 shrink-0 text-muted-foreground/70" />
             )}
-            <span className="truncate font-mono text-[13px] leading-snug text-muted-foreground/90 group-hover:text-foreground/90">
+            <span className="truncate font-mono text-sm leading-snug text-muted-foreground/90 group-hover:text-foreground/90">
               {node.name}
             </span>
             {hasNonZeroStat(node.stat) ? (
-              <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums opacity-70">
+              <span className="ml-auto shrink-0 font-mono text-xs tabular-nums opacity-70">
                 <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
               </span>
             ) : null}
@@ -141,30 +141,30 @@ export const FileTree = memo(function FileTree(props: {
         key={`file:${node.path}`}
         type="button"
         className={cn(
-          "group flex w-full cursor-pointer items-center gap-1.5 rounded-sm py-0.5 pr-1.5 text-left transition-colors hover:bg-background/80",
+          "group flex w-full cursor-pointer items-center gap-1.5 rounded-sm py-1 pr-2 text-left transition-colors hover:bg-background/80",
           isSelected && "bg-accent text-accent-foreground hover:bg-accent",
         )}
         style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => onSelectFile(node.path)}
         aria-current={isSelected ? "page" : undefined}
       >
-        <span aria-hidden="true" className="size-3.5 shrink-0" />
+        <span aria-hidden="true" className="size-4 shrink-0" />
         <VscodeEntryIcon
           pathValue={node.path}
           kind="file"
           theme={resolvedTheme}
-          className="size-3.5 shrink-0 text-muted-foreground/70"
+          className="size-4 shrink-0 text-muted-foreground/70"
         />
         <span
           className={cn(
-            "truncate font-mono text-[13px] leading-snug text-muted-foreground/80 group-hover:text-foreground/90",
+            "truncate font-mono text-sm leading-snug text-muted-foreground/80 group-hover:text-foreground/90",
             isSelected && "text-accent-foreground",
           )}
         >
           {node.name}
         </span>
         {node.stat ? (
-          <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums opacity-70">
+          <span className="ml-auto shrink-0 font-mono text-xs tabular-nums opacity-70">
             <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
           </span>
         ) : null}

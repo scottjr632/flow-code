@@ -68,12 +68,12 @@ function ExplorerTreeNode({
       <button
         type="button"
         className={cn(
-          "flex w-full items-center gap-1 rounded-sm px-1.5 py-0.5 text-left text-[11px] leading-tight transition-colors",
+          "flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left text-[13px] leading-snug transition-colors",
           isActive
             ? "bg-primary/12 text-foreground"
             : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
         )}
-        style={{ paddingLeft: `${8 + depth * 14}px` }}
+        style={{ paddingLeft: `${10 + depth * 16}px` }}
         onClick={() => {
           if (isDirectory) {
             onToggleDirectory(entry.path);
@@ -84,22 +84,22 @@ function ExplorerTreeNode({
       >
         {isDirectory ? (
           isExpanded ? (
-            <ChevronDownIcon className="size-3 shrink-0" />
+            <ChevronDownIcon className="size-3.5 shrink-0" />
           ) : (
-            <ChevronRightIcon className="size-3 shrink-0" />
+            <ChevronRightIcon className="size-3.5 shrink-0" />
           )
         ) : (
-          <span className="size-3 shrink-0" />
+          <span className="size-3.5 shrink-0" />
         )}
         <VscodeEntryIcon
           pathValue={entry.path}
           kind={entry.kind}
           theme={resolvedTheme}
-          className="size-3"
+          className="size-4"
         />
         <span className="truncate">{basenameOfPath(entry.path)}</span>
         {isDirectory && loadingDirectoryPaths.has(entry.path) ? (
-          <RefreshCwIcon className="ml-auto size-3 shrink-0 animate-spin text-muted-foreground/60" />
+          <RefreshCwIcon className="ml-auto size-3.5 shrink-0 animate-spin text-muted-foreground/60" />
         ) : null}
       </button>
 
@@ -560,14 +560,14 @@ export function WorkspaceEditorSurface(props: {
   return (
     <div className="h-full flex overflow-hidden">
       {editorState.explorerOpen ? (
-        <div className="flex min-h-0 w-56 shrink-0 flex-col border-r border-border/60 bg-muted/[0.16]">
-          <div className="flex items-center gap-1.5 border-b border-border/60 px-2 py-1">
-            <SearchIcon className="size-3 shrink-0 text-muted-foreground/50" />
+        <div className="flex min-h-0 w-64 shrink-0 flex-col border-r border-border/60 bg-muted/[0.16]">
+          <div className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5">
+            <SearchIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
             <input
               value={explorerQuery}
               onChange={(event) => setExplorerQuery(event.target.value)}
               placeholder="Search files…"
-              className="h-5 w-full min-w-0 bg-transparent text-[11px] text-foreground outline-none placeholder:text-muted-foreground/40"
+              className="h-6 w-full min-w-0 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground/40"
             />
             {explorerQuery.length > 0 ? (
               <button
@@ -575,15 +575,15 @@ export function WorkspaceEditorSurface(props: {
                 className="shrink-0 rounded-sm p-0.5 text-muted-foreground/50 hover:text-foreground"
                 onClick={() => setExplorerQuery("")}
               >
-                <XIcon className="size-2.5" />
+                <XIcon className="size-3" />
               </button>
             ) : null}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
+          <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1.5">
             {openEditors.length > 0 ? (
-              <div className="mb-1.5">
-                <div className="px-2 pb-0.5 text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground/50">
+              <div className="mb-2">
+                <div className="px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/60">
                   Open
                 </div>
                 <div>
@@ -592,7 +592,7 @@ export function WorkspaceEditorSurface(props: {
                       key={editor.relativePath}
                       type="button"
                       className={cn(
-                        "flex w-full items-center gap-1 rounded-sm px-1.5 py-0.5 text-left text-[11px] leading-tight transition-colors",
+                        "flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left text-[13px] leading-snug transition-colors",
                         props.activeRelativePath === editor.relativePath
                           ? "bg-primary/12 text-foreground"
                           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
@@ -605,7 +605,7 @@ export function WorkspaceEditorSurface(props: {
                         pathValue={editor.relativePath}
                         kind="file"
                         theme={resolvedTheme}
-                        className="size-3"
+                        className="size-4"
                       />
                       <span className="truncate">{editor.title}</span>
                       {editor.dirty ? (
@@ -623,7 +623,7 @@ export function WorkspaceEditorSurface(props: {
                   <button
                     key={`${entry.kind}:${entry.path}`}
                     type="button"
-                    className="flex w-full items-center gap-1 rounded-sm px-1.5 py-0.5 text-left text-[11px] leading-tight text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+                    className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left text-[13px] leading-snug text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
                     onClick={() => {
                       if (entry.kind === "directory") {
                         ensureDirectoriesExpanded(props.threadId, [entry.path]);
@@ -637,18 +637,18 @@ export function WorkspaceEditorSurface(props: {
                       pathValue={entry.path}
                       kind={entry.kind}
                       theme={resolvedTheme}
-                      className="size-3"
+                      className="size-4"
                     />
                     <span className="truncate">{basenameOfPath(entry.path)}</span>
                     {entry.parentPath ? (
-                      <span className="ml-auto truncate text-[9px] text-muted-foreground/50">
+                      <span className="ml-auto truncate text-[11px] text-muted-foreground/50">
                         {entry.parentPath}
                       </span>
                     ) : null}
                   </button>
                 ))}
                 {searchEntriesQuery.isFetching ? (
-                  <div className="px-2 py-1.5 text-[11px] text-muted-foreground/70">Searching…</div>
+                  <div className="px-2 py-1.5 text-[13px] text-muted-foreground/70">Searching…</div>
                 ) : null}
               </div>
             ) : (
@@ -675,13 +675,13 @@ export function WorkspaceEditorSurface(props: {
       ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-border/60 bg-background px-2 py-1">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="truncate text-[12px] font-medium text-foreground">
+        <div className="flex items-center gap-2 border-b border-border/60 bg-background px-3 py-1.5">
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+            <span className="truncate text-sm font-medium text-foreground">
               {props.activeRelativePath ?? "No file open"}
             </span>
             {props.activeRelativePath && activeBuffer ? (
-              <span className="shrink-0 text-[10px] text-muted-foreground/60">
+              <span className="shrink-0 text-xs text-muted-foreground/60">
                 {activeBuffer.binary
                   ? "binary"
                   : activeBuffer.tooLarge
@@ -692,24 +692,24 @@ export function WorkspaceEditorSurface(props: {
               </span>
             ) : null}
             {totalDiagnosticsCount > 0 ? (
-              <span className="shrink-0 text-[10px] text-muted-foreground/60">
+              <span className="shrink-0 text-xs text-muted-foreground/60">
                 {totalDiagnosticsCount} problem{totalDiagnosticsCount === 1 ? "" : "s"}
               </span>
             ) : null}
             {activeRelativePath ? (
-              <span className="shrink-0 text-[10px] text-muted-foreground/60">
+              <span className="shrink-0 text-xs text-muted-foreground/60">
                 {activeFileDiagnosticsCount} file problem
                 {activeFileDiagnosticsCount === 1 ? "" : "s"}
               </span>
             ) : null}
-            <span className="shrink-0 text-[10px] text-muted-foreground/60">{lspStatusText}</span>
+            <span className="shrink-0 text-xs text-muted-foreground/60">{lspStatusText}</span>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1.5">
             <button
               type="button"
               className={cn(
-                "inline-flex h-5 items-center rounded-sm px-1.5 text-[10px] font-medium transition-colors",
+                "inline-flex h-6 items-center rounded-sm px-2 text-xs font-medium transition-colors",
                 editorState.vimMode
                   ? "bg-primary/12 text-foreground hover:bg-primary/16"
                   : "text-muted-foreground/70 hover:bg-accent/50 hover:text-foreground",
@@ -723,7 +723,7 @@ export function WorkspaceEditorSurface(props: {
             <button
               type="button"
               className={cn(
-                "inline-flex h-5 items-center rounded-sm px-1.5 text-[10px] font-medium transition-colors",
+                "inline-flex h-6 items-center rounded-sm px-2 text-xs font-medium transition-colors",
                 lspStatus?.state === "unavailable"
                   ? "cursor-not-allowed text-muted-foreground/35"
                   : lspStatus?.state === "running"
@@ -742,10 +742,10 @@ export function WorkspaceEditorSurface(props: {
             {!editorState.explorerOpen ? (
               <button
                 type="button"
-                className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground/50 transition-colors hover:text-foreground"
+                className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground/50 transition-colors hover:text-foreground"
                 onClick={() => setExplorerOpen(props.threadId, true)}
               >
-                <FolderTreeIcon className="size-3" />
+                <FolderTreeIcon className="size-4" />
               </button>
             ) : null}
           </div>
@@ -754,31 +754,31 @@ export function WorkspaceEditorSurface(props: {
         <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
           {!props.activeRelativePath ? (
             <div className="flex h-full items-center justify-center px-6">
-              <div className="text-center text-[12px] text-muted-foreground/60">
-                <FolderTreeIcon className="mx-auto mb-2 size-5 text-muted-foreground/40" />
+              <div className="text-center text-sm text-muted-foreground/60">
+                <FolderTreeIcon className="mx-auto mb-2.5 size-6 text-muted-foreground/40" />
                 Open a file to start editing
               </div>
             </div>
           ) : !activeBuffer || activeBuffer.status === "loading" ? (
-            <div className="flex h-full items-center justify-center text-[12px] text-muted-foreground/60">
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground/60">
               Loading…
             </div>
           ) : activeBuffer.status === "error" ? (
             <div className="flex h-full items-center justify-center px-6">
-              <div className="text-center text-[12px]">
-                <AlertCircleIcon className="mx-auto mb-2 size-5 text-rose-500/60" />
+              <div className="text-center text-sm">
+                <AlertCircleIcon className="mx-auto mb-2.5 size-6 text-rose-500/60" />
                 <div className="font-medium text-foreground">Unable to open file</div>
-                <p className="mt-0.5 text-muted-foreground/70">{activeBuffer.error}</p>
+                <p className="mt-1 text-muted-foreground/70">{activeBuffer.error}</p>
               </div>
             </div>
           ) : activeBuffer.binary || activeBuffer.tooLarge ? (
             <div className="flex h-full items-center justify-center px-6">
-              <div className="text-center text-[12px]">
-                <FileSearchIcon className="mx-auto mb-2 size-5 text-muted-foreground/40" />
+              <div className="text-center text-sm">
+                <FileSearchIcon className="mx-auto mb-2.5 size-6 text-muted-foreground/40" />
                 <div className="font-medium text-foreground">
                   {activeBuffer.binary ? "Binary file" : "File too large"}
                 </div>
-                <p className="mt-0.5 text-muted-foreground/70">
+                <p className="mt-1 text-muted-foreground/70">
                   {activeBuffer.binary
                     ? "Open in an external editor."
                     : `Max ${Math.round(activeBuffer.maxBytes / 1024)} KB.`}
@@ -832,9 +832,9 @@ export function WorkspaceEditorSurface(props: {
 
         {editorState.problemsOpen ? (
           <div className="shrink-0 border-t border-border/60 bg-muted/[0.12]">
-            <div className="max-h-40 overflow-y-auto px-1 py-1">
+            <div className="max-h-48 overflow-y-auto px-1.5 py-1.5">
               {(workspaceDiagnosticsQuery.data?.diagnostics.length ?? 0) === 0 ? (
-                <div className="px-2 py-2 text-[11px] text-muted-foreground/60">
+                <div className="px-2.5 py-2.5 text-[13px] text-muted-foreground/60">
                   No problems found.
                 </div>
               ) : (
@@ -844,7 +844,7 @@ export function WorkspaceEditorSurface(props: {
                       key={`${diagnostic.relativePath}:${diagnostic.startLine}:${diagnostic.startColumn}:${diagnostic.code ?? diagnostic.message}`}
                       type="button"
                       className={cn(
-                        "flex w-full items-start gap-1.5 rounded-sm px-1.5 py-0.5 text-left transition-colors",
+                        "flex w-full items-start gap-2 rounded-sm px-2 py-1 text-left transition-colors",
                         diagnostic.relativePath === props.activeRelativePath
                           ? "bg-primary/8"
                           : "hover:bg-accent/30",
@@ -853,7 +853,7 @@ export function WorkspaceEditorSurface(props: {
                     >
                       <TriangleAlertIcon
                         className={cn(
-                          "mt-px size-3 shrink-0",
+                          "mt-0.5 size-3.5 shrink-0",
                           diagnostic.severity === "warning"
                             ? "text-amber-500"
                             : diagnostic.severity === "info"
@@ -862,13 +862,13 @@ export function WorkspaceEditorSurface(props: {
                         )}
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 text-[11px] text-foreground">
+                        <div className="flex items-center gap-1.5 text-[13px] text-foreground">
                           <span className="truncate font-medium">{diagnostic.relativePath}</span>
-                          <span className="shrink-0 text-[10px] text-muted-foreground/60">
+                          <span className="shrink-0 text-xs text-muted-foreground/60">
                             {diagnostic.startLine}:{diagnostic.startColumn}
                           </span>
                         </div>
-                        <div className="text-[10px] leading-tight text-muted-foreground/80">
+                        <div className="text-xs leading-snug text-muted-foreground/80">
                           {diagnostic.message}
                         </div>
                       </div>

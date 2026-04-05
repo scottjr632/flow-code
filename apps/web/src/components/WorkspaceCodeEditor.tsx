@@ -100,7 +100,7 @@ const editorTheme = (dark: boolean) =>
         overflow: "hidden",
         backgroundColor: "color-mix(in srgb, var(--muted) 78%, var(--background))",
         color: "var(--foreground)",
-        fontSize: "12px",
+        fontSize: "14px",
       },
       ".cm-scroller": {
         height: "100%",
@@ -135,11 +135,11 @@ const editorTheme = (dark: boolean) =>
         backgroundColor: "color-mix(in srgb, var(--muted) 50%, var(--background))",
         color: "var(--foreground)",
         borderBottom: "1px solid color-mix(in srgb, var(--border) 60%, transparent)",
-        fontSize: "12px",
+        fontSize: "13px",
         padding: "4px 8px",
       },
       ".cm-panels input, .cm-panels button": {
-        fontSize: "11px",
+        fontSize: "12px",
       },
       ".cm-panels input[type=text], .cm-panels input[type=search]": {
         backgroundColor: "var(--background)",
