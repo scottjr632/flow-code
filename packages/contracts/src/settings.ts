@@ -23,6 +23,10 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+export const FileLinkOpenBehavior = Schema.Literals(["external-editor", "flow-files"]);
+export type FileLinkOpenBehavior = typeof FileLinkOpenBehavior.Type;
+export const DEFAULT_FILE_LINK_OPEN_BEHAVIOR: FileLinkOpenBehavior = "external-editor";
+
 export const DEFAULT_TERMINAL_FONT_FAMILY = [
   '"FiraCode Nerd Font Mono"',
   '"FiraCode Nerd Font"',
@@ -51,6 +55,9 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  fileLinkOpenBehavior: FileLinkOpenBehavior.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_FILE_LINK_OPEN_BEHAVIOR),
+  ),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_PROJECT_SORT_ORDER),
   ),

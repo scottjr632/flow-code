@@ -1,14 +1,14 @@
 import { AlertTriangleIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 
-import { openInPreferredEditor } from "~/editorPreferences";
-import { readNativeApi } from "~/nativeApi";
+import { openFileTarget, type InAppFileTargetOpener } from "~/fileOpen";
 import { buildCodeCommentOpenTarget, type CodeCommentDirective } from "~/lib/codexDirectives";
 import { Button } from "../ui/button";
 
 interface CodeReviewCommentsProps {
   comments: ReadonlyArray<CodeCommentDirective>;
   workspaceRoot?: string;
+  onOpenFileTarget?: InAppFileTargetOpener | undefined;
 }
 
 function formatConfidence(confidence: number): string {
@@ -28,17 +28,17 @@ function formatLineRange(comment: Pick<CodeCommentDirective, "start" | "end">): 
 export const CodeReviewComments = memo(function CodeReviewComments({
   comments,
   workspaceRoot,
+  onOpenFileTarget,
 }: CodeReviewCommentsProps) {
   const handleOpenFile = useCallback(
     async (comment: CodeCommentDirective) => {
-      const api = readNativeApi();
-      if (!api) {
-        console.warn("Native API not found. Unable to open file in editor.");
-        return;
-      }
-      await openInPreferredEditor(api, buildCodeCommentOpenTarget(comment, workspaceRoot));
+      await openFileTarget({
+        targetPath: buildCodeCommentOpenTarget(comment, workspaceRoot),
+        onOpenInApp: onOpenFileTarget,
+        missingApiWarning: "Native API not found. Unable to open file in editor.",
+      });
     },
-    [workspaceRoot],
+    [onOpenFileTarget, workspaceRoot],
   );
 
   if (comments.length === 0) {

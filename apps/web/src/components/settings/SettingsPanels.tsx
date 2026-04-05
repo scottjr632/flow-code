@@ -13,6 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
+  type FileLinkOpenBehavior,
   PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
   type ServerProvider,
@@ -81,6 +82,11 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const FILE_LINK_OPEN_BEHAVIOR_LABELS: Record<FileLinkOpenBehavior, string> = {
+  "external-editor": "Preferred editor",
+  "flow-files": "Flow files tab",
+};
 
 const TURN_REVIEW_VCS_LABELS = {
   auto: "Auto",
@@ -469,6 +475,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
+      ...(settings.fileLinkOpenBehavior !== DEFAULT_UNIFIED_SETTINGS.fileLinkOpenBehavior
+        ? ["File link opening"]
+        : []),
       ...(settings.terminalFontFamily !== DEFAULT_UNIFIED_SETTINGS.terminalFontFamily
         ? ["Terminal font"]
         : []),
@@ -501,6 +510,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.fileLinkOpenBehavior,
       settings.gitBranchNamePrefix,
       settings.terminalFontFamily,
       settings.timestampFormat,
@@ -853,6 +863,47 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
               aria-label="Wrap diff lines by default"
             />
+          }
+        />
+
+        <SettingsRow
+          title="File link opening"
+          description="Choose whether chat file mentions open in your preferred editor or inside Flow's built-in files workspace."
+          resetAction={
+            settings.fileLinkOpenBehavior !== DEFAULT_UNIFIED_SETTINGS.fileLinkOpenBehavior ? (
+              <SettingResetButton
+                label="file link opening"
+                onClick={() =>
+                  updateSettings({
+                    fileLinkOpenBehavior: DEFAULT_UNIFIED_SETTINGS.fileLinkOpenBehavior,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.fileLinkOpenBehavior}
+              onValueChange={(value) => {
+                if (value === "external-editor" || value === "flow-files") {
+                  updateSettings({ fileLinkOpenBehavior: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-48" aria-label="File link opening">
+                <SelectValue>
+                  {FILE_LINK_OPEN_BEHAVIOR_LABELS[settings.fileLinkOpenBehavior]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="external-editor">
+                  {FILE_LINK_OPEN_BEHAVIOR_LABELS["external-editor"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="flow-files">
+                  {FILE_LINK_OPEN_BEHAVIOR_LABELS["flow-files"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 

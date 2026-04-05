@@ -183,6 +183,7 @@ import {
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import {
+  buildFileWorkspaceTabId,
   buildThreadWorkspaceTabId,
   buildTerminalWorkspaceTabId,
   buildWorkspaceTabs,
@@ -258,10 +259,12 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useWindowKeydownListener } from "../hooks/useWindowKeydownListener";
 import { resolveExistingWorkspaceContext } from "../workspaceContext";
 import {
+  directoryAncestorsOf,
   isBufferDirty,
   useThreadWorkspaceEditorState,
   useWorkspaceEditorStore,
 } from "../workspaceEditorStore";
+import { resolveWorkspaceRelativeFileTarget } from "../workspaceFileTargets";
 import { WorkspaceEditorSurface } from "./WorkspaceEditorSurface";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
@@ -689,6 +692,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectThreadTerminalState(state.terminalStateByThreadId, terminalOwnerId ?? threadId),
   );
   const workspaceEditorState = useThreadWorkspaceEditorState(activeThreadId);
+  const openWorkspaceEditorFile = useWorkspaceEditorStore((store) => store.openFile);
+  const ensureWorkspaceEditorDirectoriesExpanded = useWorkspaceEditorStore(
+    (store) => store.ensureDirectoriesExpanded,
+  );
   const closeWorkspaceEditorFile = useWorkspaceEditorStore((store) => store.closeFile);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const activeContextWindow = useMemo(
@@ -697,6 +704,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+  const gitCwd = activeProject
+    ? projectScriptCwd({
+        project: { cwd: activeProject.cwd },
+        worktreePath: activeThread?.worktreePath ?? null,
+      })
+    : null;
+  const workspaceFileRoot = gitCwd ?? activeProject?.cwd ?? null;
   const activeWorkspaceContext = useMemo(
     () =>
       resolveExistingWorkspaceContext({
@@ -857,6 +871,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeFileWorkspaceTab = activeWorkspaceTab?.kind === "file" ? activeWorkspaceTab : null;
   const activeTerminalWorkspaceTab =
     activeWorkspaceTab?.kind === "terminal" ? activeWorkspaceTab : null;
+  const openFileTargetInWorkspace = useCallback(
+    (targetPath: string) => {
+      if (settings.fileLinkOpenBehavior !== "flow-files" || !workspaceFileRoot || !activeThreadId) {
+        return false;
+      }
+
+      const relativePath = resolveWorkspaceRelativeFileTarget(targetPath, workspaceFileRoot);
+      if (!relativePath) {
+        return false;
+      }
+
+      openWorkspaceEditorFile(activeThreadId, relativePath);
+      ensureWorkspaceEditorDirectoriesExpanded(activeThreadId, directoryAncestorsOf(relativePath));
+      setActiveWorkspaceTabId(buildFileWorkspaceTabId(relativePath));
+      return true;
+    },
+    [
+      activeThreadId,
+      ensureWorkspaceEditorDirectoriesExpanded,
+      openWorkspaceEditorFile,
+      setActiveWorkspaceTabId,
+      settings.fileLinkOpenBehavior,
+      workspaceFileRoot,
+    ],
+  );
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -1436,12 +1475,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     latestTurnSettled,
     timelineEntries,
   ]);
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.cwd },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
@@ -5094,9 +5127,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     onImageExpand={onExpandTimelineImage}
                     onLayoutChange={keepSessionOpenScrolledToBottom}
                     markdownCwd={gitCwd ?? undefined}
+                    onOpenFileTarget={openFileTargetInWorkspace}
                     resolvedTheme={resolvedTheme}
                     timestampFormat={timestampFormat}
-                    workspaceRoot={activeProject?.cwd ?? undefined}
+                    workspaceRoot={workspaceFileRoot ?? undefined}
                   />
                 </div>
 
@@ -5682,8 +5716,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 activePlan={activePlan}
                 activeProposedPlan={sidebarProposedPlan}
                 markdownCwd={gitCwd ?? undefined}
-                workspaceRoot={activeProject?.cwd ?? undefined}
+                workspaceRoot={workspaceFileRoot ?? undefined}
                 timestampFormat={timestampFormat}
+                onOpenFileTarget={openFileTargetInWorkspace}
                 onClose={() => {
                   setPlanSidebarOpen(false);
                   const turnKey = activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? null;
@@ -5698,7 +5733,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           <div className="flex-1 overflow-hidden">
             <WorkspaceEditorSurface
               threadId={activeThread.id}
-              workspaceRoot={activeProject.cwd}
+              workspaceRoot={workspaceFileRoot ?? activeProject.cwd}
               resolvedTheme={resolvedTheme}
               activeRelativePath={activeFileWorkspaceTab?.relativePath ?? null}
               onSelectWorkspaceTab={selectWorkspaceTab}

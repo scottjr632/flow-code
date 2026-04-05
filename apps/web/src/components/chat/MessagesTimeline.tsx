@@ -54,6 +54,7 @@ import { replaceSessionReferenceTokensForDisplay } from "~/lib/sessionReferences
 import { replaceTerminalLogReferenceTokensForDisplay } from "~/lib/terminalLogReferences";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { type InAppFileTargetOpener } from "~/fileOpen";
 import { formatTimestamp } from "../../timestampFormat";
 import {
   buildInlineTerminalContextText,
@@ -85,6 +86,7 @@ interface MessagesTimelineProps {
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onLayoutChange?: () => void;
   markdownCwd: string | undefined;
+  onOpenFileTarget?: InAppFileTargetOpener | undefined;
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
@@ -110,6 +112,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onImageExpand,
   onLayoutChange,
   markdownCwd,
+  onOpenFileTarget,
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
@@ -480,10 +483,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     text={messageText}
                     cwd={markdownCwd}
                     isStreaming={Boolean(row.message.streaming)}
+                    onOpenFileTarget={onOpenFileTarget}
                   />
                 ) : null}
                 <CodeReviewComments
                   comments={reviewComments}
+                  onOpenFileTarget={onOpenFileTarget}
                   {...(workspaceRoot ? { workspaceRoot } : {})}
                 />
                 {(() => {
@@ -562,6 +567,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             planMarkdown={row.proposedPlan.planMarkdown}
             cwd={markdownCwd}
             workspaceRoot={workspaceRoot}
+            onOpenFileTarget={onOpenFileTarget}
           />
         </div>
       )}
