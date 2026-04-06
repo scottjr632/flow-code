@@ -1,6 +1,7 @@
 import { ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { removeLocalStorageItem } from "./hooks/useLocalStorage";
 import {
   WORKSPACE_EDITOR_VIM_MODE_KEY,
   readPersistedWorkspaceEditorVimMode,
@@ -9,7 +10,7 @@ import {
 
 describe("workspaceEditorStore", () => {
   beforeEach(() => {
-    localStorage.clear();
+    removeLocalStorageItem(WORKSPACE_EDITOR_VIM_MODE_KEY);
     useWorkspaceEditorStore.setState({ editorsByThreadId: {} });
   });
 
@@ -20,7 +21,8 @@ describe("workspaceEditorStore", () => {
   });
 
   it("hydrates new thread editor state from the persisted vim mode preference", () => {
-    localStorage.setItem(WORKSPACE_EDITOR_VIM_MODE_KEY, "true");
+    useWorkspaceEditorStore.getState().setVimMode(ThreadId.makeUnsafe("persisted-thread"), true);
+    useWorkspaceEditorStore.setState({ editorsByThreadId: {} });
 
     useWorkspaceEditorStore
       .getState()

@@ -144,7 +144,7 @@ describe("terminalStateStore actions", () => {
     ).toEqual({});
   });
 
-  it("does not persist running terminal activity across reloads", () => {
+  it("does not persist running terminal activity across reloads", async () => {
     const store = useTerminalStateStore.getState();
     store.splitTerminal(THREAD_ID, "terminal-2");
     store.setTerminalActivity(THREAD_ID, "terminal-2", true);
@@ -153,10 +153,22 @@ describe("terminalStateStore actions", () => {
     if (!storageKey) {
       throw new Error("Missing terminal state storage key");
     }
-    const rawPersistedState = localStorage.getItem(storageKey);
-    expect(rawPersistedState).not.toBeNull();
+    const persistedState = (await useTerminalStateStore.persist
+      .getOptions()
+      .storage?.getItem(storageKey)) as {
+      state: {
+        terminalStateByThreadId: Record<
+          string,
+          {
+            runningTerminalIds: string[];
+          }
+        >;
+      };
+      version: number;
+    } | null;
+    expect(persistedState).not.toBeNull();
 
-    const persistedState = JSON.parse(rawPersistedState ?? "null") as {
+    const validatedPersistedState = persistedState as {
       state: {
         terminalStateByThreadId: Record<
           string,
@@ -168,8 +180,10 @@ describe("terminalStateStore actions", () => {
       version: number;
     };
 
-    expect(persistedState.version).toBe(3);
-    expect(persistedState.state.terminalStateByThreadId[THREAD_ID]?.runningTerminalIds).toEqual([]);
+    expect(validatedPersistedState.version).toBe(3);
+    expect(
+      validatedPersistedState.state.terminalStateByThreadId[THREAD_ID]?.runningTerminalIds,
+    ).toEqual([]);
   });
 
   it("resets to default and clears persisted entry when closing the last terminal", () => {
