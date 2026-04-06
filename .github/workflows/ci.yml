@@ -9,7 +9,9 @@ on:
 jobs:
   quality:
     name: Format, Lint, Typecheck, Test, Browser Test, Build
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # Upstream uses a Blacksmith runner here. Keep this fork portable by
+    # using the stock GitHub-hosted image unless custom runners are wired up.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
