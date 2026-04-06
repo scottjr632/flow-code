@@ -667,6 +667,7 @@ interface ComposerPromptEditorProps {
   disabled: boolean;
   placeholder: string;
   className?: string;
+  dataTestId?: string;
   onRemoveTerminalContext: (contextId: string) => void;
   onChange: (
     nextValue: string,
@@ -928,6 +929,7 @@ function ComposerPromptEditorInner({
   disabled,
   placeholder,
   className,
+  dataTestId,
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
@@ -1140,7 +1142,7 @@ function ComposerPromptEditorInner({
                 "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[14px] leading-relaxed text-foreground focus:outline-none",
                 className,
               )}
-              data-testid="composer-editor"
+              data-testid={dataTestId ?? "composer-editor"}
               aria-placeholder={placeholder}
               placeholder={<span />}
               onPaste={onPaste}
@@ -1180,6 +1182,7 @@ export const ComposerPromptEditor = forwardRef<
     disabled,
     placeholder,
     className,
+    dataTestId,
     onRemoveTerminalContext,
     onChange,
     onCommandKeyDown,
@@ -1217,6 +1220,7 @@ export const ComposerPromptEditor = forwardRef<
         onChange={onChange}
         onPaste={onPaste}
         editorRef={ref}
+        {...(dataTestId ? { dataTestId } : {})}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
         {...(onEscapeKeyDown ? { onEscapeKeyDown } : {})}
         {...(className ? { className } : {})}

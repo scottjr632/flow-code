@@ -17,7 +17,7 @@ import {
 
 export interface WorkspaceCommandPaletteItem {
   id: string;
-  group: "actions" | "terminals" | "sessions";
+  group: "actions" | "projects" | "terminals" | "sessions";
   title: string;
   subtitle?: string;
   keywords?: string;
@@ -36,6 +36,7 @@ interface WorkspaceCommandPaletteProps {
 
 const GROUP_LABELS: Record<WorkspaceCommandPaletteItem["group"], string> = {
   actions: "Suggested",
+  projects: "Projects",
   terminals: "Terminals",
   sessions: "Sessions",
 };
@@ -90,6 +91,7 @@ export function WorkspaceCommandPalette({
   const itemsByGroup = useMemo(() => {
     return {
       actions: filteredItems.filter((item) => item.group === "actions"),
+      projects: filteredItems.filter((item) => item.group === "projects"),
       terminals: filteredItems.filter((item) => item.group === "terminals"),
       sessions: filteredItems.filter((item) => item.group === "sessions"),
     } satisfies Record<WorkspaceCommandPaletteItem["group"], WorkspaceCommandPaletteItem[]>;
@@ -156,7 +158,7 @@ export function WorkspaceCommandPalette({
                   {emptyText}
                 </CommandEmpty>
               ) : null}
-              {(["actions", "terminals", "sessions"] as const).map((group) => {
+              {(["actions", "projects", "terminals", "sessions"] as const).map((group) => {
                 const groupItems = itemsByGroup[group];
                 if (groupItems.length === 0) {
                   return null;

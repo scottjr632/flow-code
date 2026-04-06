@@ -35,6 +35,7 @@ import {
   type ComposerTrigger,
   collapseExpandedComposerCursor,
   detectComposerTrigger,
+  extendReplacementRangeForTrailingSpace,
   expandCollapsedComposerCursor,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
@@ -102,9 +103,7 @@ import {
   ListTodoIcon,
   LockIcon,
   LockOpenIcon,
-  MessageSquareTextIcon,
   PlusIcon,
-  SquarePenIcon,
   TerminalSquareIcon,
   XIcon,
 } from "lucide-react";
@@ -258,6 +257,7 @@ import { sortThreadsForSidebar } from "./Sidebar.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useWorkspaceCommandPalette } from "../hooks/useWorkspaceCommandPalette";
+import { buildWorkspaceCommandPaletteNavigationItems } from "../workspaceCommandPaletteItems";
 import { useWindowKeydownListener } from "../hooks/useWindowKeydownListener";
 import { resolveExistingWorkspaceContext } from "../workspaceContext";
 import { isHomeProject, isUserProject } from "../systemProject";
@@ -335,17 +335,6 @@ function formatOutgoingPrompt(params: {
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
-
-const extendReplacementRangeForTrailingSpace = (
-  text: string,
-  rangeEnd: number,
-  replacement: string,
-): number => {
-  if (!replacement.endsWith(" ")) {
-    return rangeEnd;
-  }
-  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
-};
 
 const syncTerminalContextsByIds = (
   contexts: ReadonlyArray<TerminalContextDraft>,
@@ -749,16 +738,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         .map((workspace) => ({ id: workspace.id, name: workspace.name })),
     [workItemEditorValues.projectId, workspaces],
   );
-  const openCreateWorkItemDialog = useCallback(() => {
-    const preferredProjectId =
-      activeProject && isUserProject(activeProject)
-        ? activeProject.id
-        : (userProjects[0]?.id ?? null);
-    setWorkItemDialogState({ mode: "create", item: null });
-    setWorkItemEditorValues(
-      deriveWorkItemEditorValues({ mode: "create", item: null }, preferredProjectId),
-    );
-  }, [activeProject, userProjects]);
   const closeWorkItemDialog = useCallback((open: boolean) => {
     if (open) {
       return;
@@ -4939,30 +4918,38 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ],
   );
   const workspaceCommandPaletteItems = useMemo<WorkspaceCommandPaletteItem[]>(() => {
-    const items: WorkspaceCommandPaletteItem[] = [];
-    const activeUserProject = activeProject && isUserProject(activeProject) ? activeProject : null;
-
-    items.push({
-      id: "action:new-thread",
-      group: "actions",
-      title: "New thread",
-      keywords: "new thread create thread draft",
-      icon: SquarePenIcon,
-      ...(newThreadShortcutLabel ? { shortcut: newThreadShortcutLabel } : {}),
-      onSelect: () => {
+    const paletteThreads = activeThread
+      ? [activeThread, ...threads.filter((thread) => thread.id !== activeThread.id)]
+      : threads;
+    const items = buildWorkspaceCommandPaletteNavigationItems({
+      projects,
+      threads: paletteThreads,
+      activeThreadId: activeThread?.id ?? null,
+      selectedProjectId: activeProject?.id ?? null,
+      ...(newThreadShortcutLabel ? { newThreadShortcutLabel } : {}),
+      onOpenNewThread: () => {
         void navigate({ to: "/" });
       },
-    });
-
-    items.push({
-      id: "action:new-work-item",
-      group: "actions",
-      title: "New work item",
-      keywords: "new work item create task todo backlog issue",
-      icon: ListTodoIcon,
-      ...(activeUserProject ? { subtitle: activeUserProject.name } : {}),
-      onSelect: () => {
-        openCreateWorkItemDialog();
+      onOpenWorkSurface: (projectId) => {
+        void navigate({
+          to: "/work",
+          ...(projectId ? { search: { projectId } } : {}),
+        });
+      },
+      onSelectProject: (projectId) => {
+        void navigate({
+          to: "/",
+          search: { projectId },
+        });
+      },
+      onSelectThread: (threadId) => {
+        if (threadId === activeThread?.id) {
+          return;
+        }
+        void navigate({
+          to: "/$threadId",
+          params: { threadId },
+        });
       },
     });
 
@@ -5021,37 +5008,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
     });
 
-    const paletteThreads = activeThread
-      ? [activeThread, ...threads.filter((thread) => thread.id !== activeThread.id)]
-      : threads;
-    const projectNameById = new Map(projects.map((project) => [project.id, project.name] as const));
-
-    paletteThreads
-      .filter((thread) => thread.archivedAt === null)
-      .forEach((thread) => {
-        const isCurrentThread = thread.id === activeThread?.id;
-        const projectName = projectNameById.get(thread.projectId);
-        items.push({
-          id: `thread:${thread.id}`,
-          group: "sessions",
-          title: thread.title,
-          subtitle: [projectName, isCurrentThread ? "Current session" : null]
-            .filter(Boolean)
-            .join(" · "),
-          keywords: `${thread.title} ${projectName ?? ""}`.trim(),
-          icon: MessageSquareTextIcon,
-          onSelect: () => {
-            if (isCurrentThread) {
-              return;
-            }
-            void navigate({
-              to: "/$threadId",
-              params: { threadId: thread.id },
-            });
-          },
-        });
-      });
-
     return items;
   }, [
     activeProject,
@@ -5062,7 +5018,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     navigate,
     newThreadShortcutLabel,
     newTerminalShortcutLabel,
-    openCreateWorkItemDialog,
     openFilesWorkspace,
     projects,
     resolvedWorkspaceTabId,
@@ -5610,18 +5565,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               </span>
                             ) : null}
                             {pendingUserInputs.length === 0 && !showPlanFollowUpPrompt ? (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="rounded-full px-3"
-                                onClick={() => void onQueueMessage()}
-                                disabled={!composerSendState.hasSendableContent}
-                                title="Queue message (Tab)"
-                              >
-                                <ListOrderedIcon className="size-3.5" />
-                                <span className="hidden sm:inline">Queue</span>
-                              </Button>
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="rounded-full px-3"
+                                      onClick={() => void onQueueMessage()}
+                                      disabled={!composerSendState.hasSendableContent}
+                                    >
+                                      <ListOrderedIcon className="size-3.5" />
+                                      <span className="hidden sm:inline">Queue</span>
+                                    </Button>
+                                  }
+                                />
+                                <TooltipPopup
+                                  side="top"
+                                  align="end"
+                                  className="max-w-56 whitespace-normal leading-tight"
+                                >
+                                  Press{" "}
+                                  <kbd className="rounded border bg-background px-1 py-0.5 font-mono text-[11px]">
+                                    Tab
+                                  </kbd>{" "}
+                                  to queue this message.
+                                </TooltipPopup>
+                              </Tooltip>
                             ) : null}
                             {activePendingProgress ? (
                               <div className="flex items-center gap-2">

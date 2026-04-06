@@ -289,6 +289,63 @@ function createSnapshotForTargetUser(options: {
   };
 }
 
+function withSecondProject(snapshot: OrchestrationReadModel): OrchestrationReadModel {
+  return {
+    ...snapshot,
+    projects: [
+      ...snapshot.projects,
+      {
+        id: SECOND_PROJECT_ID,
+        title: "Second Project",
+        workspaceRoot: "/repo/second-project",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5",
+        },
+        scripts: [],
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+    ],
+    threads: [
+      ...snapshot.threads,
+      {
+        id: SECOND_THREAD_ID,
+        projectId: SECOND_PROJECT_ID,
+        workspaceId: null,
+        title: "Second browser test thread",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5",
+        },
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        branch: "main",
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        archivedAt: null,
+        deletedAt: null,
+        messages: [],
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        session: {
+          threadId: SECOND_THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: NOW_ISO,
+        },
+      },
+    ],
+  };
+}
+
 function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
   return {
     snapshot,
@@ -2264,64 +2321,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("defaults the global create-thread page to the most recently used project", async () => {
-    const baseSnapshot = createSnapshotForTargetUser({
-      targetMessageId: "msg-user-global-new-thread-default-project" as MessageId,
-      targetText: "global new thread default project",
-    });
-    const snapshotWithSecondProject: OrchestrationReadModel = {
-      ...baseSnapshot,
-      projects: [
-        ...baseSnapshot.projects,
-        {
-          id: SECOND_PROJECT_ID,
-          title: "Second Project",
-          workspaceRoot: "/repo/second-project",
-          defaultModelSelection: {
-            provider: "codex",
-            model: "gpt-5",
-          },
-          scripts: [],
-          createdAt: NOW_ISO,
-          updatedAt: NOW_ISO,
-          deletedAt: null,
-        },
-      ],
-      threads: [
-        ...baseSnapshot.threads,
-        {
-          id: SECOND_THREAD_ID,
-          projectId: SECOND_PROJECT_ID,
-          workspaceId: null,
-          title: "Second browser test thread",
-          modelSelection: {
-            provider: "codex",
-            model: "gpt-5",
-          },
-          interactionMode: "default",
-          runtimeMode: "full-access",
-          branch: "main",
-          worktreePath: null,
-          latestTurn: null,
-          createdAt: NOW_ISO,
-          updatedAt: NOW_ISO,
-          archivedAt: null,
-          deletedAt: null,
-          messages: [],
-          activities: [],
-          proposedPlans: [],
-          checkpoints: [],
-          session: {
-            threadId: SECOND_THREAD_ID,
-            status: "ready",
-            providerName: "codex",
-            runtimeMode: "full-access",
-            activeTurnId: null,
-            lastError: null,
-            updatedAt: NOW_ISO,
-          },
-        },
-      ],
-    };
+    const snapshotWithSecondProject = withSecondProject(
+      createSnapshotForTargetUser({
+        targetMessageId: "msg-user-global-new-thread-default-project" as MessageId,
+        targetText: "global new thread default project",
+      }),
+    );
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: snapshotWithSecondProject,
@@ -2465,6 +2470,51 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Investigate the failing browser test",
       );
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("supports @ file mentions on the create-thread page", async () => {
+    customWsRpcResolver = (body) => {
+      if (body._tag !== WS_METHODS.projectsSearchEntries) {
+        return undefined;
+      }
+      return {
+        entries: [
+          {
+            kind: "file",
+            path: "AGENTS.md",
+            parentPath: "",
+          },
+        ],
+        truncated: false,
+      };
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-new-thread-at-mentions" as MessageId,
+        targetText: "new thread at mentions",
+      }),
+    });
+
+    try {
+      await openProjectNewThreadPage();
+
+      const promptInput = page.getByTestId("new-thread-prompt-input");
+      await promptInput.fill("@AGE");
+      await expect.element(page.getByText("AGENTS.md")).toBeInTheDocument();
+      await page.getByText("AGENTS.md").click();
+
+      await vi.waitFor(() => {
+        const input = document.querySelector<HTMLElement>(
+          '[data-testid="new-thread-prompt-input"]',
+        );
+        expect(input?.textContent).toBe("@AGENTS.md ");
+      });
+    } finally {
+      customWsRpcResolver = null;
       await mounted.cleanup();
     }
   });
@@ -3526,12 +3576,74 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("opens the new work item modal from the command palette on a chat route", async () => {
+  it("opens the command palette on the new-thread page and lets you switch projects", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      initialEntries: ["/"],
+      snapshot: withSecondProject(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-command-palette-new-thread-page" as MessageId,
+          targetText: "command palette new thread page",
+        }),
+      ),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/",
+        "The new-thread route should be active before opening the command palette.",
+      );
+
+      dispatchWorkspaceCommandPaletteShortcut();
+
+      await expect.element(page.getByText("Suggested")).toBeInTheDocument();
+      await expect.element(page.getByText("Projects")).toBeInTheDocument();
+      await expect.element(page.getByText("Sessions")).toBeInTheDocument();
+
+      const workCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("Work"),
+          ) ?? null,
+        "Unable to find Work command on the new-thread route.",
+      );
+      expect(workCommand.textContent).toContain("Work");
+
+      const secondThreadCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("Second browser test thread"),
+          ) ?? null,
+        "Unable to find thread command on the new-thread route.",
+      );
+      expect(secondThreadCommand.textContent).toContain("Second browser test thread");
+
+      const secondProjectCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("Second Project"),
+          ) ?? null,
+        "Unable to find project command on the new-thread route.",
+      );
+      secondProjectCommand.click();
+
+      await vi.waitFor(() => {
+        const trigger = document.querySelector('[data-testid="new-thread-project-select"]');
+        expect(trigger?.textContent).toContain("Second Project");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the work surface from the command palette on a chat route", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-command-palette-new-work-item" as MessageId,
-        targetText: "command palette new work item",
+        targetMessageId: "msg-user-command-palette-work" as MessageId,
+        targetText: "command palette work",
       }),
     });
 
@@ -3541,21 +3653,21 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await expect.element(page.getByText("Suggested")).toBeInTheDocument();
 
-      const newWorkItemCommand = await waitForElement(
+      const workCommand = await waitForElement(
         () =>
           Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
-            (item) => item.textContent?.includes("New work item"),
+            (item) => item.textContent?.includes("Work"),
           ) ?? null,
-        "Unable to find New work item command.",
+        "Unable to find Work command.",
       );
-      newWorkItemCommand.click();
+      workCommand.click();
 
       await waitForURL(
         mounted.router,
-        (path) => path === `/${THREAD_ID}`,
-        "Command palette should keep the active thread route.",
+        (path) => path === "/work",
+        "Command palette should navigate to the work surface.",
       );
-      await expect.element(page.getByText("New work item")).toBeInTheDocument();
+      await expect.element(page.getByText("Work")).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }
@@ -3647,10 +3759,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       initialEntries: ["/work"],
-      snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-work-route-command-palette-new-work-item" as MessageId,
-        targetText: "work route command palette new work item",
-      }),
+      snapshot: withSecondProject(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-work-route-command-palette-new-work-item" as MessageId,
+          targetText: "work route command palette new work item",
+        }),
+      ),
     });
 
     try {
@@ -3662,6 +3776,36 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       dispatchWorkspaceCommandPaletteShortcut();
+
+      await expect.element(page.getByText("Projects")).toBeInTheDocument();
+      await expect.element(page.getByText("Sessions")).toBeInTheDocument();
+
+      const workCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("Work"),
+          ) ?? null,
+        "Unable to find Work command on the work route.",
+      );
+      expect(workCommand.textContent).toContain("Work");
+
+      const projectCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("Second Project"),
+          ) ?? null,
+        "Unable to find project command on the work route.",
+      );
+      expect(projectCommand.textContent).toContain("Second Project");
+
+      const threadCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("Second browser test thread"),
+          ) ?? null,
+        "Unable to find thread command on the work route.",
+      );
+      expect(threadCommand.textContent).toContain("Second browser test thread");
 
       const newWorkItemCommand = await waitForElement(
         () =>

@@ -1,4 +1,5 @@
 import type {
+  ProjectEntry,
   ProjectId,
   ProviderInteractionMode,
   ProviderKind,
@@ -9,6 +10,8 @@ import type {
   WorkspaceId,
 } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebouncedValue } from "@tanstack/react-pacer";
+import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowUpIcon,
   BotIcon,
@@ -22,7 +25,6 @@ import {
 import {
   type DragEvent,
   type FormEvent,
-  type KeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -33,8 +35,19 @@ import { cn } from "~/lib/utils";
 
 import { isElectron } from "../env";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useTheme } from "../hooks/useTheme";
+import { useWorkspaceCommandPalette } from "../hooks/useWorkspaceCommandPalette";
 import { formatShortcutLabel } from "../keybindings";
+import {
+  collapseExpandedComposerCursor,
+  detectComposerTrigger,
+  extendReplacementRangeForTrailingSpace,
+  expandCollapsedComposerCursor,
+  replaceTextRange,
+  type ComposerTrigger,
+} from "../composer-logic";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "../lib/gitReactQuery";
+import { projectSearchEntriesQueryOptions } from "../lib/projectReactQuery";
 import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { selectThreadMruIds, useStore } from "../store";
@@ -57,7 +70,9 @@ import { useSettings } from "../hooks/useSettings";
 import { resolveNewWorkspaceBaseBranch } from "../threadLaunch";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { buildTemporaryWorktreeBranchName, processImageFiles } from "./ChatView.logic";
+import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { deriveDefaultWorkspaceTitle, type SidebarNewThreadEnvMode } from "./Sidebar.logic";
+import { ComposerCommandMenu, type ComposerCommandItem } from "./chat/ComposerCommandMenu";
 import { ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { TraitsPicker } from "./chat/TraitsPicker";
 import { toastManager } from "./ui/toast";
@@ -66,11 +81,17 @@ import { Select, SelectItem, SelectPopup, SelectTrigger } from "./ui/select";
 import { Separator } from "./ui/separator";
 import { SidebarTrigger } from "./ui/sidebar";
 import { isMacPlatform } from "../lib/utils";
+import { WorkspaceCommandPalette } from "./WorkspaceCommandPalette";
+import { buildWorkspaceCommandPaletteNavigationItems } from "../workspaceCommandPaletteItems";
+import { basenameOfPath } from "../vscode-icons";
 
 const LOCAL_TARGET_VALUE = "local";
 const NEW_WORKSPACE_TARGET_VALUE = "new-workspace";
+const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
+const NEW_THREAD_PATH_QUERY_DEBOUNCE_MS = 120;
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+type PathComposerTrigger = ComposerTrigger & { kind: "path" };
 
 function toSortableTimestamp(iso: string | undefined): number {
   if (!iso) {
@@ -139,6 +160,43 @@ function sortProjectWorkspaces(workspaces: ReadonlyArray<Workspace>, projectId: 
     });
 }
 
+function orderCommandPaletteThreads(
+  threads: ReadonlyArray<Thread>,
+  threadMruIds: ReadonlyArray<ThreadId>,
+) {
+  const activeThreads = threads.filter((thread) => thread.archivedAt === null);
+  const activeThreadsById = new Map(activeThreads.map((thread) => [thread.id, thread] as const));
+  const orderedThreads: Thread[] = [];
+  const seenThreadIds = new Set<ThreadId>();
+
+  for (const threadId of threadMruIds) {
+    const thread = activeThreadsById.get(threadId);
+    if (!thread || seenThreadIds.has(thread.id)) {
+      continue;
+    }
+    orderedThreads.push(thread);
+    seenThreadIds.add(thread.id);
+  }
+
+  activeThreads
+    .toSorted((left, right) => {
+      const rightTimestamp = toSortableTimestamp(right.lastVisitedAt ?? right.createdAt);
+      const leftTimestamp = toSortableTimestamp(left.lastVisitedAt ?? left.createdAt);
+      if (rightTimestamp !== leftTimestamp) {
+        return rightTimestamp > leftTimestamp ? 1 : -1;
+      }
+      return right.id.localeCompare(left.id);
+    })
+    .forEach((thread) => {
+      if (seenThreadIds.has(thread.id)) {
+        return;
+      }
+      orderedThreads.push(thread);
+    });
+
+  return orderedThreads;
+}
+
 function encodeWorkspaceTargetValue(workspaceId: WorkspaceId): string {
   return `workspace:${workspaceId}`;
 }
@@ -189,6 +247,26 @@ function nextRuntimeMode(mode: RuntimeMode): RuntimeMode {
   }
 }
 
+function detectPathComposerTrigger(
+  text: string,
+  cursor: number,
+  cursorAdjacentToMention = false,
+): PathComposerTrigger | null {
+  if (cursorAdjacentToMention) {
+    return null;
+  }
+  const trigger = detectComposerTrigger(text, cursor);
+  if (trigger?.kind !== "path") {
+    return null;
+  }
+  return {
+    kind: "path",
+    query: trigger.query,
+    rangeStart: trigger.rangeStart,
+    rangeEnd: trigger.rangeEnd,
+  };
+}
+
 export function NewThreadScreen({
   requestedEnvMode,
   requestedProjectId,
@@ -196,7 +274,10 @@ export function NewThreadScreen({
   requestedEnvMode?: SidebarNewThreadEnvMode;
   requestedProjectId?: string;
 }) {
+  const navigate = useNavigate();
   const { handleNewThread, projects } = useHandleNewThread();
+  const { isOpen: isWorkspaceCommandPaletteOpen, setIsOpen: setIsWorkspaceCommandPaletteOpen } =
+    useWorkspaceCommandPalette();
   const threads = useStore((store) => store.threads);
   const threadMruIds = useStore(selectThreadMruIds);
   const workspaces = useStore((store) => store.workspaces);
@@ -279,6 +360,7 @@ export function NewThreadScreen({
     [selectedModel, selectedProvider, setStickyModelSelection],
   );
 
+  const formRef = useRef<HTMLFormElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Derived convenience values ---
@@ -334,6 +416,36 @@ export function NewThreadScreen({
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
+  const workspaceCommandPaletteItems = useMemo(
+    () =>
+      buildWorkspaceCommandPaletteNavigationItems({
+        projects,
+        threads: orderCommandPaletteThreads(threads, threadMruIds),
+        selectedProjectId,
+        onOpenNewThread: () => {
+          void navigate({
+            to: "/",
+            ...(selectedProjectId ? { search: { projectId: selectedProjectId } } : {}),
+          });
+        },
+        onOpenWorkSurface: (projectId) => {
+          void navigate({
+            to: "/work",
+            ...(projectId ? { search: { projectId } } : {}),
+          });
+        },
+        onSelectProject: (projectId) => {
+          setSelectedProjectId(projectId);
+        },
+        onSelectThread: (threadId) => {
+          void navigate({
+            to: "/$threadId",
+            params: { threadId },
+          });
+        },
+      }),
+    [navigate, projects, selectedProjectId, threadMruIds, threads],
+  );
   const selectedProjectBranchesQuery = useQuery(
     gitBranchesQueryOptions(selectedProject?.cwd ?? null),
   );
@@ -343,6 +455,19 @@ export function NewThreadScreen({
     () => projectWorkspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
     [projectWorkspaces, selectedWorkspaceId],
   );
+  const selectedProjectSearchCwd = selectedWorkspace?.worktreePath ?? selectedProject?.cwd ?? null;
+  const { resolvedTheme } = useTheme();
+  const promptRef = useRef(prompt);
+  const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+  const composerSelectLockRef = useRef(false);
+  const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
+  const [composerCursor, setComposerCursor] = useState(() =>
+    collapseExpandedComposerCursor(prompt, prompt.length),
+  );
+  const [composerTrigger, setComposerTrigger] = useState<PathComposerTrigger | null>(() =>
+    detectPathComposerTrigger(prompt, prompt.length),
+  );
+  const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const localShortcutLabel = useMemo(
     () =>
       formatShortcutLabel({
@@ -396,6 +521,47 @@ export function NewThreadScreen({
       : isNewWorkspaceTarget
         ? newWorkspaceShortcutLabel
         : localShortcutLabel;
+  const pathTriggerQuery = composerTrigger?.query ?? "";
+  const [debouncedPathQuery, composerPathQueryDebouncer] = useDebouncedValue(
+    pathTriggerQuery,
+    { wait: NEW_THREAD_PATH_QUERY_DEBOUNCE_MS },
+    (debouncerState) => ({ isPending: debouncerState.isPending }),
+  );
+  const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
+  const workspaceEntriesQuery = useQuery(
+    projectSearchEntriesQueryOptions({
+      cwd: selectedProjectSearchCwd,
+      query: effectivePathQuery,
+      enabled: composerTrigger !== null,
+      limit: 80,
+    }),
+  );
+  const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const composerMenuItems = useMemo<ComposerCommandItem[]>(
+    () =>
+      workspaceEntries.map((entry) => ({
+        id: `path:${entry.kind}:${entry.path}`,
+        type: "path" as const,
+        path: entry.path,
+        pathKind: entry.kind,
+        label: basenameOfPath(entry.path),
+        description: entry.parentPath ?? "",
+      })),
+    [workspaceEntries],
+  );
+  const activeComposerMenuItem = useMemo(
+    () =>
+      composerMenuItems.find((item) => item.id === composerHighlightedItemId) ??
+      composerMenuItems[0] ??
+      null,
+    [composerHighlightedItemId, composerMenuItems],
+  );
+  const isComposerMenuLoading =
+    (pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
+    workspaceEntriesQuery.isLoading ||
+    workspaceEntriesQuery.isFetching;
+  const composerMenuOpen = composerTrigger !== null;
+  composerMenuItemsRef.current = composerMenuItems;
 
   useEffect(() => {
     if (!selectedProjectIsHome) {
@@ -403,6 +569,17 @@ export function NewThreadScreen({
     }
     setSelectedTargetValue(LOCAL_TARGET_VALUE);
   }, [selectedProjectIsHome]);
+
+  useEffect(() => {
+    promptRef.current = prompt;
+  }, [prompt]);
+
+  useEffect(() => {
+    if (projects.length === 0) {
+      return;
+    }
+    composerEditorRef.current?.focusAtEnd();
+  }, [projects.length]);
 
   // --- Image handling ---
   const addImages = useCallback((files: File[]) => {
@@ -426,7 +603,7 @@ export function NewThreadScreen({
   }, []);
 
   const onPaste = useCallback(
-    (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    (event: React.ClipboardEvent<HTMLElement>) => {
       const files = Array.from(event.clipboardData.files);
       const imageFiles = files.filter((f) => f.type.startsWith("image/"));
       if (imageFiles.length > 0) {
@@ -478,9 +655,158 @@ export function NewThreadScreen({
     },
     [providerStatuses, setStickyModelSelection, settings],
   );
+  const onRemoveTerminalContext = useCallback(() => {}, []);
+
+  const setPromptFromTraits = useCallback((nextPrompt: string) => {
+    promptRef.current = nextPrompt;
+    setPrompt(nextPrompt);
+    const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
+    setComposerCursor(nextCursor);
+    setComposerTrigger(detectPathComposerTrigger(nextPrompt, nextPrompt.length));
+    window.requestAnimationFrame(() => {
+      composerEditorRef.current?.focusAtEnd();
+    });
+  }, []);
 
   // Whether the traits picker should render (only when there are options to show).
   const hasTraitsOptions = selectedProviderModels.length > 0;
+
+  const onPromptChange = useCallback(
+    (
+      nextPrompt: string,
+      nextCursor: number,
+      expandedCursor: number,
+      cursorAdjacentToMention: boolean,
+    ) => {
+      promptRef.current = nextPrompt;
+      setPrompt(nextPrompt);
+      setComposerCursor(nextCursor);
+      setComposerTrigger(
+        detectPathComposerTrigger(nextPrompt, expandedCursor, cursorAdjacentToMention),
+      );
+    },
+    [],
+  );
+
+  const applyPromptReplacement = useCallback(
+    (
+      rangeStart: number,
+      rangeEnd: number,
+      replacement: string,
+      options?: { expectedText?: string },
+    ): boolean => {
+      const currentText = promptRef.current;
+      const safeStart = Math.max(0, Math.min(currentText.length, rangeStart));
+      const safeEnd = Math.max(safeStart, Math.min(currentText.length, rangeEnd));
+      if (
+        options?.expectedText !== undefined &&
+        currentText.slice(safeStart, safeEnd) !== options.expectedText
+      ) {
+        return false;
+      }
+      const next = replaceTextRange(currentText, safeStart, safeEnd, replacement);
+      const nextCursor = collapseExpandedComposerCursor(next.text, next.cursor);
+      promptRef.current = next.text;
+      setPrompt(next.text);
+      setComposerCursor(nextCursor);
+      setComposerTrigger(
+        detectPathComposerTrigger(next.text, expandCollapsedComposerCursor(next.text, nextCursor)),
+      );
+      window.requestAnimationFrame(() => {
+        composerEditorRef.current?.focusAt(nextCursor);
+      });
+      return true;
+    },
+    [],
+  );
+
+  const onSelectComposerItem = useCallback(
+    (item: ComposerCommandItem) => {
+      if (composerSelectLockRef.current) {
+        return;
+      }
+      composerSelectLockRef.current = true;
+      window.requestAnimationFrame(() => {
+        composerSelectLockRef.current = false;
+      });
+      const snapshot = composerEditorRef.current?.readSnapshot() ?? {
+        value: promptRef.current,
+        cursor: composerCursor,
+        expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
+        terminalContextIds: [],
+      };
+      const trigger = detectPathComposerTrigger(snapshot.value, snapshot.expandedCursor);
+      if (!trigger || item.type !== "path") {
+        return;
+      }
+      const replacement = `@${item.path} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+      }
+    },
+    [applyPromptReplacement, composerCursor],
+  );
+
+  const nudgeComposerMenuHighlight = useCallback(
+    (key: "ArrowDown" | "ArrowUp") => {
+      if (composerMenuItems.length === 0) {
+        return;
+      }
+      const highlightedIndex = composerMenuItems.findIndex(
+        (item) => item.id === composerHighlightedItemId,
+      );
+      const normalizedIndex =
+        highlightedIndex >= 0 ? highlightedIndex : key === "ArrowDown" ? -1 : 0;
+      const offset = key === "ArrowDown" ? 1 : -1;
+      const nextIndex =
+        (normalizedIndex + offset + composerMenuItems.length) % composerMenuItems.length;
+      setComposerHighlightedItemId(composerMenuItems[nextIndex]?.id ?? null);
+    },
+    [composerHighlightedItemId, composerMenuItems],
+  );
+
+  const onComposerCommandKey = useCallback(
+    (key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab", event: KeyboardEvent) => {
+      const menuItems = composerMenuItemsRef.current;
+      const menuIsActive = composerTrigger !== null;
+
+      if (menuIsActive) {
+        if ((key === "ArrowDown" || key === "ArrowUp") && menuItems.length > 0) {
+          nudgeComposerMenuHighlight(key);
+          return true;
+        }
+        if ((key === "Enter" || key === "Tab") && activeComposerMenuItem) {
+          onSelectComposerItem(activeComposerMenuItem);
+          return true;
+        }
+      }
+
+      if (key !== "Enter" || event.shiftKey || event.isComposing) {
+        return false;
+      }
+
+      formRef.current?.requestSubmit();
+      return true;
+    },
+    [activeComposerMenuItem, composerTrigger, nudgeComposerMenuHighlight, onSelectComposerItem],
+  );
+
+  const onComposerEscapeKey = useCallback(() => {
+    if (composerTrigger === null) {
+      return false;
+    }
+    setComposerTrigger(null);
+    setComposerHighlightedItemId(null);
+    return true;
+  }, [composerTrigger]);
 
   // --- Submit ---
   const hasContent = prompt.trim().length > 0 || images.length > 0;
@@ -615,15 +941,6 @@ export function NewThreadScreen({
     ],
   );
 
-  const handlePromptKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
-      return;
-    }
-
-    event.preventDefault();
-    event.currentTarget.form?.requestSubmit();
-  }, []);
-
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       {!isElectron && (
@@ -641,7 +958,14 @@ export function NewThreadScreen({
         </div>
       )}
 
-      <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleSubmit}>
+      <form ref={formRef} className="flex min-h-0 flex-1 flex-col" onSubmit={handleSubmit}>
+        <WorkspaceCommandPalette
+          open={isWorkspaceCommandPaletteOpen}
+          onOpenChange={setIsWorkspaceCommandPaletteOpen}
+          items={workspaceCommandPaletteItems}
+          placeholder="Type command or search"
+          emptyText="No matching project, thread, or action."
+        />
         <div className="flex flex-1 flex-col">
           <div className="flex flex-1 flex-col items-center justify-center px-6 pb-10 pt-16 sm:px-8 sm:pt-18">
             <div className="max-w-xl text-center">
@@ -808,7 +1132,21 @@ export function NewThreadScreen({
               onDragOver={onDragOver}
               onDrop={onDrop}
             >
-              <div className="px-4 pb-2 pt-4 sm:px-5 sm:pt-4.5">
+              <div className="relative px-4 pb-2 pt-4 sm:px-5 sm:pt-4.5">
+                {composerMenuOpen && (
+                  <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
+                    <ComposerCommandMenu
+                      items={composerMenuItems}
+                      resolvedTheme={resolvedTheme}
+                      isLoading={isComposerMenuLoading}
+                      triggerKind="path"
+                      activeItemId={activeComposerMenuItem?.id ?? null}
+                      onHighlightedItemChange={setComposerHighlightedItemId}
+                      onSelect={onSelectComposerItem}
+                    />
+                  </div>
+                )}
+
                 {/* Image previews */}
                 {images.length > 0 && (
                   <div className="mb-3 flex flex-wrap gap-2">
@@ -841,12 +1179,16 @@ export function NewThreadScreen({
                   </div>
                 )}
 
-                <textarea
-                  autoFocus={projects.length > 0}
-                  data-testid="new-thread-prompt-input"
+                <ComposerPromptEditor
+                  ref={composerEditorRef}
+                  dataTestId="new-thread-prompt-input"
                   value={prompt}
-                  onChange={(event) => setPrompt(event.target.value)}
-                  onKeyDown={handlePromptKeyDown}
+                  cursor={composerCursor}
+                  terminalContexts={[]}
+                  onRemoveTerminalContext={onRemoveTerminalContext}
+                  onChange={onPromptChange}
+                  onCommandKeyDown={onComposerCommandKey}
+                  onEscapeKeyDown={onComposerEscapeKey}
                   onPaste={onPaste}
                   placeholder={
                     selectedProjectIsHome
@@ -854,8 +1196,7 @@ export function NewThreadScreen({
                       : "Ask Codex anything, @ to add files, / for commands"
                   }
                   disabled={!selectedProject}
-                  rows={1}
-                  className="field-sizing-content min-h-14 max-h-56 w-full resize-none bg-transparent text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/55 disabled:cursor-not-allowed"
+                  className="min-h-14 max-h-56 text-[15px] leading-6 disabled:cursor-not-allowed"
                 />
               </div>
               <div className="flex items-center justify-between gap-3 border-t border-border/60 px-3 pb-3 pt-2.5 sm:px-4">
@@ -878,7 +1219,7 @@ export function NewThreadScreen({
                         model={selectedModel}
                         modelOptions={localModelOptions}
                         prompt={prompt}
-                        onPromptChange={setPrompt}
+                        onPromptChange={setPromptFromTraits}
                         onModelOptionsChange={onModelOptionsChange}
                       />
                     </>

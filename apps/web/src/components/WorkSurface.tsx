@@ -1,11 +1,16 @@
 import {
   closestCorners,
+  type CollisionDetection,
   type DragEndEvent,
   DndContext,
+  DragOverlay,
   PointerSensor,
+  pointerWithin,
   useDroppable,
   useSensor,
   useSensors,
+  type DragCancelEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -66,6 +71,7 @@ import {
   type WorkspaceCommandPaletteItem,
 } from "./WorkspaceCommandPalette";
 import { isElectron } from "~/env";
+import { buildWorkspaceCommandPaletteNavigationItems } from "~/workspaceCommandPaletteItems";
 
 export type WorkSurfaceView = "board" | "list";
 
@@ -281,7 +287,7 @@ function SortableWorkItemCard({
       className={cn(
         "group/card rounded-lg border border-border/60 bg-card px-2.5 py-2 transition-shadow",
         busy && "opacity-80",
-        isDragging && "z-20 shadow-lg/10",
+        isDragging && "z-20 opacity-0 shadow-lg/10",
       )}
     >
       <div className="flex items-start gap-1.5">
@@ -438,7 +444,7 @@ function SortableListRow({
       className={cn(
         "group/row flex items-center gap-2 border-b border-border/20 px-3 py-1.5 transition-colors hover:bg-muted/10",
         busy && "opacity-60",
-        isDragging && "z-20 bg-card shadow-lg/10",
+        isDragging && "z-20 opacity-0 bg-card shadow-lg/10",
       )}
     >
       <button
@@ -546,6 +552,89 @@ function SortableListRow({
   );
 }
 
+function WorkItemCardDragOverlay({
+  item,
+  projectName,
+  workspaceName,
+  showProject,
+}: {
+  item: WorkItem;
+  projectName: string;
+  workspaceName: string | null;
+  showProject: boolean;
+}) {
+  return (
+    <article className="w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-border/60 bg-card px-2.5 py-2 shadow-lg shadow-black/20">
+      <div className="flex items-start gap-1.5">
+        <div className="mt-px inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/40">
+          <GripVerticalIcon className="size-3.5" />
+        </div>
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-medium leading-5 text-foreground">
+              {item.title}
+            </div>
+            {item.notes ? (
+              <p className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+                {item.notes}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            <Badge variant="secondary" size="sm" className="h-4.5 px-1.5 text-[10px]">
+              {item.source === "agent" ? "Agent" : "Manual"}
+            </Badge>
+            {showProject ? (
+              <Badge variant="outline" size="sm" className="h-4.5 px-1.5 text-[10px]">
+                {projectName}
+              </Badge>
+            ) : null}
+            {workspaceName ? (
+              <Badge variant="outline" size="sm" className="h-4.5 gap-1 px-1.5 text-[10px]">
+                <FolderGit2Icon className="size-2.5" />
+                {workspaceName}
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function WorkItemListRowDragOverlay({
+  item,
+  projectName,
+  workspaceName,
+  showProject,
+}: {
+  item: WorkItem;
+  projectName: string;
+  workspaceName: string | null;
+  showProject: boolean;
+}) {
+  return (
+    <div className="flex w-[min(36rem,calc(100vw-2rem))] items-center gap-2 rounded-md border border-border/50 bg-card px-3 py-1.5 shadow-lg shadow-black/20">
+      <div className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/30">
+        <GripVerticalIcon className="size-3" />
+      </div>
+      <StatusIcon status={item.status} className="shrink-0" />
+      <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{item.title}</span>
+      <div className="flex shrink-0 items-center gap-2">
+        {showProject ? (
+          <span className="text-[11px] text-muted-foreground">{projectName}</span>
+        ) : null}
+        {workspaceName ? (
+          <Badge variant="outline" size="sm" className="h-4.5 gap-1 px-1.5 text-[10px]">
+            <FolderGit2Icon className="size-2.5" />
+            {workspaceName}
+          </Badge>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function WorkSurface({
   view,
   selectedProjectId,
@@ -556,6 +645,7 @@ export function WorkSurface({
   const { isOpen: isWorkspaceCommandPaletteOpen, setIsOpen: setIsWorkspaceCommandPaletteOpen } =
     useWorkspaceCommandPalette();
   const projects = useStore((store) => store.projects);
+  const threads = useStore((store) => store.threads);
   const workspaces = useStore((store) => store.workspaces);
   const workItems = useStore((store) => store.workItems);
   const {
@@ -571,6 +661,7 @@ export function WorkSurface({
     deriveWorkItemEditorValues(null, null),
   );
   const [busyItemId, setBusyItemId] = useState<WorkItemId | null>(null);
+  const [activeDragItemId, setActiveDragItemId] = useState<WorkItemId | null>(null);
   const [pendingLinkRepairs, setPendingLinkRepairs] = useState<Record<string, PendingLinkRepair>>(
     {},
   );
@@ -627,6 +718,14 @@ export function WorkSurface({
         .map((workspace) => ({ id: workspace.id, name: workspace.name })),
     [editorValues.projectId, workspaces],
   );
+  const collisionDetection = useCallback<CollisionDetection>((args) => {
+    const pointerCollisions = pointerWithin(args);
+    if (pointerCollisions.length > 0) {
+      return pointerCollisions;
+    }
+
+    return closestCorners(args);
+  }, []);
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -644,32 +743,68 @@ export function WorkSurface({
     setEditorValues(nextValues);
   }, [activeProjectId, userProjects]);
 
-  const workspaceCommandPaletteItems = useMemo<WorkspaceCommandPaletteItem[]>(
-    () =>
-      userProjects.length === 0
-        ? []
-        : [
-            {
-              id: "action:new-work-item",
-              group: "actions",
-              title: "New work item",
-              keywords: "new work item create task todo backlog issue",
-              icon: PlusIcon,
-              ...(activeProjectId
-                ? { subtitle: projectNameById.get(activeProjectId) ?? "Selected project" }
-                : {}),
-              onSelect: () => {
-                openCreateDialog();
-              },
-            },
-          ],
-    [activeProjectId, openCreateDialog, projectNameById, userProjects.length],
-  );
+  const workspaceCommandPaletteItems = useMemo<WorkspaceCommandPaletteItem[]>(() => {
+    const items = buildWorkspaceCommandPaletteNavigationItems({
+      projects: userProjects,
+      threads,
+      selectedProjectId: activeProjectId,
+      onOpenNewThread: () => {
+        void navigate({
+          to: "/",
+          ...(activeProjectId ? { search: { projectId: activeProjectId } } : {}),
+        });
+      },
+      onOpenWorkSurface: (projectId) => {
+        void navigate({
+          to: "/work",
+          ...(projectId ? { search: { view, projectId } } : { search: { view } }),
+        });
+      },
+      onSelectProject: (projectId) => {
+        onProjectFilterChange(projectId);
+      },
+      onSelectThread: (threadId) => {
+        void navigate({
+          to: "/$threadId",
+          params: { threadId },
+        });
+      },
+    });
 
-  const openEditDialog = (item: WorkItem) => {
+    if (userProjects.length === 0) {
+      return items;
+    }
+
+    items.push({
+      id: "action:new-work-item",
+      group: "actions",
+      title: "New work item",
+      keywords: "new work item create task todo backlog issue",
+      icon: PlusIcon,
+      ...(activeProjectId
+        ? { subtitle: projectNameById.get(activeProjectId) ?? "Selected project" }
+        : {}),
+      onSelect: () => {
+        openCreateDialog();
+      },
+    });
+
+    return items;
+  }, [
+    activeProjectId,
+    navigate,
+    onProjectFilterChange,
+    openCreateDialog,
+    projectNameById,
+    threads,
+    userProjects,
+    view,
+  ]);
+
+  const openEditDialog = useCallback((item: WorkItem) => {
     setDialogState({ mode: "edit", item });
     setEditorValues(deriveWorkItemEditorValues({ mode: "edit", item }, item.projectId));
-  };
+  }, []);
 
   const closeDialog = (open: boolean) => {
     if (open) {
@@ -803,15 +938,27 @@ export function WorkSurface({
       });
   };
 
-  const openThread = (threadId: ThreadId) => {
-    void navigate({
-      to: "/$threadId",
-      params: { threadId },
-    });
+  const openThread = useCallback(
+    (threadId: ThreadId) => {
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+      });
+    },
+    [navigate],
+  );
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveDragItemId(String(event.active.id) as WorkItemId);
+  };
+
+  const handleDragCancel = (_event: DragCancelEvent) => {
+    setActiveDragItemId(null);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const activeId = String(event.active.id) as WorkItemId;
+    setActiveDragItemId(null);
     const movingItem = visibleItems.find((item) => item.id === activeId);
     if (!movingItem || !event.over) {
       return;
@@ -845,6 +992,15 @@ export function WorkSurface({
       });
     });
   };
+  const activeDragItem = activeDragItemId
+    ? (visibleItems.find((item) => item.id === activeDragItemId) ?? null)
+    : null;
+  const activeDragProjectName = activeDragItem
+    ? (projectNameById.get(activeDragItem.projectId) ?? "Unknown Project")
+    : null;
+  const activeDragWorkspaceName = activeDragItem?.workspaceId
+    ? (workspaceNameById.get(activeDragItem.workspaceId) ?? null)
+    : null;
 
   const content =
     visibleItems.length === 0 ? (
@@ -1108,10 +1264,31 @@ export function WorkSurface({
         ) : (
           <DndContext
             sensors={sensors}
-            collisionDetection={closestCorners}
+            collisionDetection={collisionDetection}
+            onDragStart={handleDragStart}
+            onDragCancel={handleDragCancel}
             onDragEnd={handleDragEnd}
           >
             {content}
+            <DragOverlay adjustScale={false} dropAnimation={null}>
+              {activeDragItem && activeDragProjectName ? (
+                view === "board" ? (
+                  <WorkItemCardDragOverlay
+                    item={activeDragItem}
+                    projectName={activeDragProjectName}
+                    workspaceName={activeDragWorkspaceName}
+                    showProject={activeProjectId === null}
+                  />
+                ) : (
+                  <WorkItemListRowDragOverlay
+                    item={activeDragItem}
+                    projectName={activeDragProjectName}
+                    workspaceName={activeDragWorkspaceName}
+                    showProject={activeProjectId === null}
+                  />
+                )
+              ) : null}
+            </DragOverlay>
           </DndContext>
         )}
       </div>
