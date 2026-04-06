@@ -1,5 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CheckpointRef, EventId, MessageId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EventId,
+  HOME_PROJECT_ID,
+  MessageId,
+  ProjectId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -29,6 +37,7 @@ const projectionSnapshotLayer = it.layer(
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
     Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig;
       const snapshotQuery = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
 
@@ -239,11 +248,31 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       assert.equal(snapshot.snapshotSequence, 5);
       assert.equal(snapshot.updatedAt, "2026-02-24T00:00:09.000Z");
-      assert.deepEqual(snapshot.projects, [
+      assert.equal(snapshot.projects.length, 2);
+      assert.deepEqual(
+        snapshot.projects.find((project) => project.id === HOME_PROJECT_ID),
+        {
+          id: HOME_PROJECT_ID,
+          title: "Home",
+          workspaceRoot: serverConfig.homeProjectDir,
+          systemKey: "home",
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
+          scripts: [],
+          createdAt: new Date(0).toISOString(),
+          updatedAt: "2026-02-24T00:00:09.000Z",
+          deletedAt: null,
+        },
+      );
+      assert.deepEqual(
+        snapshot.projects.find((project) => project.id === asProjectId("project-1")),
         {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
+          systemKey: null,
           defaultModelSelection: {
             provider: "codex",
             model: "gpt-5-codex",
@@ -261,7 +290,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           updatedAt: "2026-02-24T00:00:01.000Z",
           deletedAt: null,
         },
-      ]);
+      );
       assert.deepEqual(snapshot.workspaces, []);
       assert.deepEqual(snapshot.threads, [
         {

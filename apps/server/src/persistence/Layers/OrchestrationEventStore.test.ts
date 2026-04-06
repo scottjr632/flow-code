@@ -122,6 +122,13 @@ layer("OrchestrationEventStore", (it) => {
       const eventStore = yield* OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
       const now = new Date().toISOString();
+      const baselineSequence =
+        (yield* sql<{
+          readonly maxSequence: number | null;
+        }>`
+            SELECT MAX(sequence) AS "maxSequence"
+            FROM orchestration_events
+          `)[0]?.maxSequence ?? 0;
 
       yield* sql`
         INSERT INTO orchestration_events (
@@ -183,9 +190,9 @@ layer("OrchestrationEventStore", (it) => {
         },
       });
 
-      const replayed = yield* Stream.runCollect(eventStore.readFromSequence(0, 10)).pipe(
-        Effect.map((chunk) => Array.from(chunk)),
-      );
+      const replayed = yield* Stream.runCollect(
+        eventStore.readFromSequence(baselineSequence, 10),
+      ).pipe(Effect.map((chunk) => Array.from(chunk)));
       assert.equal(replayed.length, 1);
       assert.equal(replayed[0]?.type, "project.created");
     }),

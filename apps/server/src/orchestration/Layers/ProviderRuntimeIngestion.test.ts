@@ -54,6 +54,8 @@ const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
+const hasJjCli = spawnSync("jj", ["--version"], { stdio: "ignore" }).status === 0;
+const itJj = hasJjCli ? it : it.skip;
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -2053,32 +2055,35 @@ describe("ProviderRuntimeIngestion", () => {
     expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
   });
 
-  it("creates turn-diff checkpoints for jj workspaces when the jj backend is selected", async () => {
-    const harness = await createHarness({
-      serverSettings: { turnReviewVcs: "jj" },
-      vcs: "jj",
-    });
-    const now = new Date().toISOString();
+  itJj(
+    "creates turn-diff checkpoints for jj workspaces when the jj backend is selected",
+    async () => {
+      const harness = await createHarness({
+        serverSettings: { turnReviewVcs: "jj" },
+        vcs: "jj",
+      });
+      const now = new Date().toISOString();
 
-    harness.emit({
-      type: "turn.diff.updated",
-      eventId: asEventId("evt-turn-diff-jj"),
-      provider: "codex",
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      turnId: asTurnId("turn-jj"),
-      itemId: asItemId("item-jj-assistant"),
-      payload: {
-        unifiedDiff: "diff --git a/file.txt b/file.txt\n+hello\n",
-      },
-    });
+      harness.emit({
+        type: "turn.diff.updated",
+        eventId: asEventId("evt-turn-diff-jj"),
+        provider: "codex",
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-jj"),
+        itemId: asItemId("item-jj-assistant"),
+        payload: {
+          unifiedDiff: "diff --git a/file.txt b/file.txt\n+hello\n",
+        },
+      });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
-      entry.checkpoints.some((checkpoint) => checkpoint.turnId === "turn-jj"),
-    );
+      const thread = await waitForThread(harness.engine, (entry) =>
+        entry.checkpoints.some((checkpoint) => checkpoint.turnId === "turn-jj"),
+      );
 
-    expect(thread.checkpoints.some((checkpoint) => checkpoint.turnId === "turn-jj")).toBe(true);
-  });
+      expect(thread.checkpoints.some((checkpoint) => checkpoint.turnId === "turn-jj")).toBe(true);
+    },
+  );
 
   it("re-emits turn-diff checkpoints for repeated diff updates in the same turn", async () => {
     const harness = await createHarness();
@@ -2130,7 +2135,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(diffEvents[1]?.payload.assistantMessageId).toBe("assistant:item-repeat-2");
   });
 
-  it("does not create turn-diff checkpoints for jj workspaces when git is forced", async () => {
+  itJj("does not create turn-diff checkpoints for jj workspaces when git is forced", async () => {
     const harness = await createHarness({
       serverSettings: { turnReviewVcs: "git" },
       vcs: "jj",

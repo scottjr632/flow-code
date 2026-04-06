@@ -1682,6 +1682,7 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       relativePath: "plans/effect-rpc.md",
+      mtimeMs: null,
     });
     expect(fs.readFileSync(path.join(workspace, "plans", "effect-rpc.md"), "utf8")).toBe(
       "# Plan\n\n- step 1\n",
