@@ -1,4 +1,5 @@
 import {
+  HOME_PROJECT_ID,
   ChatAttachment,
   IsoDateTime,
   MessageId,
@@ -24,12 +25,14 @@ import { Effect, Layer, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
+import { ServerConfig } from "../../config.ts";
 import {
   isPersistenceError,
   toPersistenceDecodeError,
   toPersistenceSqlError,
   type ProjectionRepositoryError,
 } from "../../persistence/Errors.ts";
+import { makeHomeProject } from "../../systemProject.ts";
 import { ProjectionCheckpoint } from "../../persistence/Services/ProjectionCheckpoints.ts";
 import { ProjectionProject } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionState } from "../../persistence/Services/ProjectionState.ts";
@@ -141,6 +144,7 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const serverConfig = yield* ServerConfig;
 
   const listProjectRows = SqlSchema.findAll({
     Request: Schema.Void,
@@ -578,12 +582,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             id: row.projectId,
             title: row.title,
             workspaceRoot: row.workspaceRoot,
+            systemKey: null,
             defaultModelSelection: row.defaultModelSelection,
             scripts: row.scripts,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             deletedAt: row.deletedAt,
           }));
+          const homeProject = makeHomeProject(
+            serverConfig.homeProjectDir,
+            updatedAt ?? new Date(0).toISOString(),
+          );
 
           const workspaces: ReadonlyArray<OrchestrationWorkspace> = workspaceRows.map((row) => ({
             id: row.workspaceId,
@@ -620,7 +629,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
           const snapshot = {
             snapshotSequence: computeSnapshotSequence(stateRows),
-            projects,
+            projects: [
+              homeProject,
+              ...projects.filter((project) => project.id !== HOME_PROJECT_ID),
+            ],
             workspaces,
             threads,
             updatedAt: updatedAt ?? new Date(0).toISOString(),

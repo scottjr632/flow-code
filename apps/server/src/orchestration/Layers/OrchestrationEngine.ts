@@ -9,6 +9,7 @@ import { OrchestrationCommand } from "@t3tools/contracts";
 import { Deferred, Effect, Layer, Option, PubSub, Queue, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { ServerConfig } from "../../config.ts";
 import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
@@ -24,6 +25,7 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
+import { withSystemProjects } from "../../systemProject.ts";
 
 interface CommandEnvelope {
   command: OrchestrationCommand;
@@ -59,11 +61,14 @@ function commandToAggregateRef(command: OrchestrationCommand): {
 
 const makeOrchestrationEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const serverConfig = yield* ServerConfig;
   const eventStore = yield* OrchestrationEventStore;
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
 
-  let readModel = createEmptyReadModel(new Date().toISOString());
+  let readModel = withSystemProjects(createEmptyReadModel(new Date().toISOString()), {
+    homeProjectDir: serverConfig.homeProjectDir,
+  });
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
@@ -82,7 +87,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       for (const persistedEvent of persistedEvents) {
         nextReadModel = yield* projectEvent(nextReadModel, persistedEvent);
       }
-      readModel = nextReadModel;
+      readModel = withSystemProjects(nextReadModel, {
+        homeProjectDir: serverConfig.homeProjectDir,
+      });
 
       for (const persistedEvent of persistedEvents) {
         yield* PubSub.publish(eventPubSub, persistedEvent);
@@ -161,7 +168,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           ),
         );
 
-      readModel = committedCommand.nextReadModel;
+      readModel = withSystemProjects(committedCommand.nextReadModel, {
+        homeProjectDir: serverConfig.homeProjectDir,
+      });
       for (const event of committedCommand.committedEvents) {
         yield* PubSub.publish(eventPubSub, event);
       }
@@ -208,6 +217,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   yield* Stream.runForEach(eventStore.readAll(), (event) =>
     Effect.gen(function* () {
       readModel = yield* projectEvent(readModel, event);
+      readModel = withSystemProjects(readModel, {
+        homeProjectDir: serverConfig.homeProjectDir,
+      });
     }),
   );
 

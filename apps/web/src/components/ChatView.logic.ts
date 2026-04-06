@@ -1,4 +1,10 @@
-import { ProjectId, ThreadId, type ModelSelection } from "@t3tools/contracts";
+import {
+  ProjectId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  ThreadId,
+  type ModelSelection,
+} from "@t3tools/contracts";
 import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -251,4 +257,47 @@ export function shouldReuseHiddenDefaultTerminalForWorkspaceCreation(options: {
   }
 
   return options.terminalIds.length === 1 && options.terminalIds[0] === DEFAULT_THREAD_TERMINAL_ID;
+}
+
+export const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
+
+/**
+ * Validates and converts raw `File` objects into `ComposerImageAttachment`s.
+ * Reusable across NewThreadScreen and ChatView.
+ */
+export function processImageFiles(
+  files: File[],
+  currentCount: number,
+): { images: ComposerImageAttachment[]; error: string | null } {
+  const nextImages: ComposerImageAttachment[] = [];
+  let nextImageCount = currentCount;
+  let error: string | null = null;
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) {
+      error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
+      continue;
+    }
+    if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+      error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
+      continue;
+    }
+    if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+      break;
+    }
+
+    const previewUrl = URL.createObjectURL(file);
+    nextImages.push({
+      type: "image",
+      id: randomUUID(),
+      name: file.name || "image",
+      mimeType: file.type,
+      sizeBytes: file.size,
+      previewUrl,
+      file,
+    });
+    nextImageCount += 1;
+  }
+
+  return { images: nextImages, error };
 }

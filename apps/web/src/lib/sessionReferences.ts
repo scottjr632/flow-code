@@ -1,6 +1,7 @@
-import { type ThreadId, type WorkspaceId } from "@t3tools/contracts";
+import { type ProjectId, type ThreadId, type WorkspaceId } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
 import { type Thread } from "../types";
+import { isHomeProjectId } from "../systemProject";
 
 export interface ParsedSessionReferenceEntry {
   header: string;
@@ -51,9 +52,48 @@ function shortThreadId(threadId: ThreadId): string {
   return threadId.length > 12 ? threadId.slice(0, 12) : threadId;
 }
 
+function describeSessionReference(thread: Thread): string {
+  if (isHomeProjectId(thread.projectId)) {
+    return `Home · ${shortThreadId(thread.id)}`;
+  }
+  return `${thread.branch ?? "no branch"} · ${shortThreadId(thread.id)}`;
+}
+
+function canReferenceThread(
+  thread: Thread,
+  input: {
+    activeProjectId: ProjectId | null;
+    activeWorkspaceId: WorkspaceId | null;
+    activeThreadId: ThreadId | null;
+  },
+): boolean {
+  if (thread.id === input.activeThreadId || thread.archivedAt !== null) {
+    return false;
+  }
+
+  const activeProjectId = input.activeProjectId;
+  if (!activeProjectId) {
+    return false;
+  }
+
+  if (input.activeWorkspaceId) {
+    return (
+      thread.workspaceId === input.activeWorkspaceId ||
+      (thread.workspaceId === null && isHomeProjectId(thread.projectId))
+    );
+  }
+
+  if (isHomeProjectId(activeProjectId)) {
+    return isHomeProjectId(thread.projectId);
+  }
+
+  return thread.projectId === activeProjectId || isHomeProjectId(thread.projectId);
+}
+
 function searchTextForThread(thread: Thread): string {
   return [
     thread.title,
+    isHomeProjectId(thread.projectId) ? "home" : "",
     thread.branch ?? "",
     thread.id,
     buildSessionReferenceToken({ threadId: thread.id, title: thread.title }),
@@ -221,25 +261,21 @@ export function replaceSessionReferenceTokensForDisplay(text: string): string {
   });
 }
 
-export function searchWorkspaceSessionReferences(input: {
+export function searchSessionReferences(input: {
   threads: ReadonlyArray<Thread>;
-  workspaceId: WorkspaceId | null;
+  activeProjectId: ProjectId | null;
+  activeWorkspaceId: WorkspaceId | null;
   activeThreadId: ThreadId | null;
   query: string;
   limit?: number;
 }): SessionReferenceSearchResult[] {
-  if (!input.workspaceId) {
+  if (!input.activeProjectId) {
     return [];
   }
 
   const query = input.query.trim().toLowerCase();
   return input.threads
-    .filter(
-      (thread) =>
-        thread.workspaceId === input.workspaceId &&
-        thread.id !== input.activeThreadId &&
-        thread.archivedAt === null,
-    )
+    .filter((thread) => canReferenceThread(thread, input))
     .filter((thread) => (query.length === 0 ? true : searchTextForThread(thread).includes(query)))
     .toSorted((left, right) => threadActivityTimestamp(right) - threadActivityTimestamp(left))
     .slice(0, input.limit ?? SESSION_REFERENCE_QUERY_LIMIT)
@@ -247,7 +283,7 @@ export function searchWorkspaceSessionReferences(input: {
       threadId: thread.id,
       token: buildSessionReferenceToken({ threadId: thread.id, title: thread.title }),
       title: thread.title,
-      description: `${thread.branch ?? "no branch"} · ${shortThreadId(thread.id)}`,
+      description: describeSessionReference(thread),
     }));
 }
 
@@ -268,12 +304,13 @@ export function appendSessionReferencesToPrompt(
   prompt: string,
   input: {
     threads: ReadonlyArray<Thread>;
-    workspaceId: WorkspaceId | null;
+    activeProjectId: ProjectId | null;
+    activeWorkspaceId: WorkspaceId | null;
     currentThreadId: ThreadId;
   },
 ): string {
   const trimmedPrompt = prompt.trim();
-  if (!input.workspaceId) {
+  if (!input.activeProjectId) {
     return trimmedPrompt;
   }
 
@@ -284,11 +321,12 @@ export function appendSessionReferencesToPrompt(
 
   const threadsById = new Map(
     input.threads
-      .filter(
-        (thread) =>
-          thread.workspaceId === input.workspaceId &&
-          thread.id !== input.currentThreadId &&
-          thread.archivedAt === null,
+      .filter((thread) =>
+        canReferenceThread(thread, {
+          activeProjectId: input.activeProjectId,
+          activeWorkspaceId: input.activeWorkspaceId,
+          activeThreadId: input.currentThreadId,
+        }),
       )
       .map((thread) => [thread.id, thread] as const),
   );

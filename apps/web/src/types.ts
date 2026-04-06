@@ -4,6 +4,7 @@ import type {
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  ProjectSystemKey,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -82,6 +83,7 @@ export interface Project {
   id: ProjectId;
   name: string;
   cwd: string;
+  systemKey?: ProjectSystemKey | null;
   defaultModelSelection: ModelSelection | null;
   expanded: boolean;
   createdAt?: string | undefined;

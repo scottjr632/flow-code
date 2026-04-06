@@ -9,8 +9,6 @@ import {
   type ProjectEntry,
   type ProjectId,
   type ProviderApprovalDecision,
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ResolvedKeybindingsConfig,
   type ServerProvider,
   type ThreadId,
@@ -153,6 +151,7 @@ import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   type PersistedComposerImageAttachment,
+  consumePendingAutoSend,
   useComposerDraftStore,
   useEffectiveComposerModelState,
   useComposerThreadDraft,
@@ -172,10 +171,7 @@ import {
   type TerminalContextSelection,
 } from "../lib/terminalContext";
 import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
-import {
-  appendSessionReferencesToPrompt,
-  searchWorkspaceSessionReferences,
-} from "../lib/sessionReferences";
+import { appendSessionReferencesToPrompt, searchSessionReferences } from "../lib/sessionReferences";
 import {
   appendTerminalLogReferencesToPrompt,
   searchWorkspaceTerminalLogReferences,
@@ -242,6 +238,7 @@ import {
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastActiveWorkspaceTabByThreadSchema,
   LastInvokedScriptByProjectSchema,
+  processImageFiles,
   PullRequestDialogState,
   readFileAsDataUrl,
   revokeBlobPreviewUrl,
@@ -258,6 +255,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useWindowKeydownListener } from "../hooks/useWindowKeydownListener";
 import { resolveExistingWorkspaceContext } from "../workspaceContext";
+import { isHomeProject } from "../systemProject";
 import {
   directoryAncestorsOf,
   isBufferDirty,
@@ -268,7 +266,6 @@ import { resolveWorkspaceRelativeFileTarget } from "../workspaceFileTargets";
 import { WorkspaceEditorSurface } from "./WorkspaceEditorSurface";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
-const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
@@ -704,13 +701,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
-  const gitCwd = activeProject
+  const activeProjectIsHome = isHomeProject(activeProject);
+  const activeProjectSupportsWorkspace = activeProject !== undefined && !activeProjectIsHome;
+  const gitCwd = activeProjectSupportsWorkspace
     ? projectScriptCwd({
         project: { cwd: activeProject.cwd },
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
-  const workspaceFileRoot = gitCwd ?? activeProject?.cwd ?? null;
+  const workspaceFileRoot = activeProjectSupportsWorkspace
+    ? (gitCwd ?? activeProject?.cwd ?? null)
+    : null;
   const activeWorkspaceContext = useMemo(
     () =>
       resolveExistingWorkspaceContext({
@@ -865,7 +866,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThread && activeWorkspaceContext.workspaceId
       ? buildThreadWorkspaceTabId(activeThread.id)
       : DEFAULT_CHAT_WORKSPACE_TAB_ID;
-  const resolvedWorkspaceTabId = resolveWorkspaceTabId(activeWorkspaceTabId, workspaceTabs);
+  const resolvedWorkspaceTabId = activeProjectSupportsWorkspace
+    ? resolveWorkspaceTabId(activeWorkspaceTabId, workspaceTabs)
+    : defaultConversationWorkspaceTabId;
   const activeWorkspaceTab = workspaceTabs.find((tab) => tab.id === resolvedWorkspaceTabId);
   const activeFilesWorkspaceTab = activeWorkspaceTab?.kind === "files" ? activeWorkspaceTab : null;
   const activeFileWorkspaceTab = activeWorkspaceTab?.kind === "file" ? activeWorkspaceTab : null;
@@ -1559,9 +1562,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const workspaceSessionReferenceItems = useMemo(
     () =>
-      searchWorkspaceSessionReferences({
+      searchSessionReferences({
         threads,
-        workspaceId: activeThread?.workspaceId ?? null,
+        activeProjectId: activeThread?.projectId ?? null,
+        activeWorkspaceId: activeThread?.workspaceId ?? null,
         activeThreadId: activeThread?.id ?? null,
         query: pathTriggerQuery,
       }).map((thread) => ({
@@ -1571,7 +1575,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: thread.title,
         description: thread.description,
       })),
-    [activeThread?.id, activeThread?.workspaceId, pathTriggerQuery, threads],
+    [
+      activeThread?.id,
+      activeThread?.projectId,
+      activeThread?.workspaceId,
+      pathTriggerQuery,
+      threads,
+    ],
   );
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
@@ -2186,6 +2196,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }) => {
       const api = readNativeApi();
       if (!api) return;
+      const targetProject = projects.find((project) => project.id === input.projectId);
+      if (isHomeProject(targetProject)) {
+        throw new Error("Home does not support project actions.");
+      }
 
       await api.orchestration.dispatchCommand({
         type: "project.meta.update",
@@ -2204,11 +2218,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         await queryClient.invalidateQueries({ queryKey: serverQueryKeys.all });
       }
     },
-    [queryClient],
+    [projects, queryClient],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {
-      if (!activeProject) return;
+      if (!activeProject || activeProjectIsHome) return;
       const nextId = nextProjectScriptId(
         input.name,
         activeProject.scripts.map((script) => script.id),
@@ -2238,11 +2252,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         keybindingCommand: commandForProjectScript(nextId),
       });
     },
-    [activeProject, persistProjectScripts],
+    [activeProject, activeProjectIsHome, persistProjectScripts],
   );
   const updateProjectScript = useCallback(
     async (scriptId: string, input: NewProjectScriptInput) => {
-      if (!activeProject) return;
+      if (!activeProject || activeProjectIsHome) return;
       const existingScript = activeProject.scripts.find((script) => script.id === scriptId);
       if (!existingScript) {
         throw new Error("Script not found.");
@@ -2272,11 +2286,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         keybindingCommand: commandForProjectScript(scriptId),
       });
     },
-    [activeProject, persistProjectScripts],
+    [activeProject, activeProjectIsHome, persistProjectScripts],
   );
   const deleteProjectScript = useCallback(
     async (scriptId: string) => {
-      if (!activeProject) return;
+      if (!activeProject || activeProjectIsHome) return;
       const nextScripts = activeProject.scripts.filter((script) => script.id !== scriptId);
 
       const deletedName = activeProject.scripts.find((s) => s.id === scriptId)?.name;
@@ -2302,7 +2316,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
     },
-    [activeProject, persistProjectScripts],
+    [activeProject, activeProjectIsHome, persistProjectScripts],
   );
 
   const handleRuntimeModeChange = useCallback(
@@ -2345,11 +2359,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
-  const toggleRuntimeMode = useCallback(() => {
-    void handleRuntimeModeChange(
-      runtimeMode === "full-access" ? "approval-required" : "full-access",
-    );
-  }, [handleRuntimeModeChange, runtimeMode]);
+
+  const nextRuntimeMode = useCallback((mode: RuntimeMode): RuntimeMode => {
+    switch (mode) {
+      case "read-only":
+        return "approval-required";
+      case "approval-required":
+        return "full-access";
+      case "full-access":
+      default:
+        return "read-only";
+    }
+  }, []);
+
   const togglePlanSidebar = useCallback(() => {
     setPlanSidebarOpen((open) => {
       if (open) {
@@ -3104,35 +3126,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
 
-    const nextImages: ComposerImageAttachment[] = [];
-    let nextImageCount = composerImagesRef.current.length;
-    let error: string | null = null;
-    for (const file of files) {
-      if (!file.type.startsWith("image/")) {
-        error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
-        continue;
-      }
-      if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-        error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
-        continue;
-      }
-      if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
-        break;
-      }
-
-      const previewUrl = URL.createObjectURL(file);
-      nextImages.push({
-        type: "image",
-        id: randomUUID(),
-        name: file.name || "image",
-        mimeType: file.type,
-        sizeBytes: file.size,
-        previewUrl,
-        file,
-      });
-      nextImageCount += 1;
-    }
+    const { images: nextImages, error } = processImageFiles(
+      files,
+      composerImagesRef.current.length,
+    );
 
     if (nextImages.length === 1 && nextImages[0]) {
       addComposerImage(nextImages[0]);
@@ -3341,7 +3338,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         messageTextWithTerminalLogReferences,
         {
           threads,
-          workspaceId: activeWorkspaceContext.workspaceId,
+          activeProjectId: activeThread.projectId,
+          activeWorkspaceId: activeWorkspaceContext.workspaceId,
           currentThreadId: activeThread.id,
         },
       );
@@ -3811,6 +3809,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
     queuedComposerMessages,
     sendPhase,
   ]);
+
+  // Auto-send: when the user submitted from NewThreadScreen with content,
+  // automatically send the initial message without requiring a second Enter.
+  useEffect(() => {
+    if (!activeThread || isSendBusy || isConnecting || sendInFlightRef.current) {
+      return;
+    }
+    const shouldAutoSend = consumePendingAutoSend(threadId);
+    if (!shouldAutoSend) {
+      return;
+    }
+    void onSend();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally one-shot
+  }, [threadId, activeThread, isSendBusy, isConnecting]);
 
   const onInterrupt = async () => {
     const api = readNativeApi();
@@ -4674,8 +4686,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setActiveWorkspaceTabId("diff");
   }, [diffOpen, isGitRepo, navigate, setActiveWorkspaceTabId, threadId]);
   const openFilesWorkspace = useCallback(() => {
+    if (!activeProjectSupportsWorkspace) {
+      return;
+    }
     setActiveWorkspaceTabId("files");
-  }, [setActiveWorkspaceTabId]);
+  }, [activeProjectSupportsWorkspace, setActiveWorkspaceTabId]);
   const selectWorkspaceTab = useCallback(
     (tabId: WorkspaceTabId) => {
       const targetTab = workspaceTabs.find((tab) => tab.id === tabId);
@@ -4758,7 +4773,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
   }, [activeProject, activeThread, draftThread?.envMode, handleNewThread, workspaces]);
   const createTerminalWorkspace = useCallback(() => {
-    if (!activeProject) {
+    if (!activeProjectSupportsWorkspace || !activeProject) {
       return;
     }
     if (
@@ -4778,6 +4793,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activateTerminal,
     activeProject,
+    activeProjectSupportsWorkspace,
     createNewTerminal,
     setTerminalOpen,
     terminalState.terminalIds,
@@ -4825,7 +4841,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           setActiveWorkspaceTabId(fallbackTabId);
         }
         const api = readNativeApi();
-        if (api && activeProject) {
+        if (api && activeProjectSupportsWorkspace && activeProject) {
           void api.projects
             .syncLspDocument({
               cwd: activeProject.cwd,
@@ -4864,6 +4880,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [
       activeThreadId,
       activeProject,
+      activeProjectSupportsWorkspace,
       closeWorkspaceEditorFile,
       closeTerminal,
       confirmAndArchiveThread,
@@ -4891,7 +4908,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       },
     });
 
-    if (activeProject) {
+    if (activeProjectSupportsWorkspace && activeProject) {
       items.push({
         id: "action:browse-files",
         group: "actions",
@@ -4980,6 +4997,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return items;
   }, [
     activeProject,
+    activeProjectSupportsWorkspace,
     activeThread,
     activateTerminal,
     createNewTerminal,
@@ -5034,15 +5052,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
             activeThreadId={activeThread.id}
             activeThreadTitle={activeThread.title}
             activeProjectName={activeProject?.name}
+            activeProjectIsHome={activeProjectIsHome}
             isGitRepo={isGitRepo}
-            openInCwd={gitCwd}
-            activeProjectScripts={activeProject?.scripts}
+            openInCwd={activeProjectSupportsWorkspace ? gitCwd : null}
+            activeProjectScripts={
+              activeProjectSupportsWorkspace ? activeProject?.scripts : undefined
+            }
             preferredScriptId={
               activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
             }
             keybindings={keybindings}
             availableEditors={availableEditors}
-            terminalAvailable={activeProject !== undefined}
+            terminalAvailable={activeProjectSupportsWorkspace}
             terminalOpen={terminalState.terminalOpen}
             terminalToggleShortcutLabel={terminalToggleShortcutLabel}
             diffToggleShortcutLabel={diffPanelShortcutLabel}
@@ -5059,22 +5080,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
           />
         </header>
 
-        <WorkspaceTabBar
-          tabs={workspaceTabs}
-          activeTabId={resolvedWorkspaceTabId}
-          onSelectTab={selectWorkspaceTab}
-          onOpenTabContextMenu={onWorkspaceTabContextMenu}
-          onReorderTab={reorderWorkspaceTabs}
-          onCloseTab={closeWorkspaceTab}
-          canCreateSession={activeWorkspaceContext.workspaceId !== null}
-          canCreateTerminal={activeProject !== undefined}
-          canOpenFiles={activeProject !== undefined}
-          canOpenReview={isGitRepo}
-          onCreateSession={createSessionWorkspace}
-          onCreateTerminal={createTerminalWorkspace}
-          onOpenFiles={openFilesWorkspace}
-          onOpenReview={openReviewWorkspace}
-        />
+        {activeProjectSupportsWorkspace ? (
+          <WorkspaceTabBar
+            tabs={workspaceTabs}
+            activeTabId={resolvedWorkspaceTabId}
+            onSelectTab={selectWorkspaceTab}
+            onOpenTabContextMenu={onWorkspaceTabContextMenu}
+            onReorderTab={reorderWorkspaceTabs}
+            onCloseTab={closeWorkspaceTab}
+            canCreateSession={activeWorkspaceContext.workspaceId !== null}
+            canCreateTerminal={activeProjectSupportsWorkspace}
+            canOpenFiles={activeProjectSupportsWorkspace}
+            canOpenReview={isGitRepo}
+            onCreateSession={createSessionWorkspace}
+            onCreateTerminal={createTerminalWorkspace}
+            onOpenFiles={openFilesWorkspace}
+            onOpenReview={openReviewWorkspace}
+          />
+        ) : null}
       </div>
 
       <ProviderStatusBanner status={activeProviderStatus} />
@@ -5094,7 +5117,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               <div className="relative flex min-h-0 flex-1 flex-col">
                 <div
                   ref={setMessagesScrollContainerRef}
-                  className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pb-3 pt-0 sm:px-5 sm:pb-4 sm:pt-0"
+                  className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pb-3 pt-3 sm:px-5 sm:pb-4 sm:pt-4"
                   onScroll={onMessagesScroll}
                   onClickCapture={onMessagesClickCapture}
                   onWheel={onMessagesWheel}
@@ -5130,7 +5153,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     onOpenFileTarget={openFileTargetInWorkspace}
                     resolvedTheme={resolvedTheme}
                     timestampFormat={timestampFormat}
-                    workspaceRoot={workspaceFileRoot ?? undefined}
+                    workspaceRoot={
+                      activeProjectSupportsWorkspace ? (workspaceFileRoot ?? undefined) : undefined
+                    }
                   />
                 </div>
 
@@ -5402,7 +5427,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 traitsMenuContent={providerTraitsMenuContent}
                                 onToggleInteractionMode={toggleInteractionMode}
                                 onTogglePlanSidebar={togglePlanSidebar}
-                                onToggleRuntimeMode={toggleRuntimeMode}
+                                onRuntimeModeChange={handleRuntimeModeChange}
                               />
                             ) : (
                               <>
@@ -5450,21 +5475,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   size="sm"
                                   type="button"
                                   onClick={() =>
-                                    void handleRuntimeModeChange(
-                                      runtimeMode === "full-access"
-                                        ? "approval-required"
-                                        : "full-access",
-                                    )
+                                    void handleRuntimeModeChange(nextRuntimeMode(runtimeMode))
                                   }
                                   title={
                                     runtimeMode === "full-access"
-                                      ? "Full access — click to require approvals"
-                                      : "Approval required — click for full access"
+                                      ? "Full access — click for read-only mode"
+                                      : runtimeMode === "approval-required"
+                                        ? "Supervised — click for full access"
+                                        : "Read-only — click for supervised mode"
                                   }
                                 >
                                   {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
                                   <span className="sr-only sm:not-sr-only">
-                                    {runtimeMode === "full-access" ? "Full access" : "Supervised"}
+                                    {runtimeMode === "full-access"
+                                      ? "Full access"
+                                      : runtimeMode === "approval-required"
+                                        ? "Supervised"
+                                        : "Read-only"}
                                   </span>
                                 </Button>
 
@@ -5684,7 +5711,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 </form>
               </div>
 
-              {isGitRepo && (
+              {activeProjectSupportsWorkspace && isGitRepo && (
                 <BranchToolbar
                   threadId={activeThread.id}
                   onEnvModeChange={onEnvModeChange}
@@ -5699,7 +5726,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 <PullRequestThreadDialog
                   key={pullRequestDialogState.key}
                   open
-                  cwd={activeProject?.cwd ?? null}
+                  cwd={activeProjectSupportsWorkspace ? (activeProject?.cwd ?? null) : null}
                   initialReference={pullRequestDialogState.initialReference}
                   onOpenChange={(open) => {
                     if (!open) {
@@ -5716,7 +5743,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 activePlan={activePlan}
                 activeProposedPlan={sidebarProposedPlan}
                 markdownCwd={gitCwd ?? undefined}
-                workspaceRoot={workspaceFileRoot ?? undefined}
+                workspaceRoot={
+                  activeProjectSupportsWorkspace ? (workspaceFileRoot ?? undefined) : undefined
+                }
                 timestampFormat={timestampFormat}
                 onOpenFileTarget={openFileTargetInWorkspace}
                 onClose={() => {
@@ -5729,7 +5758,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
               />
             ) : null}
           </>
-        ) : (activeFilesWorkspaceTab || activeFileWorkspaceTab) && activeProject ? (
+        ) : (activeFilesWorkspaceTab || activeFileWorkspaceTab) &&
+          activeProjectSupportsWorkspace &&
+          activeProject ? (
           <div className="flex-1 overflow-hidden">
             <WorkspaceEditorSurface
               threadId={activeThread.id}
@@ -5743,7 +5774,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
             <ThreadDiffWorkspace mode="sheet" />
           </div>
-        ) : activeTerminalWorkspaceTab && activeProject ? (
+        ) : activeTerminalWorkspaceTab && activeProjectSupportsWorkspace && activeProject ? (
           <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
             <ThreadTerminalDrawer
               key={`${terminalOwnerId}:${activeTerminalWorkspaceTab.terminalGroupId}`}

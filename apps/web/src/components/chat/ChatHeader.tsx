@@ -18,6 +18,7 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  activeProjectIsHome: boolean;
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -42,6 +43,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   activeProjectName,
+  activeProjectIsHome,
   isGitRepo,
   openInCwd,
   activeProjectScripts,
@@ -79,7 +81,7 @@ export const ChatHeader = memo(function ChatHeader({
             <span className="min-w-0 truncate">{activeProjectName}</span>
           </Badge>
         )}
-        {activeProjectName && !isGitRepo && (
+        {activeProjectName && !activeProjectIsHome && !isGitRepo && (
           <Badge
             variant="outline"
             className="shrink-0 border-amber-600/30 bg-amber-500/6 px-1.5 py-0 text-[9px] uppercase tracking-[0.08em] text-amber-700 shadow-none"
@@ -89,7 +91,7 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       </div>
       <div className="flex shrink-0 items-center justify-end gap-1.5 @3xl/header-actions:gap-2">
-        {activeProjectScripts && (
+        {activeProjectScripts && !activeProjectIsHome && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
             keybindings={keybindings}
@@ -100,14 +102,16 @@ export const ChatHeader = memo(function ChatHeader({
             onDeleteScript={onDeleteProjectScript}
           />
         )}
-        {activeProjectName && (
+        {activeProjectName && !activeProjectIsHome && (
           <OpenInPicker
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {activeProjectName && !activeProjectIsHome && (
+          <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />
+        )}
         <Tooltip>
           <TooltipTrigger
             render={
@@ -126,7 +130,9 @@ export const ChatHeader = memo(function ChatHeader({
           />
           <TooltipPopup side="bottom">
             {!terminalAvailable
-              ? "Terminal is unavailable until this thread has an active project."
+              ? activeProjectIsHome
+                ? "Terminal is unavailable in Home."
+                : "Terminal is unavailable until this thread has an active project."
               : terminalToggleShortcutLabel
                 ? `Toggle terminal tab (${terminalToggleShortcutLabel})`
                 : "Toggle terminal tab"}
@@ -151,11 +157,13 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipPopup side="bottom">
             {!activeProjectName
               ? "Review tab is unavailable until this thread has an active project."
-              : !isGitRepo
-                ? "Review tab is unavailable because this project is not a git repository."
-                : diffToggleShortcutLabel
-                  ? `Toggle review tab (${diffToggleShortcutLabel})`
-                  : "Toggle review tab"}
+              : activeProjectIsHome
+                ? "Review tab is unavailable in Home."
+                : !isGitRepo
+                  ? "Review tab is unavailable because this project is not a git repository."
+                  : diffToggleShortcutLabel
+                    ? `Toggle review tab (${diffToggleShortcutLabel})`
+                    : "Toggle review tab"}
           </TooltipPopup>
         </Tooltip>
       </div>

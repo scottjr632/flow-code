@@ -283,6 +283,9 @@ const ServerConfigLive = (input: CliInput) =>
         logWebSocketEvents,
       } satisfies ServerConfigShape;
 
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(config.homeProjectDir, { recursive: true });
+
       return config;
     }),
   );

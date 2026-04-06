@@ -1,5 +1,7 @@
 import {
   DEFAULT_RUNTIME_MODE,
+  type ProviderInteractionMode,
+  type RuntimeMode,
   type ProjectId,
   ThreadId,
   type WorkspaceId,
@@ -7,12 +9,16 @@ import {
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback } from "react";
 import {
+  type ComposerImageAttachment,
   type DraftThreadEnvMode,
   type DraftThreadState,
+  markPendingAutoSend,
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { newThreadId } from "../lib/utils";
 import { useStore } from "../store";
+import { isHomeProjectId } from "../systemProject";
+import { DEFAULT_INTERACTION_MODE } from "../types";
 import { resolveExistingWorkspaceContext } from "../workspaceContext";
 
 export function useHandleNewThread() {
@@ -40,14 +46,21 @@ export function useHandleNewThread() {
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
         initialPrompt?: string;
+        initialImages?: ComposerImageAttachment[];
+        runtimeMode?: RuntimeMode;
+        interactionMode?: ProviderInteractionMode;
       },
     ): Promise<void> => {
+      const homeProject = isHomeProjectId(projectId);
       const {
+        addImages,
         clearProjectDraftThreadId,
         getDraftThread,
         getDraftThreadByProjectId,
         applyStickyState,
         setPrompt,
+        setRuntimeMode,
+        setInteractionMode,
         setDraftThreadContext,
         setProjectDraftThreadId,
       } = useComposerDraftStore.getState();
@@ -80,29 +93,66 @@ export function useHandleNewThread() {
         typeof options?.initialPrompt === "string" && options.initialPrompt.length > 0
           ? options.initialPrompt
           : null;
-      const primeDraftPrompt = (threadId: ThreadId) => {
-        if (!initialPrompt) {
-          return;
+      const normalizedEnvMode: DraftThreadEnvMode = homeProject
+        ? "local"
+        : (options?.envMode ?? "local");
+      const normalizedRuntimeMode: RuntimeMode = homeProject
+        ? "read-only"
+        : (options?.runtimeMode ?? DEFAULT_RUNTIME_MODE);
+      const normalizedInteractionMode: ProviderInteractionMode = homeProject
+        ? DEFAULT_INTERACTION_MODE
+        : (options?.interactionMode ?? DEFAULT_INTERACTION_MODE);
+      const normalizedWorkspaceId = homeProject ? null : (options?.workspaceId ?? null);
+      const normalizedBranch = homeProject ? null : (options?.branch ?? null);
+      const normalizedWorktreePath = homeProject ? null : (options?.worktreePath ?? null);
+      const initialImages = options?.initialImages ?? [];
+
+      /** Populate the composer draft with the initial prompt, images, and settings. */
+      const primeDraftContent = (threadId: ThreadId) => {
+        if (initialPrompt) {
+          setPrompt(threadId, initialPrompt);
         }
-        setPrompt(threadId, initialPrompt);
+        if (initialImages.length > 0) {
+          addImages(threadId, initialImages);
+        }
+        // Apply explicit runtime/interaction mode to the composer draft
+        // so the ChatView composer reflects the selection immediately.
+        if (options?.runtimeMode && !homeProject) {
+          setRuntimeMode(threadId, options.runtimeMode);
+        }
+        if (options?.interactionMode && !homeProject) {
+          setInteractionMode(threadId, options.interactionMode);
+        }
+        // Mark for auto-send when there is content to submit.
+        if (initialPrompt || initialImages.length > 0) {
+          markPendingAutoSend(threadId);
+        }
       };
       if (storedDraftThread) {
         return (async () => {
           const nextWorkspaceContext = resolveDraftWorkspaceContext({
-            workspaceId: hasWorkspaceIdOption
-              ? (options?.workspaceId ?? null)
-              : (storedDraftThread.workspaceId ?? null),
-            branch: hasBranchOption
-              ? (options?.branch ?? null)
-              : (storedDraftThread.branch ?? null),
-            worktreePath: hasWorktreePathOption
-              ? (options?.worktreePath ?? null)
-              : (storedDraftThread.worktreePath ?? null),
+            workspaceId: homeProject
+              ? null
+              : hasWorkspaceIdOption
+                ? (options?.workspaceId ?? null)
+                : (storedDraftThread.workspaceId ?? null),
+            branch: homeProject
+              ? null
+              : hasBranchOption
+                ? (options?.branch ?? null)
+                : (storedDraftThread.branch ?? null),
+            worktreePath: homeProject
+              ? null
+              : hasWorktreePathOption
+                ? (options?.worktreePath ?? null)
+                : (storedDraftThread.worktreePath ?? null),
           });
           if (
             storedDraftThread.workspaceId !== nextWorkspaceContext.workspaceId ||
             storedDraftThread.branch !== nextWorkspaceContext.branch ||
             storedDraftThread.worktreePath !== nextWorkspaceContext.worktreePath ||
+            (homeProject && storedDraftThread.runtimeMode !== normalizedRuntimeMode) ||
+            (homeProject && storedDraftThread.envMode !== normalizedEnvMode) ||
             hasWorkspaceIdOption ||
             hasBranchOption ||
             hasWorktreePathOption ||
@@ -112,11 +162,12 @@ export function useHandleNewThread() {
               workspaceId: nextWorkspaceContext.workspaceId,
               branch: nextWorkspaceContext.branch,
               worktreePath: nextWorkspaceContext.worktreePath,
-              ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+              ...(hasEnvModeOption || homeProject ? { envMode: normalizedEnvMode } : {}),
+              ...(homeProject ? { runtimeMode: normalizedRuntimeMode } : {}),
             });
           }
           setProjectDraftThreadId(projectId, storedDraftThread.threadId);
-          primeDraftPrompt(storedDraftThread.threadId);
+          primeDraftContent(storedDraftThread.threadId);
           if (routeThreadId === storedDraftThread.threadId) {
             return;
           }
@@ -135,20 +186,28 @@ export function useHandleNewThread() {
         latestActiveDraftThread.projectId === projectId
       ) {
         const nextWorkspaceContext = resolveDraftWorkspaceContext({
-          workspaceId: hasWorkspaceIdOption
-            ? (options?.workspaceId ?? null)
-            : (latestActiveDraftThread.workspaceId ?? null),
-          branch: hasBranchOption
-            ? (options?.branch ?? null)
-            : (latestActiveDraftThread.branch ?? null),
-          worktreePath: hasWorktreePathOption
-            ? (options?.worktreePath ?? null)
-            : (latestActiveDraftThread.worktreePath ?? null),
+          workspaceId: homeProject
+            ? null
+            : hasWorkspaceIdOption
+              ? (options?.workspaceId ?? null)
+              : (latestActiveDraftThread.workspaceId ?? null),
+          branch: homeProject
+            ? null
+            : hasBranchOption
+              ? (options?.branch ?? null)
+              : (latestActiveDraftThread.branch ?? null),
+          worktreePath: homeProject
+            ? null
+            : hasWorktreePathOption
+              ? (options?.worktreePath ?? null)
+              : (latestActiveDraftThread.worktreePath ?? null),
         });
         if (
           latestActiveDraftThread.workspaceId !== nextWorkspaceContext.workspaceId ||
           latestActiveDraftThread.branch !== nextWorkspaceContext.branch ||
           latestActiveDraftThread.worktreePath !== nextWorkspaceContext.worktreePath ||
+          (homeProject && latestActiveDraftThread.runtimeMode !== normalizedRuntimeMode) ||
+          (homeProject && latestActiveDraftThread.envMode !== normalizedEnvMode) ||
           hasWorkspaceIdOption ||
           hasBranchOption ||
           hasWorktreePathOption ||
@@ -158,20 +217,21 @@ export function useHandleNewThread() {
             workspaceId: nextWorkspaceContext.workspaceId,
             branch: nextWorkspaceContext.branch,
             worktreePath: nextWorkspaceContext.worktreePath,
-            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+            ...(hasEnvModeOption || homeProject ? { envMode: normalizedEnvMode } : {}),
+            ...(homeProject ? { runtimeMode: normalizedRuntimeMode } : {}),
           });
         }
         setProjectDraftThreadId(projectId, routeThreadId);
-        primeDraftPrompt(routeThreadId);
+        primeDraftContent(routeThreadId);
         return Promise.resolve();
       }
 
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
       const nextWorkspaceContext = resolveDraftWorkspaceContext({
-        workspaceId: options?.workspaceId ?? null,
-        branch: options?.branch ?? null,
-        worktreePath: options?.worktreePath ?? null,
+        workspaceId: normalizedWorkspaceId,
+        branch: normalizedBranch,
+        worktreePath: normalizedWorktreePath,
       });
       return (async () => {
         setProjectDraftThreadId(projectId, threadId, {
@@ -179,11 +239,12 @@ export function useHandleNewThread() {
           workspaceId: nextWorkspaceContext.workspaceId,
           branch: nextWorkspaceContext.branch,
           worktreePath: nextWorkspaceContext.worktreePath,
-          envMode: options?.envMode ?? "local",
-          runtimeMode: DEFAULT_RUNTIME_MODE,
+          envMode: normalizedEnvMode,
+          runtimeMode: normalizedRuntimeMode,
+          interactionMode: normalizedInteractionMode,
         });
         applyStickyState(threadId);
-        primeDraftPrompt(threadId);
+        primeDraftContent(threadId);
 
         await navigate({
           to: "/$threadId",

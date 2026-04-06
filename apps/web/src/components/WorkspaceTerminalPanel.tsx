@@ -16,12 +16,15 @@ import { useWorkspaceTerminalStore } from "../workspaceTerminalStore";
 import { useStore } from "../store";
 import { randomUUID } from "~/lib/utils";
 import type { TerminalContextSelection } from "~/lib/terminalContext";
+import { isUserProject } from "../systemProject";
 
 const WORKSPACE_OWNER_THREAD_ID = ThreadId.makeUnsafe(WORKSPACE_TERMINAL_OWNER_ID);
 
 export default function WorkspaceTerminalPanel() {
   const isOpen = useWorkspaceTerminalStore((state) => state.isOpen);
-  const cwd = useStore((store) => store.projects[0]?.cwd ?? null);
+  const cwd = useStore(
+    (store) => store.projects.find((project) => isUserProject(project))?.cwd ?? null,
+  );
 
   const terminalState = useTerminalStateStore((state) =>
     selectThreadTerminalState(state.terminalStateByThreadId, WORKSPACE_OWNER_THREAD_ID),

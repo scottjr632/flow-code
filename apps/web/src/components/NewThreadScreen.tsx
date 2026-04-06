@@ -1,12 +1,33 @@
-import type { GitBranch, ProjectId, ThreadId, WorkspaceId } from "@t3tools/contracts";
+import type {
+  GitBranch,
+  ProjectId,
+  ProviderInteractionMode,
+  ProviderKind,
+  ProviderModelOptions,
+  RuntimeMode,
+  ServerProvider,
+  ThreadId,
+  WorkspaceId,
+} from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpIcon, FolderIcon } from "lucide-react";
 import {
+  ArrowUpIcon,
+  BotIcon,
+  FolderIcon,
+  ImageIcon,
+  LockIcon,
+  LockOpenIcon,
+  MessageSquareTextIcon,
+  XIcon,
+} from "lucide-react";
+import {
+  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { cn } from "~/lib/utils";
@@ -18,18 +39,38 @@ import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "../li
 import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { selectThreadMruIds, useStore } from "../store";
-import { type Thread, type Workspace } from "../types";
+import {
+  type Thread,
+  type Workspace,
+  DEFAULT_RUNTIME_MODE,
+  DEFAULT_INTERACTION_MODE,
+} from "../types";
+import { isHomeProject } from "../systemProject";
+import { type ComposerImageAttachment, useComposerDraftStore } from "../composerDraftStore";
+import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import {
+  getDefaultServerModel,
+  getProviderModels,
+  resolveSelectableProvider,
+} from "../providerModels";
+import { resolveAppModelSelection } from "../modelSelection";
+import { useSettings } from "../hooks/useSettings";
 import { ProjectFavicon } from "./ProjectFavicon";
-import { buildTemporaryWorktreeBranchName } from "./ChatView.logic";
+import { buildTemporaryWorktreeBranchName, processImageFiles } from "./ChatView.logic";
 import { deriveDefaultWorkspaceTitle, type SidebarNewThreadEnvMode } from "./Sidebar.logic";
+import { ProviderModelPicker } from "./chat/ProviderModelPicker";
+import { TraitsPicker } from "./chat/TraitsPicker";
 import { toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "./ui/select";
+import { Separator } from "./ui/separator";
 import { SidebarTrigger } from "./ui/sidebar";
 import { isMacPlatform } from "../lib/utils";
 
 const LOCAL_TARGET_VALUE = "local";
 const NEW_WORKSPACE_TARGET_VALUE = "new-workspace";
+
+const EMPTY_PROVIDERS: ServerProvider[] = [];
 
 function toSortableTimestamp(iso: string | undefined): number {
   if (!iso) {
@@ -148,6 +189,18 @@ function matchesModShiftShortcut(event: globalThis.KeyboardEvent, key: string): 
   return event.key.toLowerCase() === key;
 }
 
+function nextRuntimeMode(mode: RuntimeMode): RuntimeMode {
+  switch (mode) {
+    case "read-only":
+      return "approval-required";
+    case "approval-required":
+      return "full-access";
+    case "full-access":
+    default:
+      return "read-only";
+  }
+}
+
 export function NewThreadScreen({
   requestedEnvMode,
   requestedProjectId,
@@ -160,8 +213,10 @@ export function NewThreadScreen({
   const threadMruIds = useStore(selectThreadMruIds);
   const workspaces = useStore((store) => store.workspaces);
   const queryClient = useQueryClient();
+  const settings = useSettings();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
   const [prompt, setPrompt] = useState("");
+  const [images, setImages] = useState<ComposerImageAttachment[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(() =>
     resolveInitialProjectId(projects, threads, threadMruIds, requestedProjectId),
   );
@@ -173,6 +228,72 @@ export function NewThreadScreen({
     resolveInitialTargetValue(requestedEnvMode),
   );
 
+  // --- Model / Provider / Mode state ---
+  const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDERS;
+  const stickyActiveProvider = useComposerDraftStore((s) => s.stickyActiveProvider);
+  const stickyModelSelectionByProvider = useComposerDraftStore(
+    (s) => s.stickyModelSelectionByProvider,
+  );
+  const setStickyModelSelection = useComposerDraftStore((s) => s.setStickyModelSelection);
+
+  const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>(DEFAULT_RUNTIME_MODE);
+  const [interactionMode, setInteractionMode] =
+    useState<ProviderInteractionMode>(DEFAULT_INTERACTION_MODE);
+
+  const selectedProvider = resolveSelectableProvider(
+    providerStatuses,
+    stickyActiveProvider ?? "codex",
+  );
+  const selectedModel = useMemo(() => {
+    const stickySelection = stickyModelSelectionByProvider[selectedProvider];
+    if (stickySelection?.model) {
+      return resolveAppModelSelection(
+        selectedProvider,
+        settings,
+        providerStatuses,
+        stickySelection.model,
+      );
+    }
+    return getDefaultServerModel(providerStatuses, selectedProvider);
+  }, [providerStatuses, selectedProvider, settings, stickyModelSelectionByProvider]);
+
+  const selectedProviderModels = getProviderModels(providerStatuses, selectedProvider);
+  const modelOptionsByProvider = useMemo(
+    () => ({
+      codex: providerStatuses.find((p) => p.provider === "codex")?.models ?? [],
+      claudeAgent: providerStatuses.find((p) => p.provider === "claudeAgent")?.models ?? [],
+    }),
+    [providerStatuses],
+  );
+
+  // Model options for traits picker (reasoning, etc.).
+  // Uses the `onModelOptionsChange` path (no threadId yet).
+  // Changes are synced to sticky state so `applyStickyState` picks them up.
+  const [localModelOptions, setLocalModelOptions] = useState<
+    ProviderModelOptions[ProviderKind] | undefined
+  >(undefined);
+
+  const onModelOptionsChange = useCallback(
+    (nextOptions: ProviderModelOptions[ProviderKind] | undefined) => {
+      setLocalModelOptions(nextOptions);
+      // Persist to sticky state so the new thread inherits these options.
+      // `setStickyModelSelection` runs through `normalizeModelSelection` which
+      // wraps the options correctly for the provider.
+      const currentSticky = useComposerDraftStore.getState().stickyModelSelectionByProvider;
+      const currentForProvider = currentSticky[selectedProvider];
+      setStickyModelSelection({
+        provider: selectedProvider,
+        model: currentForProvider?.model ?? selectedModel,
+        ...(nextOptions ? { options: nextOptions } : {}),
+      } as import("@t3tools/contracts").ModelSelection);
+    },
+    [selectedModel, selectedProvider, setStickyModelSelection],
+  );
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Derived convenience values ---
   useEffect(() => {
     setSelectedProjectId((current) => {
       if (current && projects.some((project) => project.id === current)) {
@@ -228,6 +349,7 @@ export function NewThreadScreen({
   const selectedProjectBranchesQuery = useQuery(
     gitBranchesQueryOptions(selectedProject?.cwd ?? null),
   );
+  const selectedProjectIsHome = isHomeProject(selectedProject);
   const selectedWorkspaceId = decodeWorkspaceTargetValue(selectedTargetValue);
   const selectedWorkspace = useMemo(
     () => projectWorkspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
@@ -262,27 +384,141 @@ export function NewThreadScreen({
     () => resolveNewWorkspaceBaseBranch(selectedProjectBranchesQuery.data?.branches ?? []),
     [selectedProjectBranchesQuery.data?.branches],
   );
-  const effectiveEnvMode = selectedWorkspace || isNewWorkspaceTarget ? "worktree" : "local";
-  const targetLabel = selectedWorkspace
-    ? resolveWorkspaceLabel(selectedWorkspace)
-    : isNewWorkspaceTarget
-      ? "New workspace"
-      : "Local";
-  const targetDescription = selectedWorkspace
-    ? (selectedWorkspace.branch ?? selectedWorkspace.worktreePath)
-    : isNewWorkspaceTarget
-      ? "Create a fresh worktree now"
-      : "Use the main repo checkout";
-  const targetShortcutLabel = selectedWorkspace
+  const effectiveEnvMode =
+    selectedProjectIsHome || (!selectedWorkspace && !isNewWorkspaceTarget) ? "local" : "worktree";
+  const effectiveRuntimeMode = selectedProjectIsHome ? ("read-only" as RuntimeMode) : runtimeMode;
+  const targetLabel = selectedProjectIsHome
+    ? "Home"
+    : selectedWorkspace
+      ? resolveWorkspaceLabel(selectedWorkspace)
+      : isNewWorkspaceTarget
+        ? "New workspace"
+        : "Local";
+  const _targetDescription = selectedProjectIsHome
+    ? "General chat without repo tools"
+    : selectedWorkspace
+      ? (selectedWorkspace.branch ?? selectedWorkspace.worktreePath)
+      : isNewWorkspaceTarget
+        ? "Create a fresh worktree now"
+        : "Use the main repo checkout";
+  const targetShortcutLabel = selectedProjectIsHome
     ? null
-    : isNewWorkspaceTarget
-      ? newWorkspaceShortcutLabel
-      : localShortcutLabel;
+    : selectedWorkspace
+      ? null
+      : isNewWorkspaceTarget
+        ? newWorkspaceShortcutLabel
+        : localShortcutLabel;
+
+  useEffect(() => {
+    if (!selectedProjectIsHome) {
+      return;
+    }
+    setSelectedTargetValue(LOCAL_TARGET_VALUE);
+  }, [selectedProjectIsHome]);
+
+  // --- Image handling ---
+  const addImages = useCallback((files: File[]) => {
+    setImages((prev) => {
+      const { images: nextImages, error } = processImageFiles(files, prev.length);
+      if (error) {
+        toastManager.add({ type: "error", title: error });
+      }
+      return [...prev, ...nextImages];
+    });
+  }, []);
+
+  const removeImage = useCallback((imageId: string) => {
+    setImages((prev) => {
+      const image = prev.find((img) => img.id === imageId);
+      if (image?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(image.previewUrl);
+      }
+      return prev.filter((img) => img.id !== imageId);
+    });
+  }, []);
+
+  const onPaste = useCallback(
+    (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = Array.from(event.clipboardData.files);
+      const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+      if (imageFiles.length > 0) {
+        event.preventDefault();
+        addImages(imageFiles);
+      }
+    },
+    [addImages],
+  );
+
+  const onDragOver = useCallback((event: DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
+  const onDrop = useCallback(
+    (event: DragEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const files = Array.from(event.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+      if (files.length > 0) {
+        addImages(files);
+      }
+    },
+    [addImages],
+  );
+
+  const onFileInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files ?? []);
+      if (files.length > 0) {
+        addImages(files);
+      }
+      // Reset so the same file can be selected again
+      event.target.value = "";
+    },
+    [addImages],
+  );
+
+  // --- Provider model change handler ---
+  const onProviderModelChange = useCallback(
+    (provider: ProviderKind, model: string) => {
+      const resolved = resolveSelectableProvider(providerStatuses, provider);
+      const resolvedModel = resolveAppModelSelection(resolved, settings, providerStatuses, model);
+      setStickyModelSelection({
+        provider: resolved,
+        model: resolvedModel,
+      });
+    },
+    [providerStatuses, setStickyModelSelection, settings],
+  );
+
+  // Whether the traits picker should render (only when there are options to show).
+  const hasTraitsOptions = selectedProviderModels.length > 0;
+
+  // --- Submit ---
+  const hasContent = prompt.trim().length > 0 || images.length > 0;
 
   const handleSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       if (!selectedProjectId) {
+        return;
+      }
+
+      const commonOptions = {
+        ...(prompt.trim().length > 0 ? { initialPrompt: prompt } : {}),
+        ...(images.length > 0 ? { initialImages: images } : {}),
+        ...(!selectedProjectIsHome ? { runtimeMode: effectiveRuntimeMode } : {}),
+        ...(!selectedProjectIsHome ? { interactionMode } : {}),
+      };
+
+      if (selectedProjectIsHome) {
+        void handleNewThread(selectedProjectId, {
+          workspaceId: null,
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+          ...commonOptions,
+        });
         return;
       }
 
@@ -292,7 +528,7 @@ export function NewThreadScreen({
           branch: selectedWorkspace.branch,
           worktreePath: selectedWorkspace.worktreePath,
           envMode: "worktree",
-          ...(prompt.trim().length > 0 ? { initialPrompt: prompt } : {}),
+          ...commonOptions,
         });
         return;
       }
@@ -341,7 +577,7 @@ export function NewThreadScreen({
               branch: worktree.worktree.branch,
               worktreePath: worktree.worktree.path,
               envMode: "worktree",
-              ...(prompt.trim().length > 0 ? { initialPrompt: prompt } : {}),
+              ...commonOptions,
             });
           } catch (error) {
             if (createdWorktreePath) {
@@ -372,15 +608,19 @@ export function NewThreadScreen({
         branch: null,
         worktreePath: null,
         envMode: isNewWorkspaceTarget ? "worktree" : "local",
-        ...(prompt.trim().length > 0 ? { initialPrompt: prompt } : {}),
+        ...commonOptions,
       });
     },
     [
       createWorktreeMutation,
+      effectiveRuntimeMode,
       handleNewThread,
+      images,
+      interactionMode,
       isNewWorkspaceTarget,
       prompt,
       selectedProject,
+      selectedProjectIsHome,
       selectedProjectBaseBranch,
       selectedProjectId,
       selectedWorkspace,
@@ -418,8 +658,13 @@ export function NewThreadScreen({
           <div className="flex flex-1 flex-col items-center justify-center px-6 pb-10 pt-16 sm:px-8 sm:pt-18">
             <div className="max-w-xl text-center">
               <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-                Let&apos;s build
+                {selectedProjectIsHome ? "Ask anything" : "Let\u2019s build"}
               </h1>
+              {selectedProjectIsHome ? (
+                <p className="mt-1.5 text-sm text-muted-foreground/70">
+                  General chat without repository tools
+                </p>
+              ) : null}
 
               <div className="mt-3 flex flex-col items-center gap-1.5">
                 <Select
@@ -443,7 +688,11 @@ export function NewThreadScreen({
                     className="h-auto min-w-0 justify-center gap-1.5 rounded-md border-transparent bg-transparent px-2 py-1 text-base font-medium text-muted-foreground shadow-none hover:bg-muted/35 hover:text-foreground data-[popup-open]:bg-muted/35 data-[popup-open]:text-foreground focus-visible:ring-0 disabled:opacity-100 sm:text-lg"
                   >
                     {selectedProject ? (
-                      <ProjectFavicon cwd={selectedProject.cwd} className="size-4.5" />
+                      selectedProjectIsHome ? (
+                        <MessageSquareTextIcon className="size-4.5 text-muted-foreground/70" />
+                      ) : (
+                        <ProjectFavicon cwd={selectedProject.cwd} className="size-4.5" />
+                      )
                     ) : (
                       <FolderIcon className="size-4.5 text-muted-foreground/70" />
                     )}
@@ -458,13 +707,17 @@ export function NewThreadScreen({
                     {projects.map((project) => (
                       <SelectItem key={project.id} value={project.id}>
                         <div className="flex min-w-0 items-center gap-2">
-                          <ProjectFavicon cwd={project.cwd} />
+                          {isHomeProject(project) ? (
+                            <MessageSquareTextIcon className="size-4 text-muted-foreground/70" />
+                          ) : (
+                            <ProjectFavicon cwd={project.cwd} />
+                          )}
                           <div className="min-w-0">
                             <div className="truncate font-medium text-foreground">
                               {project.name}
                             </div>
                             <div className="truncate text-xs text-muted-foreground">
-                              {project.cwd}
+                              {isHomeProject(project) ? "General chat" : project.cwd}
                             </div>
                           </div>
                         </div>
@@ -473,7 +726,7 @@ export function NewThreadScreen({
                   </SelectPopup>
                 </Select>
 
-                {projectWorkspaces.length > 0 ? (
+                {selectedProjectIsHome ? null : projectWorkspaces.length > 0 ? (
                   <Select
                     value={selectedTargetValue}
                     onValueChange={(value) => {
@@ -547,12 +800,14 @@ export function NewThreadScreen({
                       ))}
                     </SelectPopup>
                   </Select>
-                ) : selectedProject ? (
+                ) : selectedProject && !selectedProjectIsHome ? (
                   <div className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground/70">
-                    <span>{isNewWorkspaceTarget ? "New workspace" : "Local"}</span>
-                    <span className="rounded bg-white/[0.04] px-1 py-0.5 font-medium text-[10px] tracking-[0.08em] text-muted-foreground/58">
-                      {targetShortcutLabel}
-                    </span>
+                    <span>{targetLabel}</span>
+                    {targetShortcutLabel ? (
+                      <span className="rounded bg-white/[0.04] px-1 py-0.5 font-medium text-[10px] tracking-[0.08em] text-muted-foreground/58">
+                        {targetShortcutLabel}
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -560,56 +815,177 @@ export function NewThreadScreen({
           </div>
 
           <div className="mx-auto w-full max-w-3xl px-4 pb-5 sm:px-5 sm:pb-7">
-            <div className="rounded-[22px] border border-border bg-card/90 shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset] backdrop-blur-sm">
+            <div
+              className="rounded-[22px] border border-border bg-card/90 shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset] backdrop-blur-sm"
+              onDragOver={onDragOver}
+              onDrop={onDrop}
+            >
               <div className="px-4 pb-2 pt-4 sm:px-5 sm:pt-4.5">
+                {/* Image previews */}
+                {images.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {images.map((image) => (
+                      <div
+                        key={image.id}
+                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+                      >
+                        {image.previewUrl ? (
+                          <img
+                            src={image.previewUrl}
+                            alt={image.name}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-muted-foreground/60">
+                            <ImageIcon className="size-5" />
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeImage(image.id)}
+                          className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-foreground/80 text-background hover:bg-foreground"
+                          aria-label={`Remove ${image.name}`}
+                        >
+                          <XIcon className="size-2.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <textarea
                   autoFocus={projects.length > 0}
                   data-testid="new-thread-prompt-input"
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
                   onKeyDown={handlePromptKeyDown}
-                  placeholder="Ask Codex anything, @ to add files, / for commands"
+                  onPaste={onPaste}
+                  placeholder={
+                    selectedProjectIsHome
+                      ? "Ask anything\u2026"
+                      : "Ask Codex anything, @ to add files, / for commands"
+                  }
                   disabled={!selectedProject}
                   rows={1}
                   className="field-sizing-content min-h-14 max-h-56 w-full resize-none bg-transparent text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/55 disabled:cursor-not-allowed"
                 />
               </div>
               <div className="flex items-center justify-between gap-3 border-t border-border/60 px-3 pb-3 pt-2.5 sm:px-4">
-                <div className="flex min-w-0 items-center gap-2.5 text-xs text-muted-foreground/70">
-                  <span className="inline-flex min-w-0 items-center gap-1.5">
-                    {selectedProject ? (
-                      <ProjectFavicon cwd={selectedProject.cwd} className="size-3.5 shrink-0" />
-                    ) : (
-                      <FolderIcon className="size-3.5 shrink-0" />
-                    )}
-                    <span className="truncate">
-                      {selectedProject?.name ??
-                        (projects.length > 0 ? "Choose a project" : "No projects")}
-                    </span>
-                  </span>
-                  <span className="text-border">/</span>
-                  <span className="inline-flex min-w-0 items-center gap-1.5">
-                    <span className="truncate">{targetLabel}</span>
-                    {targetShortcutLabel ? (
-                      <span className="rounded bg-white/[0.04] px-1 py-0.5 font-medium text-[10px] tracking-[0.08em] text-muted-foreground/58">
-                        {targetShortcutLabel}
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="hidden truncate text-muted-foreground/50 sm:inline">
-                    {targetDescription}
-                  </span>
+                <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <ProviderModelPicker
+                    provider={selectedProvider}
+                    model={selectedModel}
+                    lockedProvider={null}
+                    providers={providerStatuses}
+                    modelOptionsByProvider={modelOptionsByProvider}
+                    onProviderModelChange={onProviderModelChange}
+                  />
+
+                  {hasTraitsOptions ? (
+                    <>
+                      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                      <TraitsPicker
+                        provider={selectedProvider}
+                        models={selectedProviderModels}
+                        model={selectedModel}
+                        modelOptions={localModelOptions}
+                        prompt={prompt}
+                        onPromptChange={setPrompt}
+                        onModelOptionsChange={onModelOptionsChange}
+                      />
+                    </>
+                  ) : null}
+
+                  {!selectedProjectIsHome && (
+                    <>
+                      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+
+                      <Button
+                        variant="ghost"
+                        className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                        size="sm"
+                        type="button"
+                        onClick={() =>
+                          setInteractionMode((m) => (m === "plan" ? "default" : "plan"))
+                        }
+                        title={
+                          interactionMode === "plan"
+                            ? "Plan mode \u2014 click to return to normal chat mode"
+                            : "Default mode \u2014 click to enter plan mode"
+                        }
+                      >
+                        <BotIcon />
+                        <span className="sr-only sm:not-sr-only">
+                          {interactionMode === "plan" ? "Plan" : "Chat"}
+                        </span>
+                      </Button>
+
+                      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+
+                      <Button
+                        variant="ghost"
+                        className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                        size="sm"
+                        type="button"
+                        onClick={() => setRuntimeMode((m) => nextRuntimeMode(m))}
+                        title={
+                          runtimeMode === "full-access"
+                            ? "Full access \u2014 click for read-only mode"
+                            : runtimeMode === "approval-required"
+                              ? "Supervised \u2014 click for full access"
+                              : "Read-only \u2014 click for supervised mode"
+                        }
+                      >
+                        {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
+                        <span className="sr-only sm:not-sr-only">
+                          {runtimeMode === "full-access"
+                            ? "Full access"
+                            : runtimeMode === "approval-required"
+                              ? "Supervised"
+                              : "Read-only"}
+                        </span>
+                      </Button>
+                    </>
+                  )}
                 </div>
-                <Button
-                  type="submit"
-                  size="icon-sm"
-                  className={cn("rounded-full", prompt.trim().length === 0 && "bg-primary/85")}
-                  disabled={!selectedProject || createWorktreeMutation.isPending}
-                  data-testid="create-thread-submit-button"
-                  aria-label={`Create ${effectiveEnvMode === "worktree" ? "workspace" : "local"} thread`}
-                >
-                  <ArrowUpIcon className="size-3.5" />
-                </Button>
+
+                <div className="flex shrink-0 items-center gap-2">
+                  {/* Hidden file input for image upload */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={onFileInputChange}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground/70 hover:text-foreground/80"
+                    onClick={() => fileInputRef.current?.click()}
+                    aria-label="Attach images"
+                    title="Attach images"
+                  >
+                    <ImageIcon className="size-4" />
+                  </Button>
+
+                  <Button
+                    type="submit"
+                    size="icon-sm"
+                    className={cn("rounded-full", !hasContent && "bg-primary/85")}
+                    disabled={!selectedProject || createWorktreeMutation.isPending}
+                    data-testid="create-thread-submit-button"
+                    aria-label={
+                      selectedProjectIsHome
+                        ? "Create Home thread"
+                        : `Create ${effectiveEnvMode === "worktree" ? "workspace" : "local"} thread`
+                    }
+                  >
+                    <ArrowUpIcon className="size-3.5" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

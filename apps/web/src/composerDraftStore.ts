@@ -40,6 +40,10 @@ export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
 const COMPOSER_PERSIST_DEBOUNCE_MS = 300;
 
+function isRuntimeModeValue(value: unknown): value is RuntimeMode {
+  return value === "read-only" || value === "approval-required" || value === "full-access";
+}
+
 const composerDebouncedStorage = createDebouncedStorage(
   typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
   COMPOSER_PERSIST_DEBOUNCE_MS,
@@ -908,11 +912,9 @@ function normalizePersistedDraftThreads(
           typeof createdAt === "string" && createdAt.length > 0
             ? createdAt
             : new Date().toISOString(),
-        runtimeMode:
-          candidateDraftThread.runtimeMode === "approval-required" ||
-          candidateDraftThread.runtimeMode === "full-access"
-            ? candidateDraftThread.runtimeMode
-            : DEFAULT_RUNTIME_MODE,
+        runtimeMode: isRuntimeModeValue(candidateDraftThread.runtimeMode)
+          ? candidateDraftThread.runtimeMode
+          : DEFAULT_RUNTIME_MODE,
         interactionMode:
           candidateDraftThread.interactionMode === "plan" ||
           candidateDraftThread.interactionMode === "default"
@@ -1001,11 +1003,9 @@ function normalizePersistedDraftsByThreadId(
           return normalized ? [normalized] : [];
         })
       : [];
-    const runtimeMode =
-      draftCandidate.runtimeMode === "approval-required" ||
-      draftCandidate.runtimeMode === "full-access"
-        ? draftCandidate.runtimeMode
-        : null;
+    const runtimeMode = isRuntimeModeValue(draftCandidate.runtimeMode)
+      ? draftCandidate.runtimeMode
+      : null;
     const interactionMode =
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
@@ -1985,8 +1985,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         if (threadId.length === 0) {
           return;
         }
-        const nextRuntimeMode =
-          runtimeMode === "approval-required" || runtimeMode === "full-access" ? runtimeMode : null;
+        const nextRuntimeMode = isRuntimeModeValue(runtimeMode) ? runtimeMode : null;
         set((state) => {
           const existing = state.draftsByThreadId[threadId];
           if (!existing && nextRuntimeMode === null) {
@@ -2468,4 +2467,26 @@ export function clearPromotedDraftThreads(serverThreadIds: ReadonlySet<ThreadId>
       store.clearDraftThread(draftId);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Pending auto-send
+// ---------------------------------------------------------------------------
+// Module-level, ephemeral (not persisted). Used to auto-send the initial
+// prompt when the user creates a new thread from NewThreadScreen.
+// ---------------------------------------------------------------------------
+
+const pendingAutoSendThreadIds = new Set<ThreadId>();
+
+/** Mark a thread so ChatView auto-sends its initial prompt on mount. */
+export function markPendingAutoSend(threadId: ThreadId): void {
+  pendingAutoSendThreadIds.add(threadId);
+}
+
+/**
+ * Check and consume the auto-send flag for a thread.
+ * Returns `true` exactly once per marked thread (idempotent).
+ */
+export function consumePendingAutoSend(threadId: ThreadId): boolean {
+  return pendingAutoSendThreadIds.delete(threadId);
 }

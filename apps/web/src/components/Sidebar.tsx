@@ -72,6 +72,7 @@ import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { isHomeProject, isUserProject } from "../systemProject";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useWorkspaceTerminalStore } from "../workspaceTerminalStore";
@@ -966,7 +967,7 @@ export default function Sidebar({
       const api = readNativeApi();
       if (!api) return;
       const project = projects.find((entry) => entry.id === projectId);
-      if (!project) return;
+      if (!project || isHomeProject(project)) return;
 
       const clicked = await api.contextMenu.show(
         [
@@ -1302,6 +1303,19 @@ export default function Sidebar({
       visibleThreads,
     ],
   );
+  const homeRenderedProject = useMemo(
+    () =>
+      renderedProjects.find((renderedProject) => isHomeProject(renderedProject.project)) ?? null,
+    [renderedProjects],
+  );
+  const userRenderedProjects = useMemo(
+    () => renderedProjects.filter((renderedProject) => isUserProject(renderedProject.project)),
+    [renderedProjects],
+  );
+  const userProjects = useMemo(
+    () => projects.filter((project) => isUserProject(project)),
+    [projects],
+  );
   const threadTraversalIds = useMemo(
     () => getThreadIdsForKeyboardTraversal(visibleThreads, threadMruIds, routeThreadId),
     [routeThreadId, threadMruIds, visibleThreads],
@@ -1469,6 +1483,7 @@ export default function Sidebar({
       shouldShowThreadPanel,
       isThreadListExpanded,
     } = renderedProject;
+    const homeProject = isHomeProject(project);
     const activeWorkspaceId =
       projectThreads.find((thread) => thread.id === routeThreadId)?.workspaceId ??
       (routeDraftThread?.projectId === project.id ? routeDraftThread.workspaceId : null);
@@ -1960,6 +1975,47 @@ export default function Sidebar({
       </SidebarMenuSubItem>
     );
 
+    if (homeProject) {
+      return (
+        <SidebarMenuSub
+          ref={attachThreadListAutoAnimateRef}
+          className="mx-0 my-0 w-full gap-0.5 px-0 py-0"
+        >
+          {renderedThreads.map((thread) => renderThreadRow(thread))}
+          {hasHiddenThreads && !isThreadListExpanded ? (
+            <SidebarMenuSubItem className="w-full">
+              <SidebarMenuSubButton
+                render={<button type="button" />}
+                data-thread-selection-safe
+                size="sm"
+                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                onClick={() => {
+                  expandThreadListForProject(project.id);
+                }}
+              >
+                <span>Show more</span>
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+          ) : null}
+          {hasHiddenThreads && isThreadListExpanded ? (
+            <SidebarMenuSubItem className="w-full">
+              <SidebarMenuSubButton
+                render={<button type="button" />}
+                data-thread-selection-safe
+                size="sm"
+                className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                onClick={() => {
+                  collapseThreadListForProject(project.id);
+                }}
+              >
+                <span>Show less</span>
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+          ) : null}
+        </SidebarMenuSub>
+      );
+    }
+
     return (
       <>
         <div className="group/project-header relative">
@@ -2375,6 +2431,41 @@ export default function Sidebar({
               </SidebarGroup>
             ) : null}
             <SidebarGroup className="px-2 pt-2 pb-1">{globalNewThreadButton}</SidebarGroup>
+            {homeRenderedProject ? (
+              <SidebarGroup className="px-2 pt-2 pb-1">
+                <div className="group/home-header mb-1 flex items-center justify-between pl-2 pr-1.5">
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                    Home
+                  </span>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label="New home thread"
+                          className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover/home-header:opacity-100"
+                          onClick={() => {
+                            openNewThreadPage({
+                              projectId: homeRenderedProject.project.id,
+                              envMode: "local",
+                            });
+                          }}
+                        />
+                      }
+                    >
+                      <SquarePenIcon className="size-3.5" />
+                    </TooltipTrigger>
+                    <TooltipPopup side="right">New thread</TooltipPopup>
+                  </Tooltip>
+                </div>
+                <SidebarMenu>
+                  <SidebarMenuItem key={homeRenderedProject.project.id}>
+                    {renderProjectItem(homeRenderedProject, null)}
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroup>
+            ) : null}
+
             <SidebarGroup className="px-2 py-2">
               <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
                 <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
@@ -2494,10 +2585,12 @@ export default function Sidebar({
                 >
                   <SidebarMenu>
                     <SortableContext
-                      items={renderedProjects.map((renderedProject) => renderedProject.project.id)}
+                      items={userRenderedProjects.map(
+                        (renderedProject) => renderedProject.project.id,
+                      )}
                       strategy={verticalListSortingStrategy}
                     >
-                      {renderedProjects.map((renderedProject) => (
+                      {userRenderedProjects.map((renderedProject) => (
                         <SortableProjectItem
                           key={renderedProject.project.id}
                           projectId={renderedProject.project.id}
@@ -2510,7 +2603,7 @@ export default function Sidebar({
                 </DndContext>
               ) : (
                 <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-                  {renderedProjects.map((renderedProject) => (
+                  {userRenderedProjects.map((renderedProject) => (
                     <SidebarMenuItem key={renderedProject.project.id} className="rounded-md">
                       {renderProjectItem(renderedProject, null)}
                     </SidebarMenuItem>
@@ -2518,7 +2611,7 @@ export default function Sidebar({
                 </SidebarMenu>
               )}
 
-              {projects.length === 0 && !shouldShowProjectPathEntry && (
+              {userProjects.length === 0 && !shouldShowProjectPathEntry && (
                 <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
                   No projects yet
                 </div>

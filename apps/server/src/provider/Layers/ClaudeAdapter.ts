@@ -147,7 +147,7 @@ interface ClaudeSessionContext {
   readonly query: ClaudeQueryRuntime;
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
-  readonly basePermissionMode: PermissionMode | undefined;
+  readonly basePermissionMode: PermissionMode;
   currentApiModelId: string | undefined;
   resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
@@ -448,6 +448,15 @@ function isReadOnlyToolName(toolName: string): boolean {
     normalized.includes("glob") ||
     normalized.includes("search")
   );
+}
+
+function isAllowedInReadOnlyMode(toolName: string): boolean {
+  if (isReadOnlyToolName(toolName)) {
+    return true;
+  }
+
+  const itemType = classifyToolItemType(toolName);
+  return itemType === "web_search" || itemType === "image_view";
 }
 
 function classifyRequestType(toolName: string): CanonicalRequestType {
@@ -2555,6 +2564,21 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
 
         const runtimeMode = input.runtimeMode ?? "full-access";
+        if (runtimeMode === "read-only") {
+          if (!isAllowedInReadOnlyMode(toolName)) {
+            return {
+              behavior: "deny",
+              message:
+                "Read-only mode only allows non-mutating tools. Switch access mode before running commands or making changes.",
+            } satisfies PermissionResult;
+          }
+
+          return {
+            behavior: "allow",
+            updatedInput: toolInput,
+          } satisfies PermissionResult;
+        }
+
         if (runtimeMode === "full-access") {
           return {
             behavior: "allow",
@@ -2693,7 +2717,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? modelSelection.options.thinking
           : undefined;
       const effectiveEffort = getEffectiveClaudeCodeEffort(effort);
-      const permissionMode = input.runtimeMode === "full-access" ? "bypassPermissions" : undefined;
+      const permissionMode: PermissionMode =
+        input.runtimeMode === "full-access" ? "bypassPermissions" : "default";
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
@@ -2705,7 +2730,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         pathToClaudeCodeExecutable: claudeBinaryPath,
         settingSources: [...CLAUDE_SETTING_SOURCES],
         ...(effectiveEffort ? { effort: effectiveEffort } : {}),
-        ...(permissionMode ? { permissionMode } : {}),
+        permissionMode,
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
           : {}),
@@ -2797,7 +2822,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(apiModelId ? { model: apiModelId } : {}),
             ...(input.cwd ? { cwd: input.cwd } : {}),
             ...(effectiveEffort ? { effort: effectiveEffort } : {}),
-            ...(permissionMode ? { permissionMode } : {}),
+            permissionMode,
             ...(fastMode ? { fastMode: true } : {}),
           },
         },
@@ -2881,8 +2906,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     } else if (input.interactionMode === "default") {
       yield* Effect.tryPromise({
-        try: () =>
-          context.query.setPermissionMode(context.basePermissionMode ?? "bypassPermissions"),
+        try: () => context.query.setPermissionMode(context.basePermissionMode),
         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
       });
     }

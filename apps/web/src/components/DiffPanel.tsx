@@ -26,7 +26,7 @@ import {
 import { openInPreferredEditor } from "../editorPreferences";
 import { gitReviewDiffQueryOptions } from "~/lib/gitReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import {
@@ -170,6 +170,21 @@ function getRenderablePatch(
   }
 }
 
+function matchesModEnterShortcut(event: React.KeyboardEvent<HTMLTextAreaElement>): boolean {
+  if (
+    event.defaultPrevented ||
+    event.nativeEvent.isComposing ||
+    event.altKey ||
+    event.shiftKey ||
+    event.key !== "Enter"
+  ) {
+    return false;
+  }
+
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  return useMetaForMod ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+}
+
 // ---------------------------------------------------------------------------
 // Resizable file-tree sidebar panel
 // ---------------------------------------------------------------------------
@@ -259,6 +274,17 @@ interface InlineDiffCommentAnnotationMetadata {
   kind: "draft-form";
   selection: DraftDiffCommentSelection;
 }
+
+interface PendingDiffCommentAnnotationMetadata {
+  kind: "draft-comment";
+  comment: DiffCommentDraft;
+}
+
+type DiffCommentAnnotationMetadata =
+  | InlineDiffCommentAnnotationMetadata
+  | PendingDiffCommentAnnotationMetadata;
+
+const EMPTY_DRAFT_DIFF_COMMENTS: ReadonlyArray<DiffCommentDraft> = [];
 
 function formatCommentSelectionSummary(selection: {
   filePath: string;
@@ -375,6 +401,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = routeThreadId;
   const addComposerDiffComment = useComposerDraftStore((store) => store.addDiffComment);
+  const removeComposerDiffComment = useComposerDraftStore((store) => store.removeDiffComment);
+  const submittedThreadDiffComments = useComposerDraftStore((store) =>
+    activeThreadId
+      ? (store.draftsByThreadId[activeThreadId]?.diffComments ?? EMPTY_DRAFT_DIFF_COMMENTS)
+      : EMPTY_DRAFT_DIFF_COMMENTS,
+  );
   const activeThread = useStore((store) =>
     activeThreadId ? store.threads.find((thread) => thread.id === activeThreadId) : undefined,
   );
@@ -526,6 +558,22 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       ),
     [renderableFiles],
   );
+  const submittedDiffCommentsByFileKey = useMemo(() => {
+    const commentsByFileKey = new Map<string, DiffCommentDraft[]>();
+    for (const comment of submittedThreadDiffComments) {
+      const fileKey = fileKeyByPath.get(comment.filePath);
+      if (!fileKey) {
+        continue;
+      }
+      const existingComments = commentsByFileKey.get(fileKey);
+      if (existingComments) {
+        existingComments.push(comment);
+      } else {
+        commentsByFileKey.set(fileKey, [comment]);
+      }
+    }
+    return commentsByFileKey;
+  }, [fileKeyByPath, submittedThreadDiffComments]);
 
   useEffect(() => {
     if (diffOpen && !previousDiffOpenRef.current) {
@@ -999,6 +1047,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                       const isFileCollapsed = collapsedFileKeys.has(fileKey);
                       const selectedRange = selectedRangesByFileKey[fileKey] ?? null;
                       const isCommentComposerOpen = activeCommentSelection?.fileKey === fileKey;
+                      const submittedDiffComments =
+                        submittedDiffCommentsByFileKey.get(fileKey) ?? EMPTY_DRAFT_DIFF_COMMENTS;
                       return (
                         <div
                           key={themedFileKey}
@@ -1015,10 +1065,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                             openDiffFileInEditor(filePath);
                           }}
                         >
-                          <FileDiff<InlineDiffCommentAnnotationMetadata>
+                          <FileDiff<DiffCommentAnnotationMetadata>
                             fileDiff={fileDiff}
-                            lineAnnotations={
-                              isCommentComposerOpen && activeCommentSelection
+                            lineAnnotations={[
+                              ...submittedDiffComments.map((comment) => ({
+                                side: comment.side,
+                                lineNumber: comment.lineEnd,
+                                metadata: {
+                                  kind: "draft-comment",
+                                  comment,
+                                } satisfies PendingDiffCommentAnnotationMetadata,
+                              })),
+                              ...(isCommentComposerOpen && activeCommentSelection
                                 ? [
                                     {
                                       side: activeCommentSelection.side,
@@ -1026,11 +1084,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                                       metadata: {
                                         kind: "draft-form",
                                         selection: activeCommentSelection,
-                                      },
+                                      } satisfies InlineDiffCommentAnnotationMetadata,
                                     },
                                   ]
-                                : []
-                            }
+                                : []),
+                            ]}
                             options={{
                               collapsed: isFileCollapsed,
                               diffStyle: diffRenderMode === "split" ? "split" : "unified",
@@ -1081,8 +1139,42 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                               </button>
                             )}
                             renderAnnotation={(annotation) => {
-                              if (annotation.metadata?.kind !== "draft-form") {
+                              if (!annotation.metadata) {
                                 return null;
+                              }
+                              if (annotation.metadata.kind === "draft-comment") {
+                                const pendingComment = annotation.metadata.comment;
+                                return (
+                                  <div className="mx-4 my-2 rounded-xl border border-primary/20 bg-card/95 p-3 shadow-sm">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="space-y-1">
+                                        <p className="text-xs font-medium text-foreground">
+                                          Pending for next turn
+                                        </p>
+                                        <p className="text-[11px] text-muted-foreground/75">
+                                          {formatCommentSelectionSummary(pendingComment)}
+                                        </p>
+                                      </div>
+                                      <Button
+                                        type="button"
+                                        size="icon-xs"
+                                        variant="ghost"
+                                        onClick={() =>
+                                          removeComposerDiffComment(
+                                            pendingComment.threadId,
+                                            pendingComment.id,
+                                          )
+                                        }
+                                        aria-label="Remove pending diff comment"
+                                      >
+                                        <XIcon className="size-3.5" />
+                                      </Button>
+                                    </div>
+                                    <p className="mt-3 whitespace-pre-wrap text-sm text-foreground">
+                                      {pendingComment.body}
+                                    </p>
+                                  </div>
+                                );
                               }
                               return (
                                 <div className="mx-4 my-2 rounded-xl border border-border/70 bg-card/95 p-3 shadow-sm">
@@ -1108,9 +1200,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                                     </Button>
                                   </div>
                                   <Textarea
+                                    key={`${annotation.metadata.selection.filePath}:${annotation.metadata.selection.side}:${annotation.metadata.selection.lineStart}:${annotation.metadata.selection.lineEnd}`}
+                                    autoFocus
                                     className="mt-3 min-h-24 font-mono text-sm"
                                     value={activeCommentBody}
                                     onChange={(event) => setActiveCommentBody(event.target.value)}
+                                    onKeyDown={(event) => {
+                                      if (!matchesModEnterShortcut(event)) {
+                                        return;
+                                      }
+                                      event.preventDefault();
+                                      addSelectedCommentToDraft();
+                                    }}
                                     placeholder="Explain what needs attention in this change."
                                   />
                                   <div className="mt-2 flex justify-end gap-2">

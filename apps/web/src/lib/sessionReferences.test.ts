@@ -1,4 +1,4 @@
-import { ThreadId, type WorkspaceId } from "@t3tools/contracts";
+import { HOME_PROJECT_ID, ThreadId, type WorkspaceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import { type Thread } from "../types";
 import {
@@ -10,7 +10,7 @@ import {
   formatSessionReferenceMentionLabel,
   parseSessionReferenceToken,
   replaceSessionReferenceTokensForDisplay,
-  searchWorkspaceSessionReferences,
+  searchSessionReferences,
 } from "./sessionReferences";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -91,23 +91,38 @@ describe("sessionReferences", () => {
     ).toEqual(["thread-1"]);
   });
 
-  it("searches only other sessions from the active workspace", () => {
-    const results = searchWorkspaceSessionReferences({
+  it("searches the active workspace plus home sessions", () => {
+    const results = searchSessionReferences({
       threads: [
         makeThread({ id: "thread-self" as never, title: "Current thread" }),
         makeThread({ id: "thread-2" as never, title: "Reconnect regression" }),
+        makeThread({
+          id: "thread-home" as never,
+          projectId: HOME_PROJECT_ID,
+          workspaceId: null,
+          branch: null,
+          title: "Home reconnect notes",
+          updatedAt: "2026-03-29T10:03:00.000Z",
+        }),
         makeThread({
           id: "thread-3" as never,
           title: "Unrelated workspace thread",
           workspaceId: "workspace-2" as WorkspaceId,
         }),
       ],
-      workspaceId: "workspace-1" as WorkspaceId,
+      activeProjectId: "project-1" as Thread["projectId"],
+      activeWorkspaceId: "workspace-1" as WorkspaceId,
       activeThreadId: "thread-self" as never,
       query: "reconnect",
     });
 
     expect(results).toEqual([
+      {
+        threadId: "thread-home",
+        token: "session:home-reconnect-notes#thread-home",
+        title: "Home reconnect notes",
+        description: "Home · thread-home",
+      },
       {
         threadId: "thread-2",
         token: "session:reconnect-regression#thread-2",
@@ -122,7 +137,8 @@ describe("sessionReferences", () => {
       "Use @session:fix-reconnect-flow#thread-a as context",
       {
         threads: [makeThread()],
-        workspaceId: "workspace-1" as WorkspaceId,
+        activeProjectId: "project-1" as Thread["projectId"],
+        activeWorkspaceId: "workspace-1" as WorkspaceId,
         currentThreadId: "thread-current" as never,
       },
     );
@@ -132,6 +148,31 @@ describe("sessionReferences", () => {
     expect(prompt).toContain("- Fix reconnect flow:");
     expect(prompt).toContain("Thread id: thread-a");
     expect(prompt).toContain("user: Investigate reconnect failures after session restore.");
+  });
+
+  it("materializes home session references inside project chats", () => {
+    const prompt = appendSessionReferencesToPrompt(
+      "Compare @session:home-reconnect-notes#thread-home with the current branch",
+      {
+        threads: [
+          makeThread({
+            id: "thread-home" as never,
+            projectId: HOME_PROJECT_ID,
+            workspaceId: null,
+            branch: null,
+            title: "Home reconnect notes",
+          }),
+        ],
+        activeProjectId: "project-1" as Thread["projectId"],
+        activeWorkspaceId: "workspace-1" as WorkspaceId,
+        currentThreadId: "thread-current" as never,
+      },
+    );
+
+    expect(prompt).toContain("Compare @session:home-reconnect-notes#thread-home");
+    expect(prompt).toContain("<session_context>");
+    expect(prompt).toContain("- Home reconnect notes:");
+    expect(prompt).toContain("Thread id: thread-home");
   });
 
   it("extracts the trailing session context block for message display", () => {

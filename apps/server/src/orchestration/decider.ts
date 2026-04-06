@@ -8,6 +8,7 @@ import type {
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
+import { isSystemProject } from "../systemProject.ts";
 import {
   findWorkspaceById,
   findWorkspaceByProjectAndWorktreePath,
@@ -338,11 +339,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.meta.update": {
-      yield* requireProject({
+      const project = yield* requireProject({
         readModel,
         command,
         projectId: command.projectId,
       });
+      if (isSystemProject(project)) {
+        return yield* invariantError(
+          command.type,
+          `System project '${command.projectId}' cannot be modified.`,
+        );
+      }
       const occurredAt = nowIso();
       return {
         ...withEventBase({
@@ -366,11 +373,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.delete": {
-      yield* requireProject({
+      const project = yield* requireProject({
         readModel,
         command,
         projectId: command.projectId,
       });
+      if (isSystemProject(project)) {
+        return yield* invariantError(
+          command.type,
+          `System project '${command.projectId}' cannot be deleted.`,
+        );
+      }
       const occurredAt = nowIso();
       return {
         ...withEventBase({
