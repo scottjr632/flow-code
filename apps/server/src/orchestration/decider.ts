@@ -2,6 +2,7 @@ import type {
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
+  OrchestrationWorkItem,
   OrchestrationWorkspace,
   WorkspaceId,
 } from "@t3tools/contracts";
@@ -13,12 +14,15 @@ import {
   findWorkspaceById,
   findWorkspaceByProjectAndWorktreePath,
   findWorkspaceByProjectAndWorktreePathIncludingDeleted,
+  listWorkItemsByProjectId,
   requireProject,
   requireProjectAbsent,
   requireThread,
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
+  requireWorkItem,
+  requireWorkItemAbsent,
   requireWorkspace,
   requireWorkspaceAbsent,
 } from "./commandInvariants.ts";
@@ -76,6 +80,52 @@ function resolveWorkspaceBranch(
   branch: string | null | undefined,
 ): string | null {
   return branch === undefined ? workspace.branch : branch;
+}
+
+function nextWorkItemRank(
+  readModel: OrchestrationReadModel,
+  projectId: OrchestrationWorkItem["projectId"],
+  status: OrchestrationWorkItem["status"],
+): number {
+  const ranks = listWorkItemsByProjectId(readModel, projectId)
+    .filter((item) => item.deletedAt === null && item.status === status)
+    .map((item) => item.rank);
+  if (ranks.length === 0) {
+    return 0;
+  }
+  return Math.max(...ranks) + 1;
+}
+
+function workItemUpdatedEvent(input: {
+  readonly itemId: OrchestrationWorkItem["id"];
+  readonly commandId: OrchestrationCommand["commandId"];
+  readonly occurredAt: string;
+  readonly title?: OrchestrationWorkItem["title"];
+  readonly notes?: OrchestrationWorkItem["notes"];
+  readonly status?: OrchestrationWorkItem["status"];
+  readonly workspaceId?: OrchestrationWorkItem["workspaceId"];
+  readonly linkedThreadId?: OrchestrationWorkItem["linkedThreadId"];
+  readonly rank?: OrchestrationWorkItem["rank"];
+}): Omit<OrchestrationEvent, "sequence"> {
+  return {
+    ...withEventBase({
+      aggregateKind: "work-item",
+      aggregateId: input.itemId,
+      occurredAt: input.occurredAt,
+      commandId: input.commandId,
+    }),
+    type: "work-item.updated",
+    payload: {
+      itemId: input.itemId,
+      ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(input.notes !== undefined ? { notes: input.notes } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
+      ...(input.linkedThreadId !== undefined ? { linkedThreadId: input.linkedThreadId } : {}),
+      ...(input.rank !== undefined ? { rank: input.rank } : {}),
+      updatedAt: input.occurredAt,
+    },
+  };
 }
 
 interface ThreadWorkspaceResolution {
@@ -385,19 +435,48 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         );
       }
       const occurredAt = nowIso();
-      return {
-        ...withEventBase({
-          aggregateKind: "project",
-          aggregateId: command.projectId,
-          occurredAt,
-          commandId: command.commandId,
-        }),
-        type: "project.deleted",
-        payload: {
-          projectId: command.projectId,
-          deletedAt: occurredAt,
+      const workItemDeleteEvents = listWorkItemsByProjectId(readModel, command.projectId)
+        .filter((item) => item.deletedAt === null)
+        .map((item) => {
+          const eventBase = withEventBase({
+            aggregateKind: "work-item" as const,
+            aggregateId: item.id,
+            occurredAt,
+            commandId: command.commandId,
+          });
+
+          return {
+            eventId: eventBase.eventId,
+            aggregateKind: eventBase.aggregateKind,
+            aggregateId: eventBase.aggregateId,
+            occurredAt: eventBase.occurredAt,
+            commandId: eventBase.commandId,
+            causationEventId: eventBase.causationEventId,
+            correlationId: eventBase.correlationId,
+            metadata: eventBase.metadata,
+            type: "work-item.deleted" as const,
+            payload: {
+              itemId: item.id,
+              deletedAt: occurredAt,
+            },
+          };
+        });
+      return [
+        {
+          ...withEventBase({
+            aggregateKind: "project",
+            aggregateId: command.projectId,
+            occurredAt,
+            commandId: command.commandId,
+          }),
+          type: "project.deleted" as const,
+          payload: {
+            projectId: command.projectId,
+            deletedAt: occurredAt,
+          },
         },
-      };
+        ...workItemDeleteEvents,
+      ];
     }
 
     case "workspace.create": {
@@ -489,6 +568,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             },
           };
         });
+      const detachWorkItemEvents = readModel.workItems
+        .filter((item) => item.deletedAt === null && item.workspaceId === command.workspaceId)
+        .map((item) =>
+          workItemUpdatedEvent({
+            itemId: item.id,
+            commandId: command.commandId,
+            occurredAt,
+            workspaceId: null,
+          }),
+        );
       return [
         {
           ...withEventBase({
@@ -504,7 +593,170 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         },
         ...detachEvents,
+        ...detachWorkItemEvents,
       ];
+    }
+
+    case "work-item.create": {
+      yield* requireWorkItemAbsent({
+        readModel,
+        command,
+        itemId: command.itemId,
+      });
+      const project = yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      if (isSystemProject(project)) {
+        return yield* invariantError(
+          command.type,
+          `System project '${command.projectId}' cannot own work items.`,
+        );
+      }
+
+      let workspaceId: WorkspaceId | null = null;
+      if (command.workspaceId !== undefined && command.workspaceId !== null) {
+        const workspace = yield* requireWorkspace({
+          readModel,
+          command,
+          workspaceId: command.workspaceId,
+        });
+        if (workspace.projectId !== command.projectId) {
+          return yield* invariantError(
+            command.type,
+            `Workspace '${command.workspaceId}' does not belong to project '${command.projectId}'.`,
+          );
+        }
+        workspaceId = workspace.id;
+      }
+
+      let linkedThreadId: OrchestrationWorkItem["linkedThreadId"] = null;
+      if (command.linkedThreadId !== undefined && command.linkedThreadId !== null) {
+        const thread = yield* requireThread({
+          readModel,
+          command,
+          threadId: command.linkedThreadId,
+        });
+        if (thread.projectId !== command.projectId) {
+          return yield* invariantError(
+            command.type,
+            `Thread '${command.linkedThreadId}' does not belong to project '${command.projectId}'.`,
+          );
+        }
+        linkedThreadId = thread.id;
+      }
+
+      const rank = command.rank ?? nextWorkItemRank(readModel, command.projectId, command.status);
+
+      return {
+        ...withEventBase({
+          aggregateKind: "work-item",
+          aggregateId: command.itemId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "work-item.created",
+        payload: {
+          itemId: command.itemId,
+          projectId: command.projectId,
+          title: command.title,
+          notes: command.notes ?? null,
+          status: command.status,
+          source: command.source,
+          workspaceId,
+          linkedThreadId,
+          rank,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "work-item.update": {
+      const existingItem = yield* requireWorkItem({
+        readModel,
+        command,
+        itemId: command.itemId,
+      });
+      const occurredAt = nowIso();
+
+      let workspaceId = existingItem.workspaceId;
+      if (command.workspaceId === null) {
+        workspaceId = null;
+      } else if (command.workspaceId !== undefined) {
+        const workspace = yield* requireWorkspace({
+          readModel,
+          command,
+          workspaceId: command.workspaceId,
+        });
+        if (workspace.projectId !== existingItem.projectId) {
+          return yield* invariantError(
+            command.type,
+            `Workspace '${command.workspaceId}' does not belong to project '${existingItem.projectId}'.`,
+          );
+        }
+        workspaceId = workspace.id;
+      }
+
+      let linkedThreadId = existingItem.linkedThreadId;
+      if (command.linkedThreadId === null) {
+        linkedThreadId = null;
+      } else if (command.linkedThreadId !== undefined) {
+        const thread = yield* requireThread({
+          readModel,
+          command,
+          threadId: command.linkedThreadId,
+        });
+        if (thread.projectId !== existingItem.projectId) {
+          return yield* invariantError(
+            command.type,
+            `Thread '${command.linkedThreadId}' does not belong to project '${existingItem.projectId}'.`,
+          );
+        }
+        linkedThreadId = thread.id;
+      }
+
+      const nextStatus = command.status ?? existingItem.status;
+      const rank =
+        command.rank ??
+        (command.status !== undefined && command.status !== existingItem.status
+          ? nextWorkItemRank(readModel, existingItem.projectId, nextStatus)
+          : existingItem.rank);
+
+      return workItemUpdatedEvent({
+        itemId: command.itemId,
+        commandId: command.commandId,
+        occurredAt,
+        ...(command.title !== undefined ? { title: command.title } : {}),
+        ...(command.notes !== undefined ? { notes: command.notes } : {}),
+        ...(command.status !== undefined ? { status: nextStatus } : {}),
+        ...(command.workspaceId !== undefined ? { workspaceId } : {}),
+        ...(command.linkedThreadId !== undefined ? { linkedThreadId } : {}),
+        ...(command.rank !== undefined || command.status !== undefined ? { rank } : {}),
+      });
+    }
+
+    case "work-item.delete": {
+      yield* requireWorkItem({
+        readModel,
+        command,
+        itemId: command.itemId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "work-item",
+          aggregateId: command.itemId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "work-item.deleted",
+        payload: {
+          itemId: command.itemId,
+          deletedAt: occurredAt,
+        },
+      };
     }
 
     case "thread.create": {
@@ -578,25 +830,38 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
-      return {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt,
-          commandId: command.commandId,
-        }),
-        type: "thread.deleted",
-        payload: {
-          threadId: command.threadId,
-          deletedAt: occurredAt,
+      const detachWorkItemEvents = readModel.workItems
+        .filter((item) => item.deletedAt === null && item.linkedThreadId === thread.id)
+        .map((item) =>
+          workItemUpdatedEvent({
+            itemId: item.id,
+            commandId: command.commandId,
+            occurredAt,
+            linkedThreadId: null,
+          }),
+        );
+      return [
+        {
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.deleted",
+          payload: {
+            threadId: command.threadId,
+            deletedAt: occurredAt,
+          },
         },
-      };
+        ...detachWorkItemEvents,
+      ];
     }
 
     case "thread.archive": {

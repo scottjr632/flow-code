@@ -120,6 +120,7 @@ function makeState(thread: Thread): AppState {
       },
     ],
     workspaces: [],
+    workItems: [],
     threads: [thread],
     threadsHydrated: true,
   };
@@ -173,6 +174,7 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
       },
     ],
     workspaces: [],
+    workItems: [],
     threads: [thread],
   };
 }
@@ -333,6 +335,7 @@ describe("store pure functions", () => {
         },
       ],
       workspaces: [],
+      workItems: [],
       threads: [],
       threadsHydrated: true,
     };
@@ -378,6 +381,7 @@ describe("store read model sync", () => {
         }),
       ],
       workspaces: [],
+      workItems: [],
       threads: [
         makeReadModelThread({
           id: ThreadId.makeUnsafe("thread-1"),
@@ -495,6 +499,7 @@ describe("store read model sync", () => {
         },
       ],
       workspaces: [],
+      workItems: [],
       threads: [],
       threadsHydrated: true,
     };
@@ -519,6 +524,7 @@ describe("store read model sync", () => {
         }),
       ],
       workspaces: [],
+      workItems: [],
       threads: [],
     };
 
@@ -549,6 +555,7 @@ describe("store persisted visit state", () => {
         {
           projects: [],
           workspaces: [],
+          workItems: [],
           threads: [],
           threadsHydrated: false,
           threadMruIds: [],

@@ -5,6 +5,9 @@ import {
   WorkspaceCreatedPayload as ContractsWorkspaceCreatedPayloadSchema,
   WorkspaceMetaUpdatedPayload as ContractsWorkspaceMetaUpdatedPayloadSchema,
   WorkspaceDeletedPayload as ContractsWorkspaceDeletedPayloadSchema,
+  WorkItemCreatedPayload as ContractsWorkItemCreatedPayloadSchema,
+  WorkItemUpdatedPayload as ContractsWorkItemUpdatedPayloadSchema,
+  WorkItemDeletedPayload as ContractsWorkItemDeletedPayloadSchema,
   ThreadCreatedPayload as ContractsThreadCreatedPayloadSchema,
   ThreadArchivedPayload as ContractsThreadArchivedPayloadSchema,
   ThreadMetaUpdatedPayload as ContractsThreadMetaUpdatedPayloadSchema,
@@ -32,6 +35,9 @@ export const ProjectDeletedPayload = ContractsProjectDeletedPayloadSchema;
 export const WorkspaceCreatedPayload = ContractsWorkspaceCreatedPayloadSchema;
 export const WorkspaceMetaUpdatedPayload = ContractsWorkspaceMetaUpdatedPayloadSchema;
 export const WorkspaceDeletedPayload = ContractsWorkspaceDeletedPayloadSchema;
+export const WorkItemCreatedPayload = ContractsWorkItemCreatedPayloadSchema;
+export const WorkItemUpdatedPayload = ContractsWorkItemUpdatedPayloadSchema;
+export const WorkItemDeletedPayload = ContractsWorkItemDeletedPayloadSchema;
 
 export const ThreadCreatedPayload = ContractsThreadCreatedPayloadSchema;
 export const ThreadArchivedPayload = ContractsThreadArchivedPayloadSchema;

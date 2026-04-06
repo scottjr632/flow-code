@@ -52,6 +52,7 @@ const readModel: OrchestrationReadModel = {
     },
   ],
   workspaces: [],
+  workItems: [],
   threads: [
     {
       id: ThreadId.makeUnsafe("thread-1"),

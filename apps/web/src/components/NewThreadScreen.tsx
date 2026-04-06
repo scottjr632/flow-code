@@ -1,5 +1,4 @@
 import type {
-  GitBranch,
   ProjectId,
   ProviderInteractionMode,
   ProviderKind,
@@ -55,6 +54,7 @@ import {
 } from "../providerModels";
 import { resolveAppModelSelection } from "../modelSelection";
 import { useSettings } from "../hooks/useSettings";
+import { resolveNewWorkspaceBaseBranch } from "../threadLaunch";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { buildTemporaryWorktreeBranchName, processImageFiles } from "./ChatView.logic";
 import { deriveDefaultWorkspaceTitle, type SidebarNewThreadEnvMode } from "./Sidebar.logic";
@@ -162,18 +162,6 @@ function resolveInitialTargetValue(requestedEnvMode?: SidebarNewThreadEnvMode): 
 
 function resolveWorkspaceLabel(workspace: Workspace): string {
   return workspace.name.trim().length > 0 ? workspace.name : deriveDefaultWorkspaceTitle(workspace);
-}
-
-function resolveNewWorkspaceBaseBranch(
-  branches: ReadonlyArray<Pick<GitBranch, "name" | "current" | "isDefault" | "isRemote">>,
-): string | null {
-  const localBranches = branches.filter((branch) => !branch.isRemote);
-  return (
-    localBranches.find((branch) => branch.current)?.name ??
-    localBranches.find((branch) => branch.isDefault)?.name ??
-    localBranches[0]?.name ??
-    null
-  );
 }
 
 function matchesModShiftShortcut(event: globalThis.KeyboardEvent, key: string): boolean {

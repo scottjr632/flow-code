@@ -6,6 +6,7 @@ import {
   GitForkIcon,
   GitPullRequestIcon,
   LaptopIcon,
+  LayoutGridIcon,
   PlusIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -56,7 +57,7 @@ import {
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
+import { cn, isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { selectThreadMruIds, useStore } from "../store";
 import {
   resolveShortcutCommand,
@@ -346,6 +347,7 @@ export default function Sidebar({
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const isOnSettings = pathname.startsWith("/settings");
+  const isOnWork = pathname.startsWith("/work");
   const appSettings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useHandleNewThread();
@@ -2636,7 +2638,23 @@ export default function Sidebar({
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="sm"
-                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                  className={cn(
+                    "gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground",
+                    isOnWork && "bg-accent text-foreground",
+                  )}
+                  onClick={() => void navigate({ to: "/work" })}
+                >
+                  <LayoutGridIcon className="size-3.5" />
+                  <span className="text-xs">Work</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  size="sm"
+                  className={cn(
+                    "gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground",
+                    isOnSettings && "bg-accent text-foreground",
+                  )}
                   onClick={() => void navigate({ to: "/settings" })}
                 >
                   <SettingsIcon className="size-3.5" />

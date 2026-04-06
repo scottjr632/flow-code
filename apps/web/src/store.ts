@@ -7,7 +7,13 @@ import {
 } from "@t3tools/contracts";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
-import { type ChatMessage, type Project, type Thread, type Workspace } from "./types";
+import {
+  type ChatMessage,
+  type Project,
+  type Thread,
+  type WorkItem,
+  type Workspace,
+} from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
 import { recordThreadTraversalDeparture, reconcileThreadTraversalMruIds } from "./threadTraversal";
 
@@ -16,6 +22,7 @@ import { recordThreadTraversalDeparture, reconcileThreadTraversalMruIds } from "
 export interface AppState {
   projects: Project[];
   workspaces: Workspace[];
+  workItems: WorkItem[];
   threads: Thread[];
   threadsHydrated: boolean;
   threadMruIds?: ThreadId[];
@@ -37,6 +44,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 const initialState: AppState = {
   projects: [],
   workspaces: [],
+  workItems: [],
   threads: [],
   threadsHydrated: false,
   threadMruIds: [],
@@ -323,6 +331,25 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           updatedAt: workspace.updatedAt,
         }) satisfies Workspace,
     );
+  const workItems = readModel.workItems
+    .filter((workItem) => workItem.deletedAt === null)
+    .map(
+      (workItem) =>
+        ({
+          id: workItem.id,
+          projectId: workItem.projectId,
+          title: workItem.title,
+          notes: workItem.notes,
+          status: workItem.status,
+          source: workItem.source,
+          workspaceId: workItem.workspaceId,
+          linkedThreadId: workItem.linkedThreadId,
+          rank: workItem.rank,
+          createdAt: workItem.createdAt,
+          updatedAt: workItem.updatedAt,
+          deletedAt: workItem.deletedAt,
+        }) satisfies WorkItem,
+    );
   const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
   const threads = readModel.threads
     .filter((thread) => thread.deletedAt === null)
@@ -407,6 +434,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     ...state,
     projects,
     workspaces,
+    workItems,
     threads,
     threadsHydrated: true,
     threadMruIds: reconcileThreadMruIds(

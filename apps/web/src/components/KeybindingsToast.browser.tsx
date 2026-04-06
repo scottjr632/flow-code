@@ -89,6 +89,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
       },
     ],
     workspaces: [],
+    workItems: [],
     threads: [
       {
         id: THREAD_ID,

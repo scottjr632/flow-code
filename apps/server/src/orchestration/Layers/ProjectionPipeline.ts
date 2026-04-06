@@ -28,6 +28,7 @@ import {
   ProjectionTurnRepository,
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionWorkItemRepository } from "../../persistence/Services/ProjectionWorkItems.ts";
 import { ProjectionWorkspaceRepository } from "../../persistence/Services/ProjectionWorkspaces.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
@@ -38,6 +39,7 @@ import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/La
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
+import { ProjectionWorkItemRepositoryLive } from "../../persistence/Layers/ProjectionWorkItems.ts";
 import { ProjectionWorkspaceRepositoryLive } from "../../persistence/Layers/ProjectionWorkspaces.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -54,6 +56,7 @@ import {
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
   workspaces: "projection.workspaces",
+  workItems: "projection.work-items",
   threads: "projection.threads",
   threadMessages: "projection.thread-messages",
   threadProposedPlans: "projection.thread-proposed-plans",
@@ -346,6 +349,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   const projectionStateRepository = yield* ProjectionStateRepository;
   const projectionProjectRepository = yield* ProjectionProjectRepository;
   const projectionWorkspaceRepository = yield* ProjectionWorkspaceRepository;
+  const projectionWorkItemRepository = yield* ProjectionWorkItemRepository;
   const projectionThreadRepository = yield* ProjectionThreadRepository;
   const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
   const projectionThreadProposedPlanRepository = yield* ProjectionThreadProposedPlanRepository;
@@ -459,6 +463,70 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             return;
           }
           yield* projectionWorkspaceRepository.upsert({
+            ...existingRow.value,
+            deletedAt: event.payload.deletedAt,
+            updatedAt: event.payload.deletedAt,
+          });
+          return;
+        }
+
+        default:
+          return;
+      }
+    });
+
+  const applyWorkItemsProjection: ProjectorDefinition["apply"] = (event, _attachmentSideEffects) =>
+    Effect.gen(function* () {
+      switch (event.type) {
+        case "work-item.created":
+          yield* projectionWorkItemRepository.upsert({
+            itemId: event.payload.itemId,
+            projectId: event.payload.projectId,
+            title: event.payload.title,
+            notes: event.payload.notes,
+            status: event.payload.status,
+            source: event.payload.source,
+            workspaceId: event.payload.workspaceId,
+            linkedThreadId: event.payload.linkedThreadId,
+            rank: event.payload.rank,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+            deletedAt: null,
+          });
+          return;
+
+        case "work-item.updated": {
+          const existingRow = yield* projectionWorkItemRepository.getById({
+            itemId: event.payload.itemId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionWorkItemRepository.upsert({
+            ...existingRow.value,
+            ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(event.payload.notes !== undefined ? { notes: event.payload.notes } : {}),
+            ...(event.payload.status !== undefined ? { status: event.payload.status } : {}),
+            ...(event.payload.workspaceId !== undefined
+              ? { workspaceId: event.payload.workspaceId }
+              : {}),
+            ...(event.payload.linkedThreadId !== undefined
+              ? { linkedThreadId: event.payload.linkedThreadId }
+              : {}),
+            ...(event.payload.rank !== undefined ? { rank: event.payload.rank } : {}),
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "work-item.deleted": {
+          const existingRow = yield* projectionWorkItemRepository.getById({
+            itemId: event.payload.itemId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionWorkItemRepository.upsert({
             ...existingRow.value,
             deletedAt: event.payload.deletedAt,
             updatedAt: event.payload.deletedAt,
@@ -1223,6 +1291,10 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
       apply: applyWorkspacesProjection,
     },
     {
+      name: ORCHESTRATION_PROJECTOR_NAMES.workItems,
+      apply: applyWorkItemsProjection,
+    },
+    {
       name: ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
       apply: applyThreadMessagesProjection,
     },
@@ -1348,6 +1420,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(ProjectionProjectRepositoryLive),
   Layer.provideMerge(ProjectionWorkspaceRepositoryLive),
+  Layer.provideMerge(ProjectionWorkItemRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),

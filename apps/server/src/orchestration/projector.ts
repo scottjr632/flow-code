@@ -4,6 +4,7 @@ import {
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
+  OrchestrationWorkItem,
   OrchestrationWorkspace,
 } from "@t3tools/contracts";
 import { Effect, Schema } from "effect";
@@ -17,6 +18,9 @@ import {
   WorkspaceCreatedPayload,
   WorkspaceDeletedPayload,
   WorkspaceMetaUpdatedPayload,
+  WorkItemCreatedPayload,
+  WorkItemDeletedPayload,
+  WorkItemUpdatedPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
@@ -164,6 +168,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
     snapshotSequence: 0,
     projects: [],
     workspaces: [],
+    workItems: [],
     threads: [],
     updatedAt: nowIso,
   };
@@ -309,6 +314,83 @@ export function projectEvent(
                   updatedAt: payload.deletedAt,
                 }
               : workspace,
+          ),
+        })),
+      );
+
+    case "work-item.created":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          WorkItemCreatedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const workItem: OrchestrationWorkItem = yield* decodeForEvent(
+          OrchestrationWorkItem,
+          {
+            id: payload.itemId,
+            projectId: payload.projectId,
+            title: payload.title,
+            notes: payload.notes,
+            status: payload.status,
+            source: payload.source,
+            workspaceId: payload.workspaceId,
+            linkedThreadId: payload.linkedThreadId,
+            rank: payload.rank,
+            createdAt: payload.createdAt,
+            updatedAt: payload.updatedAt,
+            deletedAt: null,
+          },
+          event.type,
+          "workItem",
+        );
+        const existing = nextBase.workItems.find((entry) => entry.id === workItem.id);
+        return {
+          ...nextBase,
+          workItems: existing
+            ? nextBase.workItems.map((entry) => (entry.id === workItem.id ? workItem : entry))
+            : [...nextBase.workItems, workItem],
+        };
+      });
+
+    case "work-item.updated":
+      return decodeForEvent(WorkItemUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          workItems: nextBase.workItems.map((workItem) =>
+            workItem.id === payload.itemId
+              ? {
+                  ...workItem,
+                  ...(payload.title !== undefined ? { title: payload.title } : {}),
+                  ...(payload.notes !== undefined ? { notes: payload.notes } : {}),
+                  ...(payload.status !== undefined ? { status: payload.status } : {}),
+                  ...(payload.workspaceId !== undefined
+                    ? { workspaceId: payload.workspaceId }
+                    : {}),
+                  ...(payload.linkedThreadId !== undefined
+                    ? { linkedThreadId: payload.linkedThreadId }
+                    : {}),
+                  ...(payload.rank !== undefined ? { rank: payload.rank } : {}),
+                  updatedAt: payload.updatedAt,
+                }
+              : workItem,
+          ),
+        })),
+      );
+
+    case "work-item.deleted":
+      return decodeForEvent(WorkItemDeletedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          workItems: nextBase.workItems.map((workItem) =>
+            workItem.id === payload.itemId
+              ? {
+                  ...workItem,
+                  deletedAt: payload.deletedAt,
+                  updatedAt: payload.deletedAt,
+                }
+              : workItem,
           ),
         })),
       );

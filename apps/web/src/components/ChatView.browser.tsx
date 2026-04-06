@@ -250,6 +250,7 @@ function createSnapshotForTargetUser(options: {
       },
     ],
     workspaces: [],
+    workItems: [],
     threads: [
       {
         id: THREAD_ID,
@@ -308,6 +309,7 @@ function addThreadToSnapshot(
   return {
     ...snapshot,
     snapshotSequence: snapshot.snapshotSequence + 1,
+    workItems: snapshot.workItems,
     threads: [
       ...snapshot.threads,
       {

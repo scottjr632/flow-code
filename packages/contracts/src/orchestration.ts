@@ -12,7 +12,9 @@ import {
   ProviderItemId,
   ThreadId,
   TrimmedNonEmptyString,
+  TrimmedString,
   TurnId,
+  WorkItemId,
   WorkspaceId,
 } from "./baseSchemas";
 
@@ -170,6 +172,28 @@ export const OrchestrationWorkspace = Schema.Struct({
 });
 export type OrchestrationWorkspace = typeof OrchestrationWorkspace.Type;
 
+export const WorkItemStatus = Schema.Literals(["todo", "in_progress", "done"]);
+export type WorkItemStatus = typeof WorkItemStatus.Type;
+
+export const WorkItemSource = Schema.Literals(["manual", "agent"]);
+export type WorkItemSource = typeof WorkItemSource.Type;
+
+export const OrchestrationWorkItem = Schema.Struct({
+  id: WorkItemId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  notes: Schema.NullOr(TrimmedString).pipe(Schema.withDecodingDefault(() => null)),
+  status: WorkItemStatus.pipe(Schema.withDecodingDefault(() => "todo")),
+  source: WorkItemSource.pipe(Schema.withDecodingDefault(() => "manual")),
+  workspaceId: Schema.NullOr(WorkspaceId).pipe(Schema.withDecodingDefault(() => null)),
+  linkedThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(() => null)),
+  rank: NonNegativeInt.pipe(Schema.withDecodingDefault(() => 0)),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  deletedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+});
+export type OrchestrationWorkItem = typeof OrchestrationWorkItem.Type;
+
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
@@ -316,6 +340,7 @@ export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
   workspaces: Schema.Array(OrchestrationWorkspace).pipe(Schema.withDecodingDefault(() => [])),
+  workItems: Schema.Array(OrchestrationWorkItem).pipe(Schema.withDecodingDefault(() => [])),
   threads: Schema.Array(OrchestrationThread),
   updatedAt: IsoDateTime,
 });
@@ -372,6 +397,42 @@ const WorkspaceDeleteCommand = Schema.Struct({
   commandId: CommandId,
   workspaceId: WorkspaceId,
 });
+
+export const WorkItemCreateCommand = Schema.Struct({
+  type: Schema.Literal("work-item.create"),
+  commandId: CommandId,
+  itemId: WorkItemId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  notes: Schema.optional(Schema.NullOr(TrimmedString)),
+  workspaceId: Schema.optional(Schema.NullOr(WorkspaceId)),
+  linkedThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  status: WorkItemStatus.pipe(Schema.withDecodingDefault(() => "todo")),
+  source: WorkItemSource.pipe(Schema.withDecodingDefault(() => "manual")),
+  rank: Schema.optional(NonNegativeInt),
+  createdAt: IsoDateTime,
+});
+export type WorkItemCreateCommand = typeof WorkItemCreateCommand.Type;
+
+export const WorkItemUpdateCommand = Schema.Struct({
+  type: Schema.Literal("work-item.update"),
+  commandId: CommandId,
+  itemId: WorkItemId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  notes: Schema.optional(Schema.NullOr(TrimmedString)),
+  workspaceId: Schema.optional(Schema.NullOr(WorkspaceId)),
+  linkedThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  status: Schema.optional(WorkItemStatus),
+  rank: Schema.optional(NonNegativeInt),
+});
+export type WorkItemUpdateCommand = typeof WorkItemUpdateCommand.Type;
+
+export const WorkItemDeleteCommand = Schema.Struct({
+  type: Schema.Literal("work-item.delete"),
+  commandId: CommandId,
+  itemId: WorkItemId,
+});
+export type WorkItemDeleteCommand = typeof WorkItemDeleteCommand.Type;
 
 const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
@@ -521,6 +582,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   WorkspaceCreateCommand,
   WorkspaceMetaUpdateCommand,
   WorkspaceDeleteCommand,
+  WorkItemCreateCommand,
+  WorkItemUpdateCommand,
+  WorkItemDeleteCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -545,6 +609,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   WorkspaceCreateCommand,
   WorkspaceMetaUpdateCommand,
   WorkspaceDeleteCommand,
+  WorkItemCreateCommand,
+  WorkItemUpdateCommand,
+  WorkItemDeleteCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -650,6 +717,9 @@ export const OrchestrationEventType = Schema.Literals([
   "workspace.created",
   "workspace.meta-updated",
   "workspace.deleted",
+  "work-item.created",
+  "work-item.updated",
+  "work-item.deleted",
   "thread.created",
   "thread.deleted",
   "thread.archived",
@@ -672,7 +742,12 @@ export const OrchestrationEventType = Schema.Literals([
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "workspace", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals([
+  "project",
+  "workspace",
+  "work-item",
+  "thread",
+]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -720,6 +795,36 @@ export const WorkspaceMetaUpdatedPayload = Schema.Struct({
 
 export const WorkspaceDeletedPayload = Schema.Struct({
   workspaceId: WorkspaceId,
+  deletedAt: IsoDateTime,
+});
+
+export const WorkItemCreatedPayload = Schema.Struct({
+  itemId: WorkItemId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  notes: Schema.NullOr(TrimmedString).pipe(Schema.withDecodingDefault(() => null)),
+  status: WorkItemStatus.pipe(Schema.withDecodingDefault(() => "todo")),
+  source: WorkItemSource.pipe(Schema.withDecodingDefault(() => "manual")),
+  workspaceId: Schema.NullOr(WorkspaceId).pipe(Schema.withDecodingDefault(() => null)),
+  linkedThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(() => null)),
+  rank: NonNegativeInt.pipe(Schema.withDecodingDefault(() => 0)),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const WorkItemUpdatedPayload = Schema.Struct({
+  itemId: WorkItemId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  notes: Schema.optional(Schema.NullOr(TrimmedString)),
+  status: Schema.optional(WorkItemStatus),
+  workspaceId: Schema.optional(Schema.NullOr(WorkspaceId)),
+  linkedThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  rank: Schema.optional(NonNegativeInt),
+  updatedAt: IsoDateTime,
+});
+
+export const WorkItemDeletedPayload = Schema.Struct({
+  itemId: WorkItemId,
   deletedAt: IsoDateTime,
 });
 
@@ -879,7 +984,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, WorkspaceId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, WorkspaceId, WorkItemId, ThreadId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -917,6 +1022,21 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("workspace.deleted"),
     payload: WorkspaceDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("work-item.created"),
+    payload: WorkItemCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("work-item.updated"),
+    payload: WorkItemUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("work-item.deleted"),
+    payload: WorkItemDeletedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

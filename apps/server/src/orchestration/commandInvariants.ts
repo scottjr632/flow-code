@@ -3,9 +3,11 @@ import type {
   OrchestrationProject,
   OrchestrationReadModel,
   OrchestrationThread,
+  OrchestrationWorkItem,
   OrchestrationWorkspace,
   ProjectId,
   ThreadId,
+  WorkItemId,
   WorkspaceId,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
@@ -75,6 +77,20 @@ export function listWorkspacesByProjectId(
   projectId: ProjectId,
 ): ReadonlyArray<OrchestrationWorkspace> {
   return readModel.workspaces.filter((workspace) => workspace.projectId === projectId);
+}
+
+export function findWorkItemById(
+  readModel: OrchestrationReadModel,
+  itemId: WorkItemId,
+): OrchestrationWorkItem | undefined {
+  return readModel.workItems.find((item) => item.id === itemId);
+}
+
+export function listWorkItemsByProjectId(
+  readModel: OrchestrationReadModel,
+  projectId: ProjectId,
+): ReadonlyArray<OrchestrationWorkItem> {
+  return readModel.workItems.filter((item) => item.projectId === projectId);
 }
 
 export function requireProject(input: {
@@ -210,6 +226,39 @@ export function requireThreadAbsent(input: {
     invariantError(
       input.command.type,
       `Thread '${input.threadId}' already exists and cannot be created twice.`,
+    ),
+  );
+}
+
+export function requireWorkItem(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly itemId: WorkItemId;
+}): Effect.Effect<OrchestrationWorkItem, OrchestrationCommandInvariantError> {
+  const workItem = findWorkItemById(input.readModel, input.itemId);
+  if (workItem && workItem.deletedAt === null) {
+    return Effect.succeed(workItem);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Work item '${input.itemId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireWorkItemAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly itemId: WorkItemId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (!findWorkItemById(input.readModel, input.itemId)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Work item '${input.itemId}' already exists and cannot be created twice.`,
     ),
   );
 }

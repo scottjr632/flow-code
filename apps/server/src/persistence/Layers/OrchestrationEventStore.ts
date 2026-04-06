@@ -10,6 +10,7 @@ import {
   OrchestrationEventType,
   ProjectId,
   ThreadId,
+  WorkItemId,
   WorkspaceId,
 } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -38,7 +39,7 @@ const IGNORED_LEGACY_EVENT_TYPES = new Set([
 const AppendEventRequestSchema = Schema.Struct({
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  streamId: Schema.Union([ProjectId, WorkspaceId, ThreadId]),
+  streamId: Schema.Union([ProjectId, WorkspaceId, ThreadId, WorkItemId]),
   type: OrchestrationEventType,
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),
@@ -54,7 +55,7 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
   eventId: EventId,
   type: OrchestrationEventType,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, WorkspaceId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, WorkspaceId, ThreadId, WorkItemId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),

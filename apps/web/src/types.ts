@@ -14,6 +14,9 @@ import type {
   CheckpointRef,
   ProviderInteractionMode,
   RuntimeMode,
+  WorkItemSource,
+  WorkItemStatus,
+  WorkItemId,
   WorkspaceId,
 } from "@t3tools/contracts";
 
@@ -99,6 +102,21 @@ export interface Workspace {
   worktreePath: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WorkItem {
+  id: WorkItemId;
+  projectId: ProjectId;
+  title: string;
+  notes: string | null;
+  status: WorkItemStatus;
+  source: WorkItemSource;
+  workspaceId: WorkspaceId | null;
+  linkedThreadId: ThreadId | null;
+  rank: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
 }
 
 export interface Thread {
