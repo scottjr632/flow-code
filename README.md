@@ -2,13 +2,11 @@
 
 Flow is a minimal web GUI for coding agents.
 
-This repository is a fork of `t3code` with a different product focus and a growing set of Flow-specific features. Internally, you will still see `t3code` / `@t3tools` names in package metadata and parts of the codebase, but the product-facing name for this fork is Flow.
+Flow is a fork of `t3code`, created to take the base app in a more experimental direction with Codex-first orchestration, workspace and work-item management, integrated terminals, and in-app review/editing surfaces.
 
-## Fork status
+Flow is experimental and moves quickly. Expect rough edges, behavior changes, and incomplete features.
 
-Flow started from `t3code` and keeps the same monorepo foundation, but this fork is intentionally evolving in a different direction.
-
-Compared with upstream [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code) `main`, this fork currently adds or changes:
+## What Flow includes
 
 - Server-side workspace and work-item persistence, including new projections/migrations and a dedicated work surface in the web app.
 - Flow-specific work board integration for Codex, including the `flow_add_work_item` dynamic tool and orchestration updates that attach agent-created tasks to projects/workspaces.
@@ -25,7 +23,7 @@ Compared with upstream [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code)
 > [!WARNING]
 > You need to have [Codex CLI](https://github.com/openai/codex) installed and authorized for Flow to work.
 
-Flow currently still uses the existing `t3` package/CLI entrypoint from the forked codebase:
+Current CLI entrypoint:
 
 ```bash
 npx t3
@@ -33,7 +31,7 @@ npx t3
 
 You can also just install the desktop app. It's cooler.
 
-Install the [desktop app from this fork's Releases page](https://github.com/scottjr632/flow-code/releases)
+Install the [desktop app from the Releases page](https://github.com/scottjr632/flow-code/releases)
 
 ## Some notes
 
@@ -41,8 +39,6 @@ We are very very early in this project. Expect bugs.
 
 We are not accepting contributions yet.
 
-## If you REALLY want to contribute still.... read this first
+## Contributions
 
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+We are not accepting contributions at this time.
