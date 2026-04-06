@@ -805,6 +805,19 @@ function dispatchWorkspaceCommandPaletteShortcut(): void {
   );
 }
 
+function dispatchModEnterShortcut(target: HTMLElement): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  target.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "Enter",
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 async function triggerChatNewShortcutUntilPath(
   router: ReturnType<typeof getRouter>,
   predicate: (pathname: string) => boolean,
@@ -3508,6 +3521,158 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Command palette should navigate to the global new-thread page.",
       );
       await expect.element(page.getByText("Let's build")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the new work item modal from the command palette on a chat route", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-palette-new-work-item" as MessageId,
+        targetText: "command palette new work item",
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      dispatchWorkspaceCommandPaletteShortcut();
+
+      await expect.element(page.getByText("Suggested")).toBeInTheDocument();
+
+      const newWorkItemCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("New work item"),
+          ) ?? null,
+        "Unable to find New work item command.",
+      );
+      newWorkItemCommand.click();
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${THREAD_ID}`,
+        "Command palette should keep the active thread route.",
+      );
+      await expect.element(page.getByText("New work item")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("creates a work item from the modal with Mod+Enter and shows the shortcut hint", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-work-item-mod-enter" as MessageId,
+        targetText: "work item mod enter",
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      dispatchWorkspaceCommandPaletteShortcut();
+
+      const newWorkItemCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("New work item"),
+          ) ?? null,
+        "Unable to find New work item command.",
+      );
+      newWorkItemCommand.click();
+
+      const createButtonName = isMacPlatform(navigator.platform)
+        ? /Create\s+Cmd\s+Enter/
+        : /Create\s+Ctrl\s+Enter/;
+      await expect
+        .element(page.getByRole("button", { name: createButtonName }))
+        .toBeInTheDocument();
+
+      await page
+        .getByPlaceholder("Investigate flaky browser diff test")
+        .fill("Capture keyboard-created work item");
+      await page
+        .getByPlaceholder("Optional context, constraints, or follow-ups")
+        .fill("Shortcut should submit the modal.");
+
+      const notesElement = await waitForElement(
+        () =>
+          document.querySelector<HTMLTextAreaElement>(
+            'textarea[placeholder="Optional context, constraints, or follow-ups"]',
+          ),
+        "Unable to find work item notes textarea.",
+      );
+      notesElement.focus();
+      dispatchModEnterShortcut(notesElement);
+
+      await vi.waitFor(
+        () => {
+          const createRequest = wsRequests.find((request) => {
+            const command = request.command as
+              | {
+                  type?: string;
+                  projectId?: ProjectId;
+                  title?: string;
+                  notes?: string | null;
+                  status?: string;
+                }
+              | undefined;
+            return (
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              command?.type === "work-item.create" &&
+              command.title === "Capture keyboard-created work item"
+            );
+          });
+
+          expect(createRequest).toBeTruthy();
+          const command = createRequest?.command as {
+            projectId?: ProjectId;
+            notes?: string | null;
+            status?: string;
+          };
+          expect(command.projectId).toBe(PROJECT_ID);
+          expect(command.notes).toBe("Shortcut should submit the modal.");
+          expect(command.status).toBe("todo");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the new work item modal from the command palette on the work route", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      initialEntries: ["/work"],
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-work-route-command-palette-new-work-item" as MessageId,
+        targetText: "work route command palette new work item",
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/work",
+        "The work route should be active before opening the command palette.",
+      );
+
+      dispatchWorkspaceCommandPaletteShortcut();
+
+      const newWorkItemCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("New work item"),
+          ) ?? null,
+        "Unable to find New work item command on the work route.",
+      );
+      newWorkItemCommand.click();
+
+      await expect.element(page.getByText("New work item")).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }

@@ -5,6 +5,7 @@ import readline from "node:readline";
 
 import {
   ApprovalRequestId,
+  CommandId,
   EventId,
   ProviderItemId,
   ProviderRequestKind,
@@ -17,10 +18,12 @@ import {
   type ProviderTurnStartResult,
   RuntimeMode,
   ProviderInteractionMode,
+  WorkItemId,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { Effect, ServiceMap } from "effect";
 
+import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import {
   formatCodexCliUpgradeMessage,
   isCodexCliVersionSupported,
@@ -96,6 +99,14 @@ interface JsonRpcNotification {
   params?: unknown;
 }
 
+interface DynamicToolCallResponse {
+  readonly success: boolean;
+  readonly contentItems: ReadonlyArray<{
+    readonly type: "inputText";
+    readonly text: string;
+  }>;
+}
+
 type CodexPlanType =
   | "free"
   | "go"
@@ -165,6 +176,21 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
 const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
 const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
 const CODEX_SPARK_DISABLED_PLAN_TYPES = new Set<CodexPlanType>(["free", "go", "plus"]);
+export const FLOW_ADD_WORK_ITEM_TOOL_NAME = "flow_add_work_item";
+const FLOW_ADD_WORK_ITEM_TOOL_INSTRUCTIONS = `
+## Flow Dynamic Tool
+
+Flow exposes one custom dynamic tool:
+
+- \`${FLOW_ADD_WORK_ITEM_TOOL_NAME}\`
+  - Purpose: add a work item to the Flow Work board for the current thread's project.
+  - Use it only when the user explicitly asks to add, save, capture, or track work on the board.
+  - Arguments must be JSON with this shape:
+    - \`title\` (string, required): short task title.
+    - \`notes\` (string, optional): extra context or acceptance criteria.
+    - \`status\` (optional): \`"todo"\`, \`"in_progress"\`, or \`"done"\`.
+  - The created work item is marked as agent-created and is attached to the current thread's workspace when one exists.
+`;
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") {
@@ -175,6 +201,31 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function asWorkItemStatus(value: unknown): "todo" | "in_progress" | "done" | undefined {
+  if (value === "todo" || value === "in_progress" || value === "done") {
+    return value;
+  }
+  return undefined;
+}
+
+function dynamicToolTextResponse(text: string, success: boolean): DynamicToolCallResponse {
+  return {
+    success,
+    contentItems: [{ type: "inputText", text }],
+  };
+}
+
+function workItemStatusLabel(status: "todo" | "in_progress" | "done"): string {
+  switch (status) {
+    case "in_progress":
+      return "In Progress";
+    case "done":
+      return "Done";
+    default:
+      return "Todo";
+  }
 }
 
 export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapshot {
@@ -339,6 +390,8 @@ Your active mode changes only when new developer instructions with a different \
 The \`request_user_input\` tool is unavailable in Default mode. If you call it while in Default mode, it will return an error.
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
+
+${FLOW_ADD_WORK_ITEM_TOOL_INSTRUCTIONS}
 </collaboration_mode>`;
 
 function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
@@ -522,11 +575,15 @@ export interface CodexAppServerManagerEvents {
 
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
+  private readonly services: ServiceMap.ServiceMap<never> | undefined;
 
-  private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
+  private runPromise: <A, E>(effect: Effect.Effect<A, E, never>) => Promise<A>;
   constructor(services?: ServiceMap.ServiceMap<never>) {
     super();
-    this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
+    this.services = services;
+    this.runPromise = services
+      ? (Effect.runPromiseWith(services) as typeof this.runPromise)
+      : (Effect.runPromise as typeof this.runPromise);
   }
 
   async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
@@ -1270,6 +1327,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return;
     }
 
+    if (request.method === "item/tool/call") {
+      this.handleDynamicToolCallRequest(context, request);
+      return;
+    }
+
     this.writeMessage(context, {
       id: request.id,
       error: {
@@ -1295,6 +1357,141 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     pending.resolve(response.result);
+  }
+
+  private handleDynamicToolCallRequest(
+    context: CodexSessionContext,
+    request: JsonRpcRequest,
+  ): void {
+    const params = this.readObject(request.params);
+    const toolName = this.readString(params, "tool");
+    const toolArguments = params?.arguments;
+    if (!toolName) {
+      this.writeMessage(context, {
+        id: request.id,
+        result: dynamicToolTextResponse("Dynamic tool call is missing a tool name.", false),
+      });
+      return;
+    }
+
+    void Promise.resolve(
+      this.runDynamicToolCallPromise(
+        this.resolveDynamicToolCall(context, toolName, toolArguments).pipe(
+          Effect.catch((error) =>
+            Effect.succeed(
+              dynamicToolTextResponse(
+                error instanceof Error ? error.message : "Dynamic tool call failed unexpectedly.",
+                false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    ).then(
+      (result) => {
+        this.writeMessage(context, {
+          id: request.id,
+          result: result as DynamicToolCallResponse,
+        });
+      },
+      (error) => {
+        this.writeMessage(context, {
+          id: request.id,
+          result: dynamicToolTextResponse(
+            error instanceof Error ? error.message : "Dynamic tool call failed unexpectedly.",
+            false,
+          ),
+        });
+      },
+    );
+  }
+
+  private runDynamicToolCallPromise<A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> {
+    if (!this.services) {
+      return Promise.reject(new Error("Dynamic tool services are unavailable."));
+    }
+
+    return Effect.runPromiseWith(this.services as unknown as ServiceMap.ServiceMap<R>)(effect);
+  }
+
+  private resolveDynamicToolCall(
+    context: CodexSessionContext,
+    toolName: string,
+    toolArguments: unknown,
+  ): Effect.Effect<DynamicToolCallResponse, Error, OrchestrationEngineService> {
+    if (toolName !== FLOW_ADD_WORK_ITEM_TOOL_NAME) {
+      return Effect.succeed(
+        dynamicToolTextResponse(`Unsupported dynamic tool: ${toolName}.`, false),
+      );
+    }
+
+    return Effect.gen(function* () {
+      const argumentsRecord = asObject(toolArguments);
+      const rawTitle = asString(argumentsRecord?.title)?.trim();
+      if (!rawTitle) {
+        return dynamicToolTextResponse(
+          "flow_add_work_item requires a non-empty string `title`.",
+          false,
+        );
+      }
+
+      const rawNotes = argumentsRecord?.notes;
+      if (rawNotes !== undefined && rawNotes !== null && typeof rawNotes !== "string") {
+        return dynamicToolTextResponse(
+          "flow_add_work_item expects `notes` to be a string when provided.",
+          false,
+        );
+      }
+
+      const status = asWorkItemStatus(argumentsRecord?.status);
+      if (argumentsRecord?.status !== undefined && status === undefined) {
+        return dynamicToolTextResponse(
+          "flow_add_work_item expects `status` to be one of: todo, in_progress, done.",
+          false,
+        );
+      }
+
+      const orchestrationEngine = yield* OrchestrationEngineService;
+      const readModel = yield* orchestrationEngine.getReadModel();
+      const thread = readModel.threads.find((entry) => entry.id === context.session.threadId);
+      if (!thread) {
+        return dynamicToolTextResponse(
+          "Could not resolve the current Flow thread, so the work item was not created.",
+          false,
+        );
+      }
+
+      const project = readModel.projects.find((entry) => entry.id === thread.projectId);
+      const notes = rawNotes?.trim();
+      const nextStatus = status ?? "todo";
+      yield* orchestrationEngine
+        .dispatch({
+          type: "work-item.create",
+          commandId: CommandId.makeUnsafe(`codex:dynamic-tool:${randomUUID()}`),
+          itemId: WorkItemId.makeUnsafe(randomUUID()),
+          projectId: thread.projectId,
+          title: rawTitle,
+          notes: notes && notes.length > 0 ? notes : null,
+          workspaceId: thread.workspaceId,
+          status: nextStatus,
+          source: "agent",
+          createdAt: new Date().toISOString(),
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new Error(
+                error instanceof Error ? error.message : "Failed to create a Flow work item.",
+              ),
+          ),
+        );
+
+      const projectLabel = project?.title ?? "the current project";
+      return dynamicToolTextResponse(
+        `Added "${rawTitle}" to the Work board for ${projectLabel} as ${workItemStatusLabel(nextStatus)}.`,
+        true,
+      );
+    });
   }
 
   private async sendRequest<TResponse>(

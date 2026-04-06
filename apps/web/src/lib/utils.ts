@@ -20,6 +20,39 @@ export function isLinuxPlatform(platform: string): boolean {
   return /linux/i.test(platform);
 }
 
+type ModShortcutKeyboardEventLike = {
+  key: string;
+  defaultPrevented?: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  isComposing?: boolean;
+  nativeEvent?: {
+    isComposing?: boolean;
+  };
+};
+
+export function matchesModEnterShortcut(
+  event: ModShortcutKeyboardEventLike,
+  platform: string,
+): boolean {
+  if (
+    event.defaultPrevented ||
+    event.isComposing ||
+    event.nativeEvent?.isComposing ||
+    event.altKey ||
+    event.shiftKey ||
+    event.key !== "Enter"
+  ) {
+    return false;
+  }
+
+  return isMacPlatform(platform)
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
+}
+
 export function randomUUID(): string {
   if (typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();

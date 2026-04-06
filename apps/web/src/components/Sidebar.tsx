@@ -2378,19 +2378,19 @@ export default function Sidebar({
   );
 
   const globalNewThreadButton = (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      className="h-8 w-full justify-start gap-1.5 rounded-lg px-2.5 text-sm font-medium"
-      onClick={() => {
-        openNewThreadPage();
-      }}
-      data-testid="global-new-thread-button"
-    >
-      <SquarePenIcon className="size-3.5" />
-      New thread
-    </Button>
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        size="sm"
+        className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+        onClick={() => {
+          openNewThreadPage();
+        }}
+        data-testid="global-new-thread-button"
+      >
+        <SquarePenIcon className="size-3.5" />
+        <span className="text-xs">New thread</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 
   return (
@@ -2433,7 +2433,6 @@ export default function Sidebar({
                 </Alert>
               </SidebarGroup>
             ) : null}
-            <SidebarGroup className="px-2 pt-2 pb-1">{globalNewThreadButton}</SidebarGroup>
             {homeRenderedProject ? (
               <SidebarGroup className="px-2 pt-2 pb-1">
                 <div className="group/home-header mb-1 flex items-center justify-between pl-2 pr-1.5">
@@ -2639,6 +2638,7 @@ export default function Sidebar({
           <SidebarFooter className="p-2">
             <SidebarUpdatePill />
             <SidebarMenu>
+              {globalNewThreadButton}
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="sm"

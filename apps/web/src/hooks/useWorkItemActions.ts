@@ -8,11 +8,13 @@ import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import { buildTemporaryWorktreeBranchName } from "../components/ChatView.logic";
+import { markPendingAutoSend, useComposerDraftStore } from "../composerDraftStore";
 import { newCommandId, newThreadId, newWorkItemId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type WorkItem } from "../types";
 import { resolveNewWorkspaceBaseBranch } from "../threadLaunch";
+import { buildWorkItemLaunchPrompt } from "../workItemPrompt";
 import { resolveExistingWorkspaceContext } from "../workspaceContext";
 import {
   type WorkItemLaunchMode,
@@ -242,6 +244,7 @@ export function useWorkItemActions() {
 
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
+      const initialPrompt = buildWorkItemLaunchPrompt(input.item);
 
       await dispatchWithoutRefresh({
         type: "thread.create",
@@ -276,6 +279,9 @@ export function useWorkItemActions() {
           cause: error,
         });
       }
+
+      useComposerDraftStore.getState().setPrompt(threadId, initialPrompt);
+      markPendingAutoSend(threadId);
 
       setPreferredWorkItemLaunchMode(project.id, input.mode);
       await refreshSnapshot();

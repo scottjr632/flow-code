@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { TurnId } from "@t3tools/contracts";
 import {
   expandCollapsedFileKey,
+  formatReviewCommentSubmitShortcutLabel,
+  getDiffCommentComposerKey,
+  matchesReviewCommentSubmitShortcut,
   resolveTurnChipLabel,
   toggleCollapsedFileKey,
 } from "./DiffPanel.logic";
@@ -58,6 +61,80 @@ describe("toggleCollapsedFileKey", () => {
 
   it("removes a file when it is already collapsed", () => {
     expect(toggleCollapsedFileKey(new Set(["src/app.tsx"]), "src/app.tsx")).toEqual(new Set());
+  });
+});
+
+describe("getDiffCommentComposerKey", () => {
+  it("returns null when there is no active selection", () => {
+    expect(getDiffCommentComposerKey(null)).toBeNull();
+  });
+
+  it("builds a stable key from the comment selection", () => {
+    expect(
+      getDiffCommentComposerKey({
+        filePath: "src/app.tsx",
+        side: "additions",
+        lineStart: 12,
+        lineEnd: 14,
+      }),
+    ).toBe("src/app.tsx:additions:12:14");
+  });
+});
+
+describe("formatReviewCommentSubmitShortcutLabel", () => {
+  it("returns Cmd+Enter on macOS", () => {
+    expect(formatReviewCommentSubmitShortcutLabel("MacIntel")).toBe("⌘Enter");
+  });
+
+  it("returns Ctrl+Enter on non-mac platforms", () => {
+    expect(formatReviewCommentSubmitShortcutLabel("Win32")).toBe("Ctrl+Enter");
+  });
+});
+
+describe("matchesReviewCommentSubmitShortcut", () => {
+  it("matches Cmd+Enter on macOS", () => {
+    expect(
+      matchesReviewCommentSubmitShortcut(
+        {
+          key: "Enter",
+          metaKey: true,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches Ctrl+Enter on non-mac platforms", () => {
+    expect(
+      matchesReviewCommentSubmitShortcut(
+        {
+          key: "Enter",
+          metaKey: false,
+          ctrlKey: true,
+          shiftKey: false,
+          altKey: false,
+        },
+        "Win32",
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores plain Enter", () => {
+    expect(
+      matchesReviewCommentSubmitShortcut(
+        {
+          key: "Enter",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBe(false);
   });
 });
 

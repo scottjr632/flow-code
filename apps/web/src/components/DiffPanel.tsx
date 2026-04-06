@@ -26,7 +26,7 @@ import {
 import { openInPreferredEditor } from "../editorPreferences";
 import { gitReviewDiffQueryOptions } from "~/lib/gitReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
-import { cn, isMacPlatform } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import {
@@ -37,6 +37,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
+import { CANCEL_ACTIVE_DIFF_COMMENT_EVENT } from "../lib/diffCommentEvents";
 import { buildReviewFileRenderKey, resolveReviewFilePath } from "../lib/reviewDiffFiles";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
@@ -51,12 +52,16 @@ import {
 import { randomUUID } from "../lib/utils";
 import {
   expandCollapsedFileKey,
+  formatReviewCommentSubmitShortcutLabel,
+  getDiffCommentComposerKey,
+  matchesReviewCommentSubmitShortcut,
   resolveTurnChipLabel,
   toggleCollapsedFileKey,
 } from "./DiffPanel.logic";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ReviewFileTree } from "./ReviewFileTree";
 import { Button } from "./ui/button";
+import { Kbd } from "./ui/kbd";
 import { Textarea } from "./ui/textarea";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
@@ -168,21 +173,6 @@ function getRenderablePatch(
       reason: "Failed to parse patch. Showing raw patch.",
     };
   }
-}
-
-function matchesModEnterShortcut(event: React.KeyboardEvent<HTMLTextAreaElement>): boolean {
-  if (
-    event.defaultPrevented ||
-    event.nativeEvent.isComposing ||
-    event.altKey ||
-    event.shiftKey ||
-    event.key !== "Enter"
-  ) {
-    return false;
-  }
-
-  const useMetaForMod = isMacPlatform(navigator.platform);
-  return useMetaForMod ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +378,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const [activeCommentSelection, setActiveCommentSelection] =
     useState<DraftDiffCommentSelection | null>(null);
   const [activeCommentBody, setActiveCommentBody] = useState("");
+  const reviewCommentSubmitShortcutLabel = useMemo(
+    () => formatReviewCommentSubmitShortcutLabel(),
+    [],
+  );
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const previousDiffOpenRef = useRef(false);
@@ -574,6 +568,28 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     }
     return commentsByFileKey;
   }, [fileKeyByPath, submittedThreadDiffComments]);
+  const activeCommentComposerKey = useMemo(
+    () => getDiffCommentComposerKey(activeCommentSelection),
+    [activeCommentSelection],
+  );
+
+  const focusActiveCommentTextarea = useCallback(
+    (element: HTMLTextAreaElement | null) => {
+      if (!element || !activeCommentComposerKey) {
+        return;
+      }
+
+      window.requestAnimationFrame(() => {
+        if (!element.isConnected) {
+          return;
+        }
+        element.focus();
+        const cursor = element.value.length;
+        element.setSelectionRange(cursor, cursor);
+      });
+    },
+    [activeCommentComposerKey],
+  );
 
   useEffect(() => {
     if (diffOpen && !previousDiffOpenRef.current) {
@@ -685,6 +701,21 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     setActiveCommentSelection(null);
     setActiveCommentBody("");
   }, [selectedDiffSelection, selectedTurnId, selectedPatch]);
+
+  useEffect(() => {
+    if (!activeCommentSelection) {
+      return;
+    }
+
+    const onCancelActiveDiffComment = (event: Event) => {
+      event.preventDefault();
+      clearCommentComposer();
+    };
+
+    window.addEventListener(CANCEL_ACTIVE_DIFF_COMMENT_EVENT, onCancelActiveDiffComment);
+    return () =>
+      window.removeEventListener(CANCEL_ACTIVE_DIFF_COMMENT_EVENT, onCancelActiveDiffComment);
+  }, [activeCommentSelection, clearCommentComposer]);
 
   const selectReviewFile = useCallback(
     (filePath: string) => {
@@ -1200,13 +1231,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                                     </Button>
                                   </div>
                                   <Textarea
-                                    key={`${annotation.metadata.selection.filePath}:${annotation.metadata.selection.side}:${annotation.metadata.selection.lineStart}:${annotation.metadata.selection.lineEnd}`}
+                                    key={getDiffCommentComposerKey(annotation.metadata.selection)}
                                     autoFocus
+                                    ref={focusActiveCommentTextarea}
                                     className="mt-3 min-h-24 font-mono text-sm"
                                     value={activeCommentBody}
                                     onChange={(event) => setActiveCommentBody(event.target.value)}
                                     onKeyDown={(event) => {
-                                      if (!matchesModEnterShortcut(event)) {
+                                      if (!matchesReviewCommentSubmitShortcut(event)) {
                                         return;
                                       }
                                       event.preventDefault();
@@ -1214,7 +1246,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                                     }}
                                     placeholder="Explain what needs attention in this change."
                                   />
-                                  <div className="mt-2 flex justify-end gap-2">
+                                  <div className="mt-2 flex items-center justify-end gap-2">
                                     <Button
                                       type="button"
                                       variant="outline"
@@ -1229,7 +1261,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                                       disabled={activeCommentBody.trim().length === 0}
                                       onClick={addSelectedCommentToDraft}
                                     >
-                                      Comment
+                                      <span>Comment</span>
+                                      <Kbd className="h-4 min-w-4 rounded-[4px] bg-primary-foreground/12 px-1 text-[10px] text-primary-foreground">
+                                        {reviewCommentSubmitShortcutLabel}
+                                      </Kbd>
                                     </Button>
                                   </div>
                                 </div>

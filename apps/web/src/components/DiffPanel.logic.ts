@@ -1,5 +1,47 @@
-import type { TurnId } from "@t3tools/contracts";
+import type { KeybindingShortcut, TurnId } from "@t3tools/contracts";
+import { formatShortcutLabel, type ShortcutEventLike } from "../keybindings";
+import { matchesModEnterShortcut } from "../lib/utils";
 import type { TurnDiffSummary } from "../types";
+
+const REVIEW_COMMENT_SUBMIT_SHORTCUT: KeybindingShortcut = {
+  key: "enter",
+  modKey: true,
+  shiftKey: false,
+  altKey: false,
+  ctrlKey: false,
+  metaKey: false,
+};
+
+export function formatReviewCommentSubmitShortcutLabel(platform = navigator.platform): string {
+  return formatShortcutLabel(REVIEW_COMMENT_SUBMIT_SHORTCUT, platform);
+}
+
+export function matchesReviewCommentSubmitShortcut(
+  event: ShortcutEventLike & {
+    defaultPrevented?: boolean;
+    nativeEvent?: {
+      isComposing?: boolean;
+    };
+  },
+  platform = navigator.platform,
+): boolean {
+  return matchesModEnterShortcut(event, platform);
+}
+
+export function getDiffCommentComposerKey(
+  selection: {
+    filePath: string;
+    side: string;
+    lineStart: number;
+    lineEnd: number;
+  } | null,
+): string | null {
+  if (!selection) {
+    return null;
+  }
+
+  return `${selection.filePath}:${selection.side}:${selection.lineStart}:${selection.lineEnd}`;
+}
 
 export function resolveTurnChipLabel(
   summary: TurnDiffSummary,

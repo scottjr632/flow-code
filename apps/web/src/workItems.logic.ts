@@ -40,6 +40,19 @@ export interface WorkItemRankUpdate {
   rank: number;
 }
 
+function hasRankChanged(input: {
+  readonly originalItemsById: ReadonlyMap<WorkItemId, WorkItem>;
+  readonly item: WorkItem;
+  readonly expectedStatus: WorkItemStatus;
+  readonly expectedRank: number;
+}): boolean {
+  const original = input.originalItemsById.get(input.item.id);
+  if (!original) {
+    return true;
+  }
+  return original.status !== input.expectedStatus || original.rank !== input.expectedRank;
+}
+
 export function buildWorkItemRankUpdates(input: {
   readonly items: ReadonlyArray<WorkItem>;
   readonly itemId: WorkItemId;
@@ -51,6 +64,7 @@ export function buildWorkItemRankUpdates(input: {
     return [];
   }
 
+  const originalItemsById = new Map(input.items.map((item) => [item.id, item] as const));
   const projectItems = input.items.filter(
     (item) => item.projectId === movingItem.projectId && item.deletedAt === null,
   );
@@ -58,7 +72,7 @@ export function buildWorkItemRankUpdates(input: {
     WORK_ITEM_STATUS_ORDER.map((status) => [
       status,
       projectItems
-        .filter((item) => item.status === status && item.id !== movingItem.id)
+        .filter((item) => item.status === status)
         .toSorted((left, right) =>
           left.rank !== right.rank
             ? left.rank - right.rank
@@ -68,24 +82,37 @@ export function buildWorkItemRankUpdates(input: {
   );
 
   const targetBucket = [...(bucketByStatus.get(input.targetStatus) ?? [])];
-  const overItem =
-    input.overItemId == null
-      ? null
-      : (targetBucket.find((item) => item.id === input.overItemId) ?? null);
-  const insertIndex = overItem
-    ? targetBucket.findIndex((item) => item.id === overItem.id)
-    : targetBucket.length;
-  targetBucket.splice(insertIndex < 0 ? targetBucket.length : insertIndex, 0, {
+  const overIndex =
+    input.overItemId == null ? -1 : targetBucket.findIndex((item) => item.id === input.overItemId);
+  const targetBucketWithoutMovingItem = targetBucket.filter((item) => item.id !== movingItem.id);
+  const insertIndex =
+    overIndex < 0
+      ? targetBucketWithoutMovingItem.length
+      : Math.min(overIndex, targetBucketWithoutMovingItem.length);
+  targetBucketWithoutMovingItem.splice(insertIndex, 0, {
     ...movingItem,
     status: input.targetStatus,
   });
-  bucketByStatus.set(input.targetStatus, targetBucket);
+  bucketByStatus.set(input.targetStatus, targetBucketWithoutMovingItem);
+  if (movingItem.status !== input.targetStatus) {
+    bucketByStatus.set(
+      movingItem.status,
+      (bucketByStatus.get(movingItem.status) ?? []).filter((item) => item.id !== movingItem.id),
+    );
+  }
 
   const changedItems: WorkItemRankUpdate[] = [];
   for (const status of WORK_ITEM_STATUS_ORDER) {
     const bucket = bucketByStatus.get(status) ?? [];
     bucket.forEach((item, index) => {
-      if (item.status !== status || item.rank !== index) {
+      if (
+        hasRankChanged({
+          originalItemsById,
+          item,
+          expectedStatus: status,
+          expectedRank: index,
+        })
+      ) {
         changedItems.push({
           itemId: item.id,
           status,

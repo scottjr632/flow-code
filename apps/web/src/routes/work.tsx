@@ -1,7 +1,12 @@
 import { type ProjectId } from "@t3tools/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 
 import { WorkSurface } from "~/components/WorkSurface";
+import {
+  getPreferredWorkSurfaceView,
+  setPreferredWorkSurfaceView,
+} from "~/workSurfaceViewPreference";
 
 function WorkRouteView() {
   const navigate = useNavigate();
@@ -9,14 +14,21 @@ function WorkRouteView() {
     view?: "board" | "list";
     projectId?: string;
   };
-  const view = search.view ?? "board";
+  const view = search.view ?? getPreferredWorkSurfaceView() ?? "board";
   const selectedProjectId = (search.projectId ?? null) as ProjectId | null;
+
+  useEffect(() => {
+    if (search.view === "board" || search.view === "list") {
+      setPreferredWorkSurfaceView(search.view);
+    }
+  }, [search.view]);
 
   return (
     <WorkSurface
       view={view}
       selectedProjectId={selectedProjectId}
       onViewChange={(nextView) => {
+        setPreferredWorkSurfaceView(nextView);
         void navigate({
           to: "/work",
           replace: true,

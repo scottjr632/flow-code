@@ -11,6 +11,7 @@ import {
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
   CodexAppServerManager,
   classifyCodexStderrLine,
+  FLOW_ADD_WORK_ITEM_TOOL_NAME,
   isRecoverableThreadResumeError,
   normalizeCodexModelSlug,
   readCodexAccountSnapshot,
@@ -136,6 +137,40 @@ function createPendingUserInputHarness() {
     .mockImplementation(() => {});
 
   return { manager, context, requireSession, writeMessage, emitEvent };
+}
+
+function createDynamicToolHarness() {
+  const manager = new CodexAppServerManager();
+  const context = {
+    session: {
+      provider: "codex",
+      status: "ready",
+      threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
+      resumeCursor: { threadId: "thread_1" },
+      createdAt: "2026-02-10T00:00:00.000Z",
+      updatedAt: "2026-02-10T00:00:00.000Z",
+    },
+    pendingApprovals: new Map(),
+    pendingUserInputs: new Map(),
+    collabReceiverTurns: new Map(),
+  };
+
+  const writeMessage = vi
+    .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+    .mockImplementation(() => {});
+  const emitEvent = vi
+    .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
+    .mockImplementation(() => {});
+  const runDynamicToolCallPromise = vi.fn();
+  (
+    manager as unknown as {
+      runDynamicToolCallPromise: typeof runDynamicToolCallPromise;
+    }
+  ).runDynamicToolCallPromise = runDynamicToolCallPromise;
+
+  return { manager, context, writeMessage, emitEvent, runDynamicToolCallPromise };
 }
 
 function createCollabNotificationHarness() {
@@ -824,6 +859,89 @@ describe("respondToUserInput", () => {
     const request = Array.from(context.pendingApprovals.values())[0];
     expect(request?.requestKind).toBe("file-read");
     expect(request?.method).toBe("item/fileRead/requestApproval");
+  });
+
+  it("mentions the Flow board dynamic tool in default-mode instructions", () => {
+    expect(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS).toContain(FLOW_ADD_WORK_ITEM_TOOL_NAME);
+  });
+
+  it("responds to supported dynamic tool calls with the tool result", async () => {
+    const { manager, context, writeMessage, emitEvent, runDynamicToolCallPromise } =
+      createDynamicToolHarness();
+    const toolResult = {
+      success: true,
+      contentItems: [
+        {
+          type: "inputText",
+          text: 'Added "Investigate board sync" to the Work board.',
+        },
+      ],
+    };
+    runDynamicToolCallPromise.mockResolvedValue(toolResult);
+
+    (
+      manager as unknown as {
+        handleServerRequest: (context: unknown, request: Record<string, unknown>) => void;
+      }
+    ).handleServerRequest(context, {
+      id: 42,
+      method: "item/tool/call",
+      params: {
+        tool: FLOW_ADD_WORK_ITEM_TOOL_NAME,
+        arguments: {
+          title: "Investigate board sync",
+        },
+      },
+    });
+
+    expect(runDynamicToolCallPromise).toHaveBeenCalledTimes(1);
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "item/tool/call",
+      }),
+    );
+
+    await Promise.resolve();
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: toolResult,
+    });
+  });
+
+  it("returns a failed tool result for unsupported dynamic tools", async () => {
+    const { manager, context, writeMessage, runDynamicToolCallPromise } =
+      createDynamicToolHarness();
+    const toolResult = {
+      success: false,
+      contentItems: [
+        {
+          type: "inputText",
+          text: "Unsupported dynamic tool: flow_unknown_tool.",
+        },
+      ],
+    };
+    runDynamicToolCallPromise.mockResolvedValue(toolResult);
+
+    (
+      manager as unknown as {
+        handleServerRequest: (context: unknown, request: Record<string, unknown>) => void;
+      }
+    ).handleServerRequest(context, {
+      id: 42,
+      method: "item/tool/call",
+      params: {
+        tool: "flow_unknown_tool",
+        arguments: {},
+      },
+    });
+
+    expect(runDynamicToolCallPromise).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: toolResult,
+    });
   });
 });
 

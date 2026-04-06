@@ -30,6 +30,8 @@ interface WorkspaceCommandPaletteProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   items: readonly WorkspaceCommandPaletteItem[];
+  placeholder?: string;
+  emptyText?: string;
 }
 
 const GROUP_LABELS: Record<WorkspaceCommandPaletteItem["group"], string> = {
@@ -63,6 +65,8 @@ export function WorkspaceCommandPalette({
   open,
   onOpenChange,
   items,
+  placeholder = "Type command or search",
+  emptyText = "No matching command.",
 }: WorkspaceCommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
@@ -117,7 +121,7 @@ export function WorkspaceCommandPalette({
           <CommandPanel className="rounded-b-[18px] border-0 bg-transparent shadow-none before:hidden [clip-path:none]">
             <CommandInput
               className="border-b border-border/45 px-0 text-[12px]"
-              placeholder="Type command or search threads"
+              placeholder={placeholder}
               onKeyDown={(event) => {
                 if (
                   event.ctrlKey &&
@@ -149,7 +153,7 @@ export function WorkspaceCommandPalette({
             <CommandList className="max-h-[min(48vh,22rem)] px-1.5 py-1.5">
               {hasSearchQuery ? (
                 <CommandEmpty className="px-3 py-5 text-[12px] text-muted-foreground/80">
-                  No matching terminal or session.
+                  {emptyText}
                 </CommandEmpty>
               ) : null}
               {(["actions", "terminals", "sessions"] as const).map((group) => {

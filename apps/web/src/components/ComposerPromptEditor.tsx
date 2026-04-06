@@ -21,6 +21,7 @@ import {
   KEY_ARROW_LEFT_COMMAND,
   KEY_ARROW_RIGHT_COMMAND,
   KEY_ARROW_UP_COMMAND,
+  KEY_ESCAPE_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
   COMMAND_PRIORITY_HIGH,
@@ -678,6 +679,7 @@ interface ComposerPromptEditorProps {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => boolean;
+  onEscapeKeyDown?: (event: React.KeyboardEvent<HTMLElement>) => boolean;
   onPaste: ClipboardEventHandler<HTMLElement>;
 }
 
@@ -690,6 +692,7 @@ function ComposerCommandKeyPlugin(props: {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => boolean;
+  onEscapeKeyDown?: (event: React.KeyboardEvent<HTMLElement>) => boolean;
 }) {
   const [editor] = useLexicalComposerContext();
 
@@ -724,6 +727,21 @@ function ComposerCommandKeyPlugin(props: {
       (event) => handleCommand("Enter", event),
       COMMAND_PRIORITY_HIGH,
     );
+    const unregisterEscape = editor.registerCommand(
+      KEY_ESCAPE_COMMAND,
+      (event) => {
+        if (!props.onEscapeKeyDown || !event) {
+          return false;
+        }
+        const handled = props.onEscapeKeyDown(event as unknown as React.KeyboardEvent<HTMLElement>);
+        if (handled) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return handled;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
     const unregisterTab = editor.registerCommand(
       KEY_TAB_COMMAND,
       (event) => handleCommand("Tab", event),
@@ -734,6 +752,7 @@ function ComposerCommandKeyPlugin(props: {
       unregisterArrowDown();
       unregisterArrowUp();
       unregisterEnter();
+      unregisterEscape();
       unregisterTab();
     };
   }, [editor, props]);
@@ -912,6 +931,7 @@ function ComposerPromptEditorInner({
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
+  onEscapeKeyDown,
   onPaste,
   editorRef,
 }: ComposerPromptEditorInnerProps) {
@@ -1136,7 +1156,10 @@ function ComposerPromptEditorInner({
           ErrorBoundary={LexicalErrorBoundary}
         />
         <OnChangePlugin onChange={handleEditorChange} />
-        <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
+        <ComposerCommandKeyPlugin
+          {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+          {...(onEscapeKeyDown ? { onEscapeKeyDown } : {})}
+        />
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />
         <ComposerInlineTokenBackspacePlugin />
@@ -1160,6 +1183,7 @@ export const ComposerPromptEditor = forwardRef<
     onRemoveTerminalContext,
     onChange,
     onCommandKeyDown,
+    onEscapeKeyDown,
     onPaste,
   },
   ref,
@@ -1194,6 +1218,7 @@ export const ComposerPromptEditor = forwardRef<
         onPaste={onPaste}
         editorRef={ref}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+        {...(onEscapeKeyDown ? { onEscapeKeyDown } : {})}
         {...(className ? { className } : {})}
       />
     </LexicalComposer>
