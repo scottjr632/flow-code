@@ -1,11 +1,12 @@
 /**
- * Zustand store for workspace-level terminal panel visibility and height.
+ * Zustand store for the global bottom terminal panel target/visibility.
  *
  * The actual terminal tab/group state is managed by the shared
- * `terminalStateStore` under the `WORKSPACE_TERMINAL_OWNER_ID` sentinel key.
- * This store only controls the panel open/closed state and its height.
+ * `terminalStateStore` under synthetic terminal owner ids. This store tracks
+ * which project the panel currently targets and whether the panel is visible.
  */
 
+import type { ProjectId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
@@ -14,8 +15,10 @@ const STORAGE_KEY = "flow:workspace-terminal:v1";
 
 interface WorkspaceTerminalState {
   isOpen: boolean;
-  setOpen: (open: boolean) => void;
-  toggle: () => void;
+  projectId: ProjectId | null;
+  setOpen: (open: boolean, projectId?: ProjectId | null) => void;
+  openForProject: (projectId: ProjectId) => void;
+  toggle: (projectId?: ProjectId | null) => void;
 }
 
 function createStorage() {
@@ -26,14 +29,41 @@ export const useWorkspaceTerminalStore = create<WorkspaceTerminalState>()(
   persist(
     (set) => ({
       isOpen: false,
-      setOpen: (open) => set({ isOpen: open }),
-      toggle: () => set((state) => ({ isOpen: !state.isOpen })),
+      projectId: null,
+      setOpen: (open, projectId) =>
+        set((state) => ({
+          isOpen: open,
+          projectId: projectId === undefined ? state.projectId : projectId,
+        })),
+      openForProject: (projectId) => set({ isOpen: true, projectId }),
+      toggle: (projectId) =>
+        set((state) => {
+          const nextProjectId = projectId ?? state.projectId;
+          if (nextProjectId !== null && nextProjectId !== state.projectId) {
+            return { isOpen: true, projectId: nextProjectId };
+          }
+          return {
+            isOpen: !state.isOpen,
+            projectId: nextProjectId,
+          };
+        }),
     }),
     {
       name: STORAGE_KEY,
-      version: 1,
+      version: 2,
       storage: createJSONStorage(createStorage),
-      partialize: (state) => ({ isOpen: state.isOpen }),
+      partialize: (state) => ({ isOpen: state.isOpen, projectId: state.projectId }),
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== "object") {
+          return { isOpen: false, projectId: null };
+        }
+        const candidate = persistedState as { isOpen?: unknown; projectId?: unknown };
+        return {
+          isOpen: candidate.isOpen === true,
+          projectId:
+            typeof candidate.projectId === "string" ? (candidate.projectId as ProjectId) : null,
+        };
+      },
     },
   ),
 );

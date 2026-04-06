@@ -741,6 +741,7 @@ interface ThreadTerminalDrawerProps {
   closeShortcutLabel?: string | undefined;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
+  onClosePanel?: (() => void) | undefined;
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   variant?: "drawer" | "panel";
@@ -793,6 +794,7 @@ export default function ThreadTerminalDrawer({
   closeShortcutLabel,
   onActiveTerminalChange,
   onCloseTerminal,
+  onClosePanel,
   onHeightChange,
   onAddTerminalContext,
   variant = "drawer",
@@ -925,6 +927,7 @@ export default function ThreadTerminalDrawer({
   const closeTerminalActionLabel = closeShortcutLabel
     ? `Close Terminal (${closeShortcutLabel})`
     : "Close Terminal";
+  const closePanelActionLabel = "Close Panel";
   const onSplitTerminalAction = useCallback(() => {
     if (hasReachedSplitLimit) return;
     onSplitTerminal();
@@ -1125,6 +1128,18 @@ export default function ThreadTerminalDrawer({
             >
               <Trash2 className="size-3.25" />
             </TerminalActionButton>
+            {onClosePanel ? (
+              <>
+                <div className="h-4 w-px bg-border/80" />
+                <TerminalActionButton
+                  className="cursor-pointer p-1 text-foreground/90 transition-colors hover:bg-accent"
+                  onClick={onClosePanel}
+                  label={closePanelActionLabel}
+                >
+                  <XIcon className="size-3.25" />
+                </TerminalActionButton>
+              </>
+            ) : null}
           </div>
         </div>
       )}
@@ -1258,6 +1273,15 @@ export default function ThreadTerminalDrawer({
                   >
                     <Trash2 className="size-3.25" />
                   </TerminalActionButton>
+                  {onClosePanel ? (
+                    <TerminalActionButton
+                      className="inline-flex h-full cursor-pointer items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                      onClick={onClosePanel}
+                      label={closePanelActionLabel}
+                    >
+                      <XIcon className="size-3.25" />
+                    </TerminalActionButton>
+                  ) : null}
                 </div>
               </div>
 

@@ -76,6 +76,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isHomeProject, isUserProject } from "../systemProject";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { projectTerminalOwnerId } from "../projectTerminal";
 import { useWorkspaceTerminalStore } from "../workspaceTerminalStore";
 import { toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -340,7 +341,10 @@ export default function Sidebar({
     (store) => store.getDraftThreadByProjectId,
   );
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
-  const toggleWorkspaceTerminal = useWorkspaceTerminalStore((state) => state.toggle);
+  const isWorkspaceTerminalOpen = useWorkspaceTerminalStore((state) => state.isOpen);
+  const workspaceTerminalProjectId = useWorkspaceTerminalStore((state) => state.projectId);
+  const openProjectTerminal = useWorkspaceTerminalStore((state) => state.openForProject);
+  const setWorkspaceTerminalOpen = useWorkspaceTerminalStore((state) => state.setOpen);
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
@@ -1287,6 +1291,10 @@ export default function Sidebar({
           orderedProjectThreadIds,
           project,
           projectStatus,
+          projectTerminalStatus: terminalStatusFromRunningIds(
+            selectThreadTerminalState(terminalStateByThreadId, projectTerminalOwnerId(project.id))
+              .runningTerminalIds,
+          ),
           projectThreads,
           renderedThreads,
           renderedWorkspaceRows,
@@ -1480,6 +1488,7 @@ export default function Sidebar({
       orderedProjectThreadIds,
       project,
       projectStatus,
+      projectTerminalStatus,
       projectThreads,
       renderedThreads,
       renderedWorkspaceRows,
@@ -1879,6 +1888,8 @@ export default function Sidebar({
     };
 
     const isLocalCollapsed = collapsedLocalSections.has(project.id);
+    const isProjectTerminalOpen =
+      isWorkspaceTerminalOpen && workspaceTerminalProjectId === project.id;
     const toggleLocalCollapsed = () => {
       setCollapsedLocalSections((current) => {
         const next = new Set(current);
@@ -2025,7 +2036,7 @@ export default function Sidebar({
           <SidebarMenuButton
             ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
             size="sm"
-            className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
+            className={`gap-2 px-2 py-1.5 pr-12 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
               isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
             }`}
             {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
@@ -2067,6 +2078,53 @@ export default function Sidebar({
             <ProjectFavicon cwd={project.cwd} />
             <span className="truncate text-xs font-medium text-foreground/90">{project.name}</span>
           </SidebarMenuButton>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <SidebarMenuAction
+                  render={
+                    <button
+                      type="button"
+                      aria-label={
+                        isProjectTerminalOpen
+                          ? `Hide terminal for ${project.name}`
+                          : projectTerminalStatus
+                            ? `${projectTerminalStatus.label} in ${project.name}`
+                            : `Open terminal for ${project.name}`
+                      }
+                      data-testid="new-project-terminal-button"
+                    />
+                  }
+                  showOnHover={!projectTerminalStatus}
+                  className={`top-1 right-7 size-5 rounded-md p-0 hover:bg-secondary hover:text-foreground ${
+                    projectTerminalStatus
+                      ? "text-emerald-600 opacity-100 hover:text-emerald-700 dark:text-emerald-300/90 dark:hover:text-emerald-200"
+                      : "text-muted-foreground/70"
+                  }`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (isProjectTerminalOpen) {
+                      setWorkspaceTerminalOpen(false, project.id);
+                      return;
+                    }
+                    openProjectTerminal(project.id);
+                  }}
+                >
+                  <TerminalIcon
+                    className={`size-3.5 ${projectTerminalStatus?.pulse ? "animate-pulse" : ""}`}
+                  />
+                </SidebarMenuAction>
+              }
+            />
+            <TooltipPopup side="top">
+              {isProjectTerminalOpen
+                ? "Hide terminal"
+                : projectTerminalStatus
+                  ? projectTerminalStatus.label
+                  : "New terminal"}
+            </TooltipPopup>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -2639,16 +2697,6 @@ export default function Sidebar({
             <SidebarUpdatePill />
             <SidebarMenu>
               {globalNewThreadButton}
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  size="sm"
-                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-                  onClick={toggleWorkspaceTerminal}
-                >
-                  <TerminalIcon className="size-3.5" />
-                  <span className="text-xs">Terminal</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="sm"

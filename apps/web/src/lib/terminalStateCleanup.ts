@@ -1,4 +1,5 @@
-import type { ThreadId, WorkspaceId } from "@t3tools/contracts";
+import type { ProjectId, ThreadId, WorkspaceId } from "@t3tools/contracts";
+import { projectTerminalOwnerId } from "../projectTerminal";
 
 interface TerminalRetentionThread {
   id: ThreadId;
@@ -8,6 +9,7 @@ interface TerminalRetentionThread {
 
 interface CollectActiveTerminalThreadIdsInput {
   snapshotThreads: readonly TerminalRetentionThread[];
+  snapshotProjectIds: readonly ProjectId[];
   draftThreadIds: Iterable<ThreadId>;
 }
 
@@ -28,6 +30,9 @@ export function collectActiveTerminalThreadIds(
   }
   for (const draftThreadId of input.draftThreadIds) {
     activeIds.add(draftThreadId);
+  }
+  for (const projectId of input.snapshotProjectIds) {
+    activeIds.add(projectTerminalOwnerId(projectId));
   }
   return activeIds;
 }

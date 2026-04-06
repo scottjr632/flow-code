@@ -1,10 +1,12 @@
-import { ThreadId, WorkspaceId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, WorkspaceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
+import { projectTerminalOwnerId } from "../projectTerminal";
 import { collectActiveTerminalThreadIds } from "./terminalStateCleanup";
 
 const threadId = (id: string): ThreadId => ThreadId.makeUnsafe(id);
 const workspaceId = (id: string): WorkspaceId => WorkspaceId.makeUnsafe(id);
+const projectId = (id: string): ProjectId => ProjectId.makeUnsafe(id);
 
 describe("collectActiveTerminalThreadIds", () => {
   it("retains non-deleted server threads", () => {
@@ -13,6 +15,7 @@ describe("collectActiveTerminalThreadIds", () => {
         { id: threadId("server-1"), workspaceId: null, deletedAt: null },
         { id: threadId("server-2"), workspaceId: null, deletedAt: null },
       ],
+      snapshotProjectIds: [],
       draftThreadIds: [],
     });
 
@@ -29,6 +32,7 @@ describe("collectActiveTerminalThreadIds", () => {
           deletedAt: "2026-03-05T08:00:00.000Z",
         },
       ],
+      snapshotProjectIds: [],
       draftThreadIds: [threadId("local-draft")],
     });
 
@@ -43,6 +47,7 @@ describe("collectActiveTerminalThreadIds", () => {
         { id: threadId("thread-2"), workspaceId: wsId, deletedAt: null },
         { id: threadId("thread-3"), workspaceId: null, deletedAt: null },
       ],
+      snapshotProjectIds: [],
       draftThreadIds: [],
     });
 
@@ -53,6 +58,20 @@ describe("collectActiveTerminalThreadIds", () => {
         threadId("thread-3"),
         wsId as unknown as ThreadId,
       ]),
+    );
+  });
+
+  it("retains synthetic project terminal owners for active projects", () => {
+    const activeProjectIds = [projectId("project-1"), projectId("project-2")] as const;
+
+    const activeThreadIds = collectActiveTerminalThreadIds({
+      snapshotThreads: [],
+      snapshotProjectIds: activeProjectIds,
+      draftThreadIds: [],
+    });
+
+    expect(activeThreadIds).toEqual(
+      new Set(activeProjectIds.map((id) => projectTerminalOwnerId(id))),
     );
   });
 });

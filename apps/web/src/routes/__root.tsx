@@ -175,6 +175,7 @@ function EventRouter() {
       ) as ThreadId[];
       const activeThreadIds = collectActiveTerminalThreadIds({
         snapshotThreads: snapshot.threads,
+        snapshotProjectIds: snapshot.projects.map((project) => project.id),
         draftThreadIds,
       });
       removeOrphanedTerminalStates(activeThreadIds);

@@ -1,14 +1,13 @@
 /**
- * Workspace-scoped terminal panel rendered in the global layout.
+ * Project-scoped terminal panel rendered in the global layout.
  *
- * Uses the existing ThreadTerminalDrawer component with a sentinel
- * `WORKSPACE_TERMINAL_OWNER_ID` as the threadId, reusing the full
- * terminal infrastructure (server PTY, WS protocol, xterm.js) without
- * any protocol changes.
+ * Uses the existing ThreadTerminalDrawer component with a synthetic
+ * per-project owner id, reusing the full terminal infrastructure
+ * (server PTY, WS protocol, xterm.js) without any protocol changes.
  */
 
-import { ThreadId, WORKSPACE_TERMINAL_OWNER_ID } from "@t3tools/contracts";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { type ProjectId } from "@t3tools/contracts";
+import { useCallback, useMemo } from "react";
 
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
@@ -17,100 +16,124 @@ import { useStore } from "../store";
 import { randomUUID } from "~/lib/utils";
 import type { TerminalContextSelection } from "~/lib/terminalContext";
 import { isUserProject } from "../systemProject";
+import { projectTerminalOwnerId } from "../projectTerminal";
 
-const WORKSPACE_OWNER_THREAD_ID = ThreadId.makeUnsafe(WORKSPACE_TERMINAL_OWNER_ID);
+function resolvePanelProjectId(
+  requestedProjectId: ProjectId | null,
+  userProjectIds: readonly ProjectId[],
+): ProjectId | null {
+  if (requestedProjectId && userProjectIds.includes(requestedProjectId)) {
+    return requestedProjectId;
+  }
+  return userProjectIds[0] ?? null;
+}
 
 export default function WorkspaceTerminalPanel() {
   const isOpen = useWorkspaceTerminalStore((state) => state.isOpen);
-  const cwd = useStore(
-    (store) => store.projects.find((project) => isUserProject(project))?.cwd ?? null,
+  const requestedProjectId = useWorkspaceTerminalStore((state) => state.projectId);
+  const setWorkspaceTerminalOpen = useWorkspaceTerminalStore((state) => state.setOpen);
+  const projects = useStore((store) => store.projects);
+  const userProjects = useMemo(
+    () => projects.filter((project) => isUserProject(project)),
+    [projects],
+  );
+  const activeProjectId = useMemo(
+    () =>
+      resolvePanelProjectId(
+        requestedProjectId,
+        userProjects.map((project) => project.id),
+      ),
+    [requestedProjectId, userProjects],
+  );
+  const activeProject = useMemo(
+    () => userProjects.find((project) => project.id === activeProjectId) ?? null,
+    [activeProjectId, userProjects],
+  );
+  const ownerThreadId = useMemo(
+    () => (activeProjectId ? projectTerminalOwnerId(activeProjectId) : null),
+    [activeProjectId],
   );
 
-  const terminalState = useTerminalStateStore((state) =>
-    selectThreadTerminalState(state.terminalStateByThreadId, WORKSPACE_OWNER_THREAD_ID),
-  );
-
+  const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const setTerminalHeight = useTerminalStateStore((state) => state.setTerminalHeight);
   const splitTerminal = useTerminalStateStore((state) => state.splitTerminal);
   const newTerminal = useTerminalStateStore((state) => state.newTerminal);
   const setActiveTerminal = useTerminalStateStore((state) => state.setActiveTerminal);
   const closeTerminal = useTerminalStateStore((state) => state.closeTerminal);
-
-  const [focusRequestId, setFocusRequestId] = useState(0);
-  const lastNewTerminalIdRef = useRef<string | null>(null);
+  const terminalState = useMemo(
+    () =>
+      ownerThreadId ? selectThreadTerminalState(terminalStateByThreadId, ownerThreadId) : null,
+    [ownerThreadId, terminalStateByThreadId],
+  );
 
   const handleSplitTerminal = useCallback(() => {
+    if (!ownerThreadId) return;
     const terminalId = randomUUID();
-    lastNewTerminalIdRef.current = terminalId;
-    splitTerminal(WORKSPACE_OWNER_THREAD_ID, terminalId);
-  }, [splitTerminal]);
+    splitTerminal(ownerThreadId, terminalId);
+  }, [ownerThreadId, splitTerminal]);
 
   const handleNewTerminal = useCallback(() => {
+    if (!ownerThreadId) return;
     const terminalId = randomUUID();
-    lastNewTerminalIdRef.current = terminalId;
-    newTerminal(WORKSPACE_OWNER_THREAD_ID, terminalId);
-  }, [newTerminal]);
+    newTerminal(ownerThreadId, terminalId);
+  }, [newTerminal, ownerThreadId]);
 
   const handleActiveTerminalChange = useCallback(
     (terminalId: string) => {
-      setActiveTerminal(WORKSPACE_OWNER_THREAD_ID, terminalId);
+      if (!ownerThreadId) return;
+      setActiveTerminal(ownerThreadId, terminalId);
     },
-    [setActiveTerminal],
+    [ownerThreadId, setActiveTerminal],
   );
 
   const handleCloseTerminal = useCallback(
     (terminalId: string) => {
-      closeTerminal(WORKSPACE_OWNER_THREAD_ID, terminalId);
+      if (!ownerThreadId) return;
+      closeTerminal(ownerThreadId, terminalId);
     },
-    [closeTerminal],
+    [closeTerminal, ownerThreadId],
   );
 
   const handleHeightChange = useCallback(
     (height: number) => {
-      setTerminalHeight(WORKSPACE_OWNER_THREAD_ID, height);
+      if (!ownerThreadId) return;
+      setTerminalHeight(ownerThreadId, height);
     },
-    [setTerminalHeight],
+    [ownerThreadId, setTerminalHeight],
   );
 
   const handleAddTerminalContext = useCallback((_selection: TerminalContextSelection) => {
-    // Workspace terminal context is not tied to a composer, so this is a no-op.
+    // Project terminal context is not tied to a composer, so this is a no-op.
   }, []);
+  const handleClosePanel = useCallback(() => {
+    setWorkspaceTerminalOpen(false);
+  }, [setWorkspaceTerminalOpen]);
 
-  const handleFocusRequest = useCallback(() => {
-    setFocusRequestId((id) => id + 1);
-  }, []);
+  const terminalGroups = useMemo(() => terminalState?.terminalGroups ?? [], [terminalState]);
 
-  // Expose focus request for keyboard shortcut toggle
-  const stableHandleFocusRequest = useRef(handleFocusRequest);
-  stableHandleFocusRequest.current = handleFocusRequest;
-
-  const terminalGroups = useMemo(
-    () => terminalState.terminalGroups,
-    [terminalState.terminalGroups],
-  );
-
-  if (!isOpen || !cwd) {
+  if (!isOpen || !activeProject || !ownerThreadId || !terminalState) {
     return null;
   }
 
   return (
     <div className="min-h-0 border-t border-border">
       <ThreadTerminalDrawer
-        key={WORKSPACE_TERMINAL_OWNER_ID}
+        key={ownerThreadId}
         variant="drawer"
-        threadId={WORKSPACE_OWNER_THREAD_ID}
-        cwd={cwd}
+        threadId={ownerThreadId}
+        cwd={activeProject.cwd}
         height={terminalState.terminalHeight}
         terminalIds={terminalState.terminalIds}
         terminalNamesById={terminalState.terminalNamesById}
         activeTerminalId={terminalState.activeTerminalId}
         terminalGroups={terminalGroups}
         activeTerminalGroupId={terminalState.activeTerminalGroupId}
-        focusRequestId={focusRequestId}
+        focusRequestId={0}
         onSplitTerminal={handleSplitTerminal}
         onNewTerminal={handleNewTerminal}
         onActiveTerminalChange={handleActiveTerminalChange}
         onCloseTerminal={handleCloseTerminal}
+        onClosePanel={handleClosePanel}
         onHeightChange={handleHeightChange}
         onAddTerminalContext={handleAddTerminalContext}
       />

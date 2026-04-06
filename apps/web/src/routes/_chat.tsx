@@ -62,7 +62,7 @@ function ChatRouteGlobalShortcuts() {
       if (command === "workspaceTerminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
-        toggleWorkspaceTerminal();
+        toggleWorkspaceTerminal(projectId);
         return;
       }
 
