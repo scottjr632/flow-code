@@ -6,6 +6,7 @@ import {
   getThreadIdsForKeyboardTraversal,
   getThreadIdsByMostRecentVisit,
   getProjectSortTimestamp,
+  getVisibleThreadsForProject,
   groupThreadsForSidebarProject,
   hasUnseenCompletion,
   isWorkspaceTitleCustomized,
@@ -274,6 +275,61 @@ describe("getThreadIdsForKeyboardTraversal", () => {
       ThreadId.makeUnsafe("thread-4"),
       ThreadId.makeUnsafe("thread-5"),
       ThreadId.makeUnsafe("thread-6"),
+    ]);
+  });
+});
+
+describe("getVisibleThreadsForProject", () => {
+  it("limits thread previews until the list is expanded", () => {
+    const threads = Array.from({ length: 8 }, (_, index) =>
+      makeThread({
+        id: ThreadId.makeUnsafe(`thread-${index + 1}`),
+        createdAt: `2026-03-09T10:0${index}:00.000Z`,
+      }),
+    );
+
+    const result = getVisibleThreadsForProject({
+      threads,
+      activeThreadId: undefined,
+      isThreadListExpanded: false,
+      previewLimit: 6,
+    });
+
+    expect(result.hasHiddenThreads).toBe(true);
+    expect(result.visibleThreads.map((thread) => thread.id)).toEqual([
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-3"),
+      ThreadId.makeUnsafe("thread-4"),
+      ThreadId.makeUnsafe("thread-5"),
+      ThreadId.makeUnsafe("thread-6"),
+    ]);
+  });
+
+  it("keeps the active thread visible when it falls below the preview cut", () => {
+    const threads = Array.from({ length: 8 }, (_, index) =>
+      makeThread({
+        id: ThreadId.makeUnsafe(`thread-${index + 1}`),
+        createdAt: `2026-03-09T10:0${index}:00.000Z`,
+      }),
+    );
+
+    const result = getVisibleThreadsForProject({
+      threads,
+      activeThreadId: ThreadId.makeUnsafe("thread-8"),
+      isThreadListExpanded: false,
+      previewLimit: 6,
+    });
+
+    expect(result.hasHiddenThreads).toBe(true);
+    expect(result.visibleThreads.map((thread) => thread.id)).toEqual([
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-2"),
+      ThreadId.makeUnsafe("thread-3"),
+      ThreadId.makeUnsafe("thread-4"),
+      ThreadId.makeUnsafe("thread-5"),
+      ThreadId.makeUnsafe("thread-6"),
+      ThreadId.makeUnsafe("thread-8"),
     ]);
   });
 });

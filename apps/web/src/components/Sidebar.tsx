@@ -392,7 +392,6 @@ export default function Sidebar({
   const [collapsedWorkspaceSections, setCollapsedWorkspaceSections] = useState<
     ReadonlySet<ProjectId>
   >(() => new Set());
-  const [isHomeCollapsed, setIsHomeCollapsed] = useState(false);
   const toggleWorkspaceExpanded = useCallback((workspaceId: WorkspaceId) => {
     setExpandedWorkspaceIds((current) => {
       const next = new Set(current);
@@ -2098,7 +2097,7 @@ export default function Sidebar({
                   showOnHover={!projectTerminalStatus}
                   className={`top-1 right-7 size-5 rounded-md p-0 hover:bg-secondary hover:text-foreground ${
                     projectTerminalStatus
-                      ? "text-emerald-600 opacity-100 hover:text-emerald-700 dark:text-emerald-300/90 dark:hover:text-emerald-200"
+                      ? "translate-x-5.5 duration-150 ease-in-out group-hover/menu-item:translate-x-0 text-emerald-600 opacity-100 hover:text-emerald-700 dark:text-emerald-300/90 dark:hover:text-emerald-200"
                       : "text-muted-foreground/70"
                   }`}
                   onClick={(event) => {
@@ -2137,7 +2136,7 @@ export default function Sidebar({
                     />
                   }
                   showOnHover
-                  className="top-1 right-1.5 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                  className="top-1 right-1.5 size-5 rounded-md p-0 text-muted-foreground/70 transition-opacity duration-150 delay-0 group-hover/menu-item:delay-75 hover:bg-secondary hover:text-foreground"
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -2494,20 +2493,11 @@ export default function Sidebar({
             {homeRenderedProject ? (
               <SidebarGroup className="px-2 pt-2 pb-1">
                 <div className="group/home-header mb-1 flex items-center justify-between pl-2 pr-1.5">
-                  <button
-                    type="button"
-                    className="flex cursor-pointer items-center gap-1"
-                    onClick={() => setIsHomeCollapsed((prev) => !prev)}
-                  >
-                    <ChevronRightIcon
-                      className={`size-3 text-muted-foreground/50 transition-transform duration-150 ${
-                        isHomeCollapsed ? "" : "rotate-90"
-                      }`}
-                    />
+                  <div className="flex items-center gap-1">
                     <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
                       Home
                     </span>
-                  </button>
+                  </div>
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -2529,13 +2519,11 @@ export default function Sidebar({
                     <TooltipPopup side="right">New thread</TooltipPopup>
                   </Tooltip>
                 </div>
-                {!isHomeCollapsed ? (
-                  <SidebarMenu>
-                    <SidebarMenuItem key={homeRenderedProject.project.id}>
-                      {renderProjectItem(homeRenderedProject, null)}
-                    </SidebarMenuItem>
-                  </SidebarMenu>
-                ) : null}
+                <SidebarMenu>
+                  <SidebarMenuItem key={homeRenderedProject.project.id}>
+                    {renderProjectItem(homeRenderedProject, null)}
+                  </SidebarMenuItem>
+                </SidebarMenu>
               </SidebarGroup>
             ) : null}
 

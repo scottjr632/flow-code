@@ -60,6 +60,7 @@ import { ScrollArea } from "./ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "./ui/select";
 import { SidebarInset, SidebarTrigger } from "./ui/sidebar";
 import { Toggle, ToggleGroup } from "./ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   deriveWorkItemEditorValues,
   WorkItemEditorDialog,
@@ -442,10 +443,11 @@ function SortableListRow({
         transition,
       }}
       className={cn(
-        "group/row flex items-center gap-2 border-b border-border/20 px-3 py-1.5 transition-colors hover:bg-muted/10",
+        "group/row flex cursor-pointer items-center gap-2 border-b border-border/20 px-3 py-1.5 rounded-md transition-colors hover:bg-muted/30",
         busy && "opacity-60",
         isDragging && "z-20 opacity-0 bg-card shadow-lg/10",
       )}
+      onClick={() => onEdit(item)}
     >
       <button
         ref={setActivatorNodeRef}
@@ -461,91 +463,148 @@ function SortableListRow({
 
       <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{item.title}</span>
 
-      <div className="flex shrink-0 items-center gap-2">
-        {showProject ? (
-          <span className="text-[11px] text-muted-foreground">{projectName}</span>
-        ) : null}
-        {workspaceName ? (
-          <Badge variant="outline" size="sm" className="h-4.5 gap-1 px-1.5 text-[10px]">
-            <FolderGit2Icon className="size-2.5" />
-            {workspaceName}
-          </Badge>
-        ) : null}
+      {/* Right side: project info crossfades with action buttons on hover */}
+      <div className="grid shrink-0">
+        {/* Layer 1 — project info (visible at rest, fades out on hover) */}
+        <div className="col-start-1 row-start-1 flex items-center justify-end gap-2 transition-all duration-200 ease-out group-hover/row:opacity-0 group-hover/row:-translate-x-1">
+          {showProject ? (
+            <span className="text-[11px] text-muted-foreground">{projectName}</span>
+          ) : null}
+          {workspaceName ? (
+            <Badge variant="outline" size="sm" className="h-4.5 gap-1 px-1.5 text-[10px]">
+              <FolderGit2Icon className="size-2.5" />
+              {workspaceName}
+            </Badge>
+          ) : null}
+        </div>
 
-        <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100">
+        {/* Layer 2 — action buttons (hidden at rest, slides in on hover) */}
+        <div
+          className="col-start-1 row-start-1 flex items-center justify-end gap-0.5 opacity-0 translate-x-2 transition-all duration-200 ease-out group-hover/row:opacity-100 group-hover/row:translate-x-0"
+          onClick={(e) => e.stopPropagation()}
+        >
           {pendingLinkRepair ? (
             <>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                onClick={() => onOpenThread(pendingLinkRepair.threadId)}
-                className="size-6"
-                aria-label="Open thread"
-              >
-                <Link2Icon className="size-3" />
-              </Button>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                onClick={() => onRetryLink(item, pendingLinkRepair)}
-                className="size-6"
-                aria-label="Retry link"
-              >
-                <RefreshCcwIcon className="size-3" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      onClick={() => onOpenThread(pendingLinkRepair.threadId)}
+                      className="size-6"
+                      aria-label="Open thread"
+                    >
+                      <Link2Icon className="size-3" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="bottom">Open thread</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      onClick={() => onRetryLink(item, pendingLinkRepair)}
+                      className="size-6"
+                      aria-label="Retry link"
+                    >
+                      <RefreshCcwIcon className="size-3" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="bottom">Retry link</TooltipPopup>
+              </Tooltip>
             </>
           ) : item.linkedThreadId ? (
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              onClick={() => onOpenThread(item.linkedThreadId!)}
-              className="size-6"
-              aria-label="Open thread"
-            >
-              <Link2Icon className="size-3" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    onClick={() => onOpenThread(item.linkedThreadId!)}
+                    className="size-6"
+                    aria-label="Open thread"
+                  >
+                    <Link2Icon className="size-3" />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="bottom">Open thread</TooltipPopup>
+            </Tooltip>
           ) : (
             <>
-              <Button
-                size="icon-xs"
-                variant={preferredLaunchMode === "local" ? "default" : "ghost"}
-                disabled={busy}
-                onClick={() => onLaunch(item, "local")}
-                className="size-6"
-                aria-label="Start local"
-              >
-                <PlayIcon className="size-3" />
-              </Button>
-              <Button
-                size="icon-xs"
-                variant={preferredLaunchMode === "workspace" ? "default" : "ghost"}
-                disabled={busy}
-                onClick={() => onLaunch(item, "workspace")}
-                className="size-6"
-                aria-label="Start workspace"
-              >
-                <GitForkIcon className="size-3" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant={preferredLaunchMode === "local" ? "default" : "ghost"}
+                      disabled={busy}
+                      onClick={() => onLaunch(item, "local")}
+                      className="size-6"
+                      aria-label="Start local"
+                    >
+                      <PlayIcon className="size-3" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="bottom">Start local</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant={preferredLaunchMode === "workspace" ? "default" : "ghost"}
+                      disabled={busy}
+                      onClick={() => onLaunch(item, "workspace")}
+                      className="size-6"
+                      aria-label="Start workspace"
+                    >
+                      <GitForkIcon className="size-3" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="bottom">Start in workspace</TooltipPopup>
+              </Tooltip>
             </>
           )}
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={() => onEdit(item)}
-            className="size-6"
-            aria-label={`Edit ${item.title}`}
-          >
-            <PencilIcon className="size-3" />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={() => onDelete(item)}
-            className="size-6"
-            aria-label={`Delete ${item.title}`}
-          >
-            <Trash2Icon className="size-3" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  onClick={() => onEdit(item)}
+                  className="size-6"
+                  aria-label={`Edit ${item.title}`}
+                >
+                  <PencilIcon className="size-3" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="bottom">Edit</TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  onClick={() => onDelete(item)}
+                  className="size-6"
+                  aria-label={`Delete ${item.title}`}
+                >
+                  <Trash2Icon className="size-3" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="bottom">Delete</TooltipPopup>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -1299,9 +1358,21 @@ export function WorkSurface({
         values={editorValues}
         projects={userProjects.map((project) => ({ id: project.id, name: project.name }))}
         workspaces={projectWorkspaceOptions}
+        busy={busyItemId !== null}
+        showLaunch={
+          dialogState?.mode === "edit" &&
+          dialogState.item !== null &&
+          !dialogState.item.linkedThreadId
+        }
         onOpenChange={closeDialog}
         onValuesChange={setEditorValues}
         onSubmit={handleSubmitDialog}
+        {...(dialogState?.item
+          ? {
+              onLaunchLocal: () => handleLaunch(dialogState.item!, "local"),
+              onLaunchWorkspace: () => handleLaunch(dialogState.item!, "workspace"),
+            }
+          : {})}
       />
     </SidebarInset>
   );

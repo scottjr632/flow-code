@@ -1,5 +1,5 @@
 import { type ProjectId, type WorkItemStatus } from "@t3tools/contracts";
-import { CommandIcon } from "lucide-react";
+import { CommandIcon, GitForkIcon, PlayIcon } from "lucide-react";
 
 import { isMacPlatform, matchesModEnterShortcut } from "~/lib/utils";
 import type { WorkItem } from "~/types";
@@ -67,18 +67,26 @@ export function WorkItemEditorDialog({
   values,
   projects,
   workspaces,
+  busy,
+  showLaunch,
   onOpenChange,
   onValuesChange,
   onSubmit,
+  onLaunchLocal,
+  onLaunchWorkspace,
 }: {
   open: boolean;
   mode: "create" | "edit";
   values: WorkItemEditorValues;
   projects: ReadonlyArray<{ id: ProjectId; name: string }>;
   workspaces: ReadonlyArray<{ id: WorkItem["workspaceId"]; name: string }>;
+  busy?: boolean;
+  showLaunch?: boolean;
   onOpenChange: (open: boolean) => void;
   onValuesChange: (updater: (current: WorkItemEditorValues) => WorkItemEditorValues) => void;
   onSubmit: () => void;
+  onLaunchLocal?: () => void;
+  onLaunchWorkspace?: () => void;
 }) {
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;
   const shortcutModifierLabel = isMacPlatform(platform) ? "Cmd" : "Ctrl";
@@ -226,6 +234,30 @@ export function WorkItemEditorDialog({
           </div>
         </DialogPanel>
         <DialogFooter>
+          {showLaunch ? (
+            <div className="mr-auto flex items-center gap-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={onLaunchLocal}
+                className="gap-1.5"
+              >
+                <PlayIcon className="size-3" />
+                Local
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={onLaunchWorkspace}
+                className="gap-1.5"
+              >
+                <GitForkIcon className="size-3" />
+                Workspace
+              </Button>
+            </div>
+          ) : null}
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

@@ -77,6 +77,7 @@ import { ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { TraitsPicker } from "./chat/TraitsPicker";
 import { toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
+import { SegmentGroup, SegmentItem } from "./ui/segment-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "./ui/select";
 import { Separator } from "./ui/separator";
 import { SidebarTrigger } from "./ui/sidebar";
@@ -500,13 +501,6 @@ export function NewThreadScreen({
   const effectiveEnvMode =
     selectedProjectIsHome || (!selectedWorkspace && !isNewWorkspaceTarget) ? "local" : "worktree";
   const effectiveRuntimeMode = selectedProjectIsHome ? ("read-only" as RuntimeMode) : runtimeMode;
-  const targetLabel = selectedProjectIsHome
-    ? "Home"
-    : selectedWorkspace
-      ? resolveWorkspaceLabel(selectedWorkspace)
-      : isNewWorkspaceTarget
-        ? "New workspace"
-        : "Local";
   const _targetDescription = selectedProjectIsHome
     ? "General chat without repo tools"
     : selectedWorkspace
@@ -514,13 +508,6 @@ export function NewThreadScreen({
       : isNewWorkspaceTarget
         ? "Create a fresh worktree now"
         : "Use the main repo checkout";
-  const targetShortcutLabel = selectedProjectIsHome
-    ? null
-    : selectedWorkspace
-      ? null
-      : isNewWorkspaceTarget
-        ? newWorkspaceShortcutLabel
-        : localShortcutLabel;
   const pathTriggerQuery = composerTrigger?.query ?? "";
   const [debouncedPathQuery, composerPathQueryDebouncer] = useDebouncedValue(
     pathTriggerQuery,
@@ -997,7 +984,12 @@ export function NewThreadScreen({
                     size="sm"
                     disabled={projects.length === 0}
                     data-testid="new-thread-project-select"
-                    className="h-auto min-w-0 justify-center gap-1.5 rounded-md border-transparent bg-transparent px-2 py-1 text-base font-medium text-muted-foreground shadow-none hover:bg-muted/35 hover:text-foreground data-[popup-open]:bg-muted/35 data-[popup-open]:text-foreground focus-visible:ring-0 disabled:opacity-100 sm:text-lg"
+                    className={cn(
+                      "h-auto min-w-0 cursor-pointer justify-center gap-1.5 rounded-lg border-transparent px-3 py-1.5 text-base font-medium shadow-none disabled:opacity-100 sm:text-lg",
+                      selectedProject
+                        ? "bg-accent/60 text-foreground hover:bg-accent/80 data-[popup-open]:bg-accent/80"
+                        : "bg-transparent text-muted-foreground hover:bg-muted/35 hover:text-foreground data-[popup-open]:bg-muted/35 data-[popup-open]:text-foreground",
+                    )}
                   >
                     {selectedProject ? (
                       selectedProjectIsHome ? (
@@ -1008,9 +1000,7 @@ export function NewThreadScreen({
                     ) : (
                       <FolderIcon className="size-4.5 text-muted-foreground/70" />
                     )}
-                    <span
-                      className={selectedProject ? "text-foreground/88" : "text-muted-foreground"}
-                    >
+                    <span className={selectedProject ? "text-foreground" : "text-muted-foreground"}>
                       {selectedProject?.name ??
                         (projects.length > 0 ? "Choose a project" : "No projects")}
                     </span>
@@ -1038,87 +1028,79 @@ export function NewThreadScreen({
                   </SelectPopup>
                 </Select>
 
-                {selectedProjectIsHome ? null : projectWorkspaces.length > 0 ? (
-                  <Select
-                    value={selectedTargetValue}
-                    onValueChange={(value) => {
-                      if (typeof value === "string" && value.length > 0) {
-                        setSelectedTargetValue(value);
-                      }
-                    }}
-                    items={[
-                      { value: LOCAL_TARGET_VALUE, label: "Local" },
-                      { value: NEW_WORKSPACE_TARGET_VALUE, label: "New workspace" },
-                      ...projectWorkspaces.map((workspace) => ({
-                        value: encodeWorkspaceTargetValue(workspace.id),
-                        label: resolveWorkspaceLabel(workspace),
-                      })),
-                    ]}
-                  >
-                    <SelectTrigger
-                      aria-label="Choose where to start the new thread"
-                      variant="ghost"
-                      size="xs"
-                      disabled={!selectedProject}
-                      data-testid="new-thread-target-select"
-                      className="h-auto min-w-0 justify-center gap-1 rounded-md border-transparent bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground shadow-none hover:bg-muted/30 hover:text-foreground data-[popup-open]:bg-muted/30 data-[popup-open]:text-foreground focus-visible:ring-0 disabled:opacity-100"
+                {!selectedProjectIsHome && selectedProject ? (
+                  <div className="flex items-center gap-2" data-testid="new-thread-target-select">
+                    <SegmentGroup
+                      value={selectedTargetValue}
+                      onValueChange={setSelectedTargetValue}
                     >
-                      <span className="text-muted-foreground/70">Open in</span>
-                      <span className="text-sm text-foreground/82">{targetLabel}</span>
-                    </SelectTrigger>
-                    <SelectPopup align="center" className="min-w-72">
-                      <SelectItem value={LOCAL_TARGET_VALUE}>
-                        <div className="flex min-w-0 items-center gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate font-medium text-foreground">Local</div>
-                            <div className="truncate text-xs text-muted-foreground">
-                              Use the main repo checkout
-                            </div>
-                          </div>
-                          <span className="rounded bg-white/[0.04] px-1 py-0.5 font-medium text-[10px] tracking-[0.08em] text-muted-foreground/58">
-                            {localShortcutLabel}
-                          </span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value={NEW_WORKSPACE_TARGET_VALUE}>
-                        <div className="flex min-w-0 items-center gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate font-medium text-foreground">
-                              New workspace
-                            </div>
-                            <div className="truncate text-xs text-muted-foreground">
-                              Create a fresh worktree now
-                            </div>
-                          </div>
-                          <span className="rounded bg-white/[0.04] px-1 py-0.5 font-medium text-[10px] tracking-[0.08em] text-muted-foreground/58">
-                            {newWorkspaceShortcutLabel}
-                          </span>
-                        </div>
-                      </SelectItem>
-                      {projectWorkspaces.map((workspace) => (
-                        <SelectItem
-                          key={workspace.id}
-                          value={encodeWorkspaceTargetValue(workspace.id)}
+                      <SegmentItem
+                        value={LOCAL_TARGET_VALUE}
+                        title={`Local \u2014 Use the main repo checkout (${localShortcutLabel})`}
+                      >
+                        Local
+                        <span className="text-[10px] font-medium tracking-[0.06em] opacity-40">
+                          {localShortcutLabel}
+                        </span>
+                      </SegmentItem>
+                      <SegmentItem
+                        value={NEW_WORKSPACE_TARGET_VALUE}
+                        title={`New workspace \u2014 Create a fresh worktree now (${newWorkspaceShortcutLabel})`}
+                      >
+                        New workspace
+                        <span className="text-[10px] font-medium tracking-[0.06em] opacity-40">
+                          {newWorkspaceShortcutLabel}
+                        </span>
+                      </SegmentItem>
+                    </SegmentGroup>
+                    {projectWorkspaces.length > 0 ? (
+                      <Select
+                        value={
+                          selectedWorkspaceId ? encodeWorkspaceTargetValue(selectedWorkspaceId) : ""
+                        }
+                        onValueChange={(value) => {
+                          if (typeof value === "string" && value.length > 0) {
+                            setSelectedTargetValue(value);
+                          }
+                        }}
+                        items={projectWorkspaces.map((workspace) => ({
+                          value: encodeWorkspaceTargetValue(workspace.id),
+                          label: resolveWorkspaceLabel(workspace),
+                        }))}
+                      >
+                        <SelectTrigger
+                          aria-label="Choose an existing workspace"
+                          variant="ghost"
+                          size="xs"
+                          className={cn(
+                            "h-auto min-w-0 cursor-pointer gap-1 rounded-lg border-transparent px-3 py-2 text-xs font-medium shadow-none sm:h-auto",
+                            selectedWorkspaceId
+                              ? "bg-accent/80 text-accent-foreground shadow-sm ring-1 ring-border/50"
+                              : "bg-muted/50 text-muted-foreground/50 ring-1 ring-border/40 hover:bg-accent/30 hover:text-foreground/70",
+                          )}
                         >
-                          <div className="min-w-0">
-                            <div className="truncate font-medium text-foreground">
-                              {resolveWorkspaceLabel(workspace)}
-                            </div>
-                            <div className="truncate text-xs text-muted-foreground">
-                              {workspace.branch ?? workspace.worktreePath}
-                            </div>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                ) : selectedProject && !selectedProjectIsHome ? (
-                  <div className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground/70">
-                    <span>{targetLabel}</span>
-                    {targetShortcutLabel ? (
-                      <span className="rounded bg-white/[0.04] px-1 py-0.5 font-medium text-[10px] tracking-[0.08em] text-muted-foreground/58">
-                        {targetShortcutLabel}
-                      </span>
+                          {selectedWorkspace
+                            ? resolveWorkspaceLabel(selectedWorkspace)
+                            : "Workspaces"}
+                        </SelectTrigger>
+                        <SelectPopup align="center" className="min-w-72">
+                          {projectWorkspaces.map((workspace) => (
+                            <SelectItem
+                              key={workspace.id}
+                              value={encodeWorkspaceTargetValue(workspace.id)}
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate font-medium text-foreground">
+                                  {resolveWorkspaceLabel(workspace)}
+                                </div>
+                                <div className="truncate text-xs text-muted-foreground">
+                                  {workspace.branch ?? workspace.worktreePath}
+                                </div>
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
                     ) : null}
                   </div>
                 ) : null}
