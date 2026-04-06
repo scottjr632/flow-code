@@ -1184,34 +1184,29 @@ const make = Effect.gen(function* () {
       if (event.type === "turn.diff.updated") {
         const turnId = toTurnId(event.turnId);
         if (turnId && (yield* supportsCheckpointingForThread(thread.id))) {
-          // Skip if a checkpoint already exists for this turn. A real
-          // (non-placeholder) capture from CheckpointReactor should not
-          // be clobbered, and dispatching a duplicate placeholder for the
-          // same turnId would produce an unstable checkpointTurnCount.
-          if (thread.checkpoints.some((c) => c.turnId === turnId)) {
-            // Already tracked; no-op.
-          } else {
-            const assistantMessageId = MessageId.makeUnsafe(
-              `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
-            );
-            const maxTurnCount = thread.checkpoints.reduce(
-              (max, c) => Math.max(max, c.checkpointTurnCount),
-              0,
-            );
-            yield* orchestrationEngine.dispatch({
-              type: "thread.turn.diff.complete",
-              commandId: providerCommandId(event, "thread-turn-diff-complete"),
-              threadId: thread.id,
-              turnId,
-              completedAt: now,
-              checkpointRef: CheckpointRef.makeUnsafe(`provider-diff:${event.eventId}`),
-              status: "missing",
-              files: [],
-              assistantMessageId,
-              checkpointTurnCount: maxTurnCount + 1,
-              createdAt: now,
-            });
-          }
+          const assistantMessageId = MessageId.makeUnsafe(
+            `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
+          );
+          const existingCheckpoint = thread.checkpoints.find(
+            (checkpoint) => checkpoint.turnId === turnId,
+          );
+          const maxTurnCount = thread.checkpoints.reduce(
+            (max, c) => Math.max(max, c.checkpointTurnCount),
+            0,
+          );
+          yield* orchestrationEngine.dispatch({
+            type: "thread.turn.diff.complete",
+            commandId: providerCommandId(event, "thread-turn-diff-complete"),
+            threadId: thread.id,
+            turnId,
+            completedAt: now,
+            checkpointRef: CheckpointRef.makeUnsafe(`provider-diff:${event.eventId}`),
+            status: "missing",
+            files: [],
+            assistantMessageId,
+            checkpointTurnCount: existingCheckpoint?.checkpointTurnCount ?? maxTurnCount + 1,
+            createdAt: now,
+          });
         }
       }
 

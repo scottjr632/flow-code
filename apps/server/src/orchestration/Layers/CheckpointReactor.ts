@@ -340,17 +340,6 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // Only skip if a real (non-placeholder) checkpoint already exists for this turn.
-    // ProviderRuntimeIngestion may insert placeholder entries with status "missing"
-    // before this reactor runs; those must not prevent the real capture.
-    if (
-      thread.checkpoints.some(
-        (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
-      )
-    ) {
-      return;
-    }
-
     const checkpointCwd = yield* resolveCheckpointCwd({
       threadId: thread.id,
       thread,
@@ -361,18 +350,18 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // If a placeholder checkpoint exists for this turn, reuse its turn count
-    // instead of incrementing past it.
-    const existingPlaceholder = thread.checkpoints.find(
-      (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
+    // Reuse the existing turn count whenever the turn has already produced
+    // either a placeholder or a real checkpoint. That lets later turn.diff
+    // updates and the final turn.completed refresh replace stale summaries
+    // instead of creating duplicate turn numbers.
+    const existingCheckpoint = thread.checkpoints.find(
+      (checkpoint) => checkpoint.turnId === turnId,
     );
     const currentTurnCount = thread.checkpoints.reduce(
       (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
       0,
     );
-    const nextTurnCount = existingPlaceholder
-      ? existingPlaceholder.checkpointTurnCount
-      : currentTurnCount + 1;
+    const nextTurnCount = existingCheckpoint?.checkpointTurnCount ?? currentTurnCount + 1;
 
     yield* captureAndDispatchCheckpoint({
       threadId: thread.id,
@@ -410,19 +399,6 @@ const make = Effect.gen(function* () {
       yield* Effect.logWarning("checkpoint capture from placeholder skipped: thread not found", {
         threadId,
       });
-      return;
-    }
-
-    // If a real checkpoint already exists for this turn, skip.
-    if (
-      thread.checkpoints.some(
-        (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
-      )
-    ) {
-      yield* Effect.logDebug(
-        "checkpoint capture from placeholder skipped: real checkpoint already exists",
-        { threadId, turnId },
-      );
       return;
     }
 

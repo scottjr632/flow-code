@@ -388,6 +388,7 @@ export default function Sidebar({
   const [collapsedWorkspaceSections, setCollapsedWorkspaceSections] = useState<
     ReadonlySet<ProjectId>
   >(() => new Set());
+  const [isHomeCollapsed, setIsHomeCollapsed] = useState(false);
   const toggleWorkspaceExpanded = useCallback((workspaceId: WorkspaceId) => {
     setExpandedWorkspaceIds((current) => {
       const next = new Set(current);
@@ -2436,9 +2437,20 @@ export default function Sidebar({
             {homeRenderedProject ? (
               <SidebarGroup className="px-2 pt-2 pb-1">
                 <div className="group/home-header mb-1 flex items-center justify-between pl-2 pr-1.5">
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                    Home
-                  </span>
+                  <button
+                    type="button"
+                    className="flex cursor-pointer items-center gap-1"
+                    onClick={() => setIsHomeCollapsed((prev) => !prev)}
+                  >
+                    <ChevronRightIcon
+                      className={`size-3 text-muted-foreground/50 transition-transform duration-150 ${
+                        isHomeCollapsed ? "" : "rotate-90"
+                      }`}
+                    />
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                      Home
+                    </span>
+                  </button>
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -2460,11 +2472,13 @@ export default function Sidebar({
                     <TooltipPopup side="right">New thread</TooltipPopup>
                   </Tooltip>
                 </div>
-                <SidebarMenu>
-                  <SidebarMenuItem key={homeRenderedProject.project.id}>
-                    {renderProjectItem(homeRenderedProject, null)}
-                  </SidebarMenuItem>
-                </SidebarMenu>
+                {!isHomeCollapsed ? (
+                  <SidebarMenu>
+                    <SidebarMenuItem key={homeRenderedProject.project.id}>
+                      {renderProjectItem(homeRenderedProject, null)}
+                    </SidebarMenuItem>
+                  </SidebarMenu>
+                ) : null}
               </SidebarGroup>
             ) : null}
 

@@ -206,6 +206,33 @@ async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 5000) {
   return poll();
 }
 
+async function waitForGitFileAtRef(
+  cwd: string,
+  ref: string,
+  filePath: string,
+  expected: string,
+  timeoutMs = 5000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  const poll = async (): Promise<void> => {
+    try {
+      if (gitShowFileAtRef(cwd, ref, filePath) === expected) {
+        return;
+      }
+    } catch {
+      // The checkpoint ref may not exist yet.
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Timed out waiting for ${ref}:${filePath} to equal ${JSON.stringify(expected)}.`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return poll();
+  };
+  return poll();
+}
+
 describe("CheckpointReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
     OrchestrationEngineService | CheckpointReactor | CheckpointStore,
@@ -415,6 +442,127 @@ describe("CheckpointReactor", () => {
         "README.md",
       ),
     ).toBe("v2\n");
+  });
+
+  it("refreshes an existing turn checkpoint when newer placeholder diff events arrive", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const checkpointRef = checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 1);
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const turnId = asTurnId("turn-refresh-placeholder");
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.makeUnsafe("evt-turn-started-refresh-placeholder"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId,
+      turnId,
+    });
+    await waitForGitRefExists(
+      harness.cwd,
+      checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 0),
+    );
+
+    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.makeUnsafe("cmd-turn-diff-refresh-placeholder-1"),
+        threadId,
+        turnId,
+        completedAt: new Date().toISOString(),
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "missing",
+        files: [],
+        assistantMessageId: MessageId.makeUnsafe("assistant:placeholder-1"),
+        checkpointTurnCount: 1,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    await waitForGitFileAtRef(harness.cwd, checkpointRef, "README.md", "v2\n");
+
+    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v3\n", "utf8");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.makeUnsafe("cmd-turn-diff-refresh-placeholder-2"),
+        threadId,
+        turnId,
+        completedAt: new Date().toISOString(),
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "missing",
+        files: [],
+        assistantMessageId: MessageId.makeUnsafe("assistant:placeholder-2"),
+        checkpointTurnCount: 1,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+
+    await waitForGitFileAtRef(harness.cwd, checkpointRef, "README.md", "v3\n");
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.checkpoints.length === 1 && entry.checkpoints[0]?.checkpointTurnCount === 1,
+    );
+    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+  });
+
+  it("refreshes an existing turn checkpoint when turn.completed arrives after an early capture", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const checkpointRef = checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 1);
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const turnId = asTurnId("turn-refresh-completed");
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.makeUnsafe("evt-turn-started-refresh-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId,
+      turnId,
+    });
+    await waitForGitRefExists(
+      harness.cwd,
+      checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 0),
+    );
+
+    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.makeUnsafe("cmd-turn-diff-refresh-completed-placeholder"),
+        threadId,
+        turnId,
+        completedAt: new Date().toISOString(),
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "missing",
+        files: [],
+        assistantMessageId: MessageId.makeUnsafe("assistant:placeholder-completed"),
+        checkpointTurnCount: 1,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    await waitForGitFileAtRef(harness.cwd, checkpointRef, "README.md", "v2\n");
+
+    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v3\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.makeUnsafe("evt-turn-completed-refresh-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+
+    await waitForGitFileAtRef(harness.cwd, checkpointRef, "README.md", "v3\n");
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.latestTurn?.turnId === "turn-refresh-completed" &&
+        entry.checkpoints.length === 1 &&
+        entry.checkpoints[0]?.checkpointTurnCount === 1,
+    );
+    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
   });
 
   it("ignores auxiliary thread turn completion while primary turn is active", async () => {

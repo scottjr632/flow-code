@@ -179,6 +179,45 @@ async function waitForThread(
   return poll();
 }
 
+async function waitForEvents(
+  engine: OrchestrationEngineShape,
+  predicate: (events: Array<{ type: string; payload: unknown }>) => boolean,
+  timeoutMs = 2000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  const poll = async (): Promise<Array<{ type: string; payload: unknown }>> => {
+    const events = await Effect.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(Effect.map((chunk) => Array.from(chunk))),
+    );
+    if (predicate(events)) {
+      return events;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for events");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return poll();
+  };
+  return poll();
+}
+
+function isTurnDiffCompletedEvent(event: { type: string; payload: unknown }): event is {
+  type: "thread.turn-diff-completed";
+  payload: {
+    turnId: string;
+    checkpointTurnCount: number;
+    assistantMessageId: string | null;
+  };
+} {
+  if (event.type !== "thread.turn-diff-completed") {
+    return false;
+  }
+  if (!event.payload || typeof event.payload !== "object") {
+    return false;
+  }
+  return typeof (event.payload as { turnId?: unknown }).turnId === "string";
+}
+
 type ProviderRuntimeTestReadModel = OrchestrationReadModel;
 type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number];
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
@@ -2039,6 +2078,56 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     expect(thread.checkpoints.some((checkpoint) => checkpoint.turnId === "turn-jj")).toBe(true);
+  });
+
+  it("re-emits turn-diff checkpoints for repeated diff updates in the same turn", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.diff.updated",
+      eventId: asEventId("evt-turn-diff-repeat-1"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-repeat"),
+      itemId: asItemId("item-repeat-1"),
+      payload: {
+        unifiedDiff: "diff --git a/file.txt b/file.txt\n+hello\n",
+      },
+    });
+
+    await waitForThread(harness.engine, (entry) =>
+      entry.checkpoints.some((checkpoint) => checkpoint.turnId === "turn-repeat"),
+    );
+
+    harness.emit({
+      type: "turn.diff.updated",
+      eventId: asEventId("evt-turn-diff-repeat-2"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-repeat"),
+      itemId: asItemId("item-repeat-2"),
+      payload: {
+        unifiedDiff: "diff --git a/file.txt b/file.txt\n+hello again\n",
+      },
+    });
+
+    const events = await waitForEvents(harness.engine, (allEvents) => {
+      const diffEvents = allEvents
+        .filter(isTurnDiffCompletedEvent)
+        .filter((event) => event.payload.turnId === "turn-repeat");
+      return diffEvents.length >= 2;
+    });
+    const diffEvents = events
+      .filter(isTurnDiffCompletedEvent)
+      .filter((event) => event.payload.turnId === "turn-repeat");
+
+    expect(diffEvents).toHaveLength(2);
+    expect(diffEvents[0]?.payload.checkpointTurnCount).toBe(1);
+    expect(diffEvents[1]?.payload.checkpointTurnCount).toBe(1);
+    expect(diffEvents[1]?.payload.assistantMessageId).toBe("assistant:item-repeat-2");
   });
 
   it("does not create turn-diff checkpoints for jj workspaces when git is forced", async () => {
