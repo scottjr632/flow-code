@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type ServerConfig,
   type ThreadId,
+  type WorkItemId,
   type WorkspaceId,
   type WsWelcomePayload,
   WS_CHANNELS,
@@ -41,6 +42,7 @@ const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 const PROJECT_ID = "project-1" as ProjectId;
 const SECOND_PROJECT_ID = "project-2" as ProjectId;
 const WORKSPACE_ID = "workspace-1" as WorkspaceId;
+const WORK_ITEM_ID = "work-item-browser-test" as WorkItemId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
@@ -341,6 +343,33 @@ function withSecondProject(snapshot: OrchestrationReadModel): OrchestrationReadM
           lastError: null,
           updatedAt: NOW_ISO,
         },
+      },
+    ],
+  };
+}
+
+function withWorkItem(
+  snapshot: OrchestrationReadModel,
+  overrides?: Partial<OrchestrationReadModel["workItems"][number]>,
+): OrchestrationReadModel {
+  return {
+    ...snapshot,
+    workItems: [
+      ...snapshot.workItems,
+      {
+        id: WORK_ITEM_ID,
+        projectId: PROJECT_ID,
+        title: "Browser test work item",
+        notes: "Delete from the edit modal.",
+        status: "todo",
+        source: "manual",
+        workspaceId: null,
+        linkedThreadId: null,
+        rank: 0,
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+        ...overrides,
       },
     ],
   };
@@ -3638,6 +3667,43 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("opens the new work item modal from the command palette on the new-thread route", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      initialEntries: ["/"],
+      snapshot: withSecondProject(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-new-thread-route-command-palette-new-work-item" as MessageId,
+          targetText: "new thread route command palette new work item",
+        }),
+      ),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/",
+        "The new-thread route should be active before opening the command palette.",
+      );
+
+      dispatchWorkspaceCommandPaletteShortcut();
+
+      const newWorkItemCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("New work item"),
+          ) ?? null,
+        "Unable to find New work item command on the new-thread route.",
+      );
+      newWorkItemCommand.click();
+
+      await expect.element(page.getByText("New work item")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("opens the work surface from the command palette on a chat route", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -3818,6 +3884,60 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await expect.element(page.getByText("New work item")).toBeInTheDocument();
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows a delete button in the edit work item modal and dispatches delete", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      initialEntries: ["/work"],
+      snapshot: withWorkItem(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-work-item-delete-modal" as MessageId,
+          targetText: "work item delete modal",
+        }),
+      ),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/work",
+        "The work route should be active before editing a work item.",
+      );
+
+      await page.getByRole("button", { name: "Edit Browser test work item" }).click();
+      await expect.element(page.getByText("Edit work item")).toBeInTheDocument();
+
+      const deleteButton = page.getByRole("button", { name: "Delete" });
+      await expect.element(deleteButton).toBeInTheDocument();
+      await deleteButton.click();
+
+      await vi.waitFor(
+        () => {
+          const deleteRequest = wsRequests.find((request) => {
+            const command = request as
+              | {
+                  type?: string;
+                  itemId?: WorkItemId;
+                }
+              | undefined;
+            return (
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              command?.type === "work-item.delete" &&
+              command.itemId === WORK_ITEM_ID
+            );
+          });
+
+          expect(deleteRequest).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      confirmSpy.mockRestore();
       await mounted.cleanup();
     }
   });

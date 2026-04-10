@@ -143,7 +143,6 @@ import {
 } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
 import { useThreadActions } from "../hooks/useThreadActions";
-import { useWorkItemActions } from "../hooks/useWorkItemActions";
 import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { findTerminalGroupByTerminalId, terminalGroupIdForTerminal } from "../terminalGroups";
@@ -222,12 +221,7 @@ import {
 } from "./chat/composerProviderRegistry";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
-import {
-  deriveWorkItemEditorValues,
-  WorkItemEditorDialog,
-  type WorkItemDialogState,
-  type WorkItemEditorValues,
-} from "./WorkItemEditorDialog";
+import { WorkItemEditorDialog } from "./WorkItemEditorDialog";
 import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
@@ -255,6 +249,7 @@ import {
 } from "./ChatView.logic";
 import { sortThreadsForSidebar } from "./Sidebar.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useCreateWorkItemDialog } from "../hooks/useCreateWorkItemDialog";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useWorkspaceCommandPalette } from "../hooks/useWorkspaceCommandPalette";
 import { buildWorkspaceCommandPaletteNavigationItems } from "../workspaceCommandPaletteItems";
@@ -373,7 +368,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const settings = useSettings();
   const { confirmAndArchiveThread } = useThreadActions();
-  const { createWorkItem } = useWorkItemActions();
   const { handleNewThread } = useHandleNewThread();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -486,10 +480,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const { isOpen: isWorkspaceCommandPaletteOpen, setIsOpen: setIsWorkspaceCommandPaletteOpen } =
     useWorkspaceCommandPalette();
-  const [workItemDialogState, setWorkItemDialogState] = useState<WorkItemDialogState | null>(null);
-  const [workItemEditorValues, setWorkItemEditorValues] = useState<WorkItemEditorValues>(() =>
-    deriveWorkItemEditorValues(null, null),
-  );
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -711,6 +701,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
         .map((project) => ({ id: project.id, name: project.name })),
     [projects],
   );
+  const {
+    closeDialog: closeWorkItemDialog,
+    dialogState: workItemDialogState,
+    editorValues: workItemEditorValues,
+    handleSubmit: handleSubmitWorkItemDialog,
+    openCreateDialog: openCreateWorkItemDialog,
+    setEditorValues: setWorkItemEditorValues,
+    workspaceOptions: workItemWorkspaceOptions,
+  } = useCreateWorkItemDialog({
+    projects: userProjects,
+    workspaces,
+  });
   const gitCwd = activeProjectSupportsWorkspace
     ? projectScriptCwd({
         project: { cwd: activeProject.cwd },
@@ -730,50 +732,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }),
     [activeThread?.branch, activeThread?.workspaceId, activeThread?.worktreePath, workspaces],
   );
-  const workItemWorkspaceOptions = useMemo(
-    () =>
-      workspaces
-        .filter((workspace) => workspace.projectId === workItemEditorValues.projectId)
-        .toSorted((left, right) => left.name.localeCompare(right.name))
-        .map((workspace) => ({ id: workspace.id, name: workspace.name })),
-    [workItemEditorValues.projectId, workspaces],
-  );
-  const closeWorkItemDialog = useCallback((open: boolean) => {
-    if (open) {
-      return;
-    }
-    setWorkItemDialogState(null);
-  }, []);
-  const handleSubmitWorkItemDialog = useCallback(() => {
-    if (!workItemDialogState || !workItemEditorValues.projectId) {
-      return;
-    }
-
-    const title = workItemEditorValues.title.trim();
-    if (title.length === 0) {
-      return;
-    }
-
-    const notes = workItemEditorValues.notes.trim();
-    void createWorkItem({
-      projectId: workItemEditorValues.projectId,
-      title,
-      notes: notes.length > 0 ? notes : null,
-      workspaceId: workItemEditorValues.workspaceId,
-      status: workItemEditorValues.status,
-      source: "manual",
-    })
-      .then(() => {
-        setWorkItemDialogState(null);
-      })
-      .catch((error) => {
-        toastManager.add({
-          type: "error",
-          title: "Failed to create work item",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
-        });
-      });
-  }, [createWorkItem, workItemDialogState, workItemEditorValues]);
   const projectDraftThread = activeProject ? getDraftThreadByProjectId(activeProject.id) : null;
   const workspaceSessionTabs = useMemo(() => {
     if (!activeProject || !activeWorkspaceContext.workspaceId || !activeThread) {
@@ -4930,6 +4888,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       onOpenNewThread: () => {
         void navigate({ to: "/" });
       },
+      onOpenNewWorkItem: (projectId) => {
+        openCreateWorkItemDialog(projectId);
+      },
       onOpenWorkSurface: (projectId) => {
         void navigate({
           to: "/work",
@@ -5018,6 +4979,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     navigate,
     newThreadShortcutLabel,
     newTerminalShortcutLabel,
+    openCreateWorkItemDialog,
     openFilesWorkspace,
     projects,
     resolvedWorkspaceTabId,

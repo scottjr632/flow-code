@@ -34,6 +34,7 @@ import {
 import { cn } from "~/lib/utils";
 
 import { isElectron } from "../env";
+import { useCreateWorkItemDialog } from "../hooks/useCreateWorkItemDialog";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTheme } from "../hooks/useTheme";
 import { useWorkspaceCommandPalette } from "../hooks/useWorkspaceCommandPalette";
@@ -57,7 +58,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   DEFAULT_INTERACTION_MODE,
 } from "../types";
-import { isHomeProject } from "../systemProject";
+import { isHomeProject, isUserProject } from "../systemProject";
 import { type ComposerImageAttachment, useComposerDraftStore } from "../composerDraftStore";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import {
@@ -72,6 +73,7 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { buildTemporaryWorktreeBranchName, processImageFiles } from "./ChatView.logic";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { deriveDefaultWorkspaceTitle, type SidebarNewThreadEnvMode } from "./Sidebar.logic";
+import { WorkItemEditorDialog } from "./WorkItemEditorDialog";
 import { ComposerCommandMenu, type ComposerCommandItem } from "./chat/ComposerCommandMenu";
 import { ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { TraitsPicker } from "./chat/TraitsPicker";
@@ -290,6 +292,14 @@ export function NewThreadScreen({
   const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(() =>
     resolveInitialProjectId(projects, threads, threadMruIds, requestedProjectId),
   );
+  const userProjects = useMemo(
+    () =>
+      projects
+        .filter(isUserProject)
+        .toSorted((left, right) => left.name.localeCompare(right.name))
+        .map((project) => ({ id: project.id, name: project.name })),
+    [projects],
+  );
   const projectWorkspaces = useMemo(
     () => sortProjectWorkspaces(workspaces, selectedProjectId),
     [selectedProjectId, workspaces],
@@ -297,6 +307,18 @@ export function NewThreadScreen({
   const [selectedTargetValue, setSelectedTargetValue] = useState(() =>
     resolveInitialTargetValue(requestedEnvMode),
   );
+  const {
+    closeDialog: closeWorkItemDialog,
+    dialogState: workItemDialogState,
+    editorValues: workItemEditorValues,
+    handleSubmit: handleSubmitWorkItemDialog,
+    openCreateDialog: openCreateWorkItemDialog,
+    setEditorValues: setWorkItemEditorValues,
+    workspaceOptions: workItemWorkspaceOptions,
+  } = useCreateWorkItemDialog({
+    projects: userProjects,
+    workspaces,
+  });
 
   // --- Model / Provider / Mode state ---
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
@@ -420,7 +442,7 @@ export function NewThreadScreen({
   const workspaceCommandPaletteItems = useMemo(
     () =>
       buildWorkspaceCommandPaletteNavigationItems({
-        projects,
+        projects: userProjects,
         threads: orderCommandPaletteThreads(threads, threadMruIds),
         selectedProjectId,
         onOpenNewThread: () => {
@@ -428,6 +450,9 @@ export function NewThreadScreen({
             to: "/",
             ...(selectedProjectId ? { search: { projectId: selectedProjectId } } : {}),
           });
+        },
+        onOpenNewWorkItem: (projectId) => {
+          openCreateWorkItemDialog(projectId);
         },
         onOpenWorkSurface: (projectId) => {
           void navigate({
@@ -445,7 +470,7 @@ export function NewThreadScreen({
           });
         },
       }),
-    [navigate, projects, selectedProjectId, threadMruIds, threads],
+    [navigate, openCreateWorkItemDialog, selectedProjectId, threadMruIds, threads, userProjects],
   );
   const selectedProjectBranchesQuery = useQuery(
     gitBranchesQueryOptions(selectedProject?.cwd ?? null),
@@ -952,6 +977,16 @@ export function NewThreadScreen({
           items={workspaceCommandPaletteItems}
           placeholder="Type command or search"
           emptyText="No matching project, thread, or action."
+        />
+        <WorkItemEditorDialog
+          open={workItemDialogState !== null}
+          mode={workItemDialogState?.mode ?? "create"}
+          values={workItemEditorValues}
+          projects={userProjects}
+          workspaces={workItemWorkspaceOptions}
+          onOpenChange={closeWorkItemDialog}
+          onValuesChange={setWorkItemEditorValues}
+          onSubmit={handleSubmitWorkItemDialog}
         />
         <div className="flex flex-1 flex-col">
           <div className="flex flex-1 flex-col items-center justify-center px-6 pb-10 pt-16 sm:px-8 sm:pt-18">

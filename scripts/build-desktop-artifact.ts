@@ -154,13 +154,8 @@ function resolvePythonForNodeGyp(): string | undefined {
   return executable;
 }
 
-function resolveElectronBuilderExecutable(repoRoot: string): string {
-  return join(
-    repoRoot,
-    "node_modules",
-    ".bin",
-    process.platform === "win32" ? "electron-builder.cmd" : "electron-builder",
-  );
+function resolveElectronBuilderCliPath(repoRoot: string): string {
+  return join(repoRoot, "node_modules", "electron-builder", "cli.js");
 }
 
 interface ResolvedBuildOptions {
@@ -722,10 +717,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     buildEnv.GYP_MSVS_VERSION = buildEnv.GYP_MSVS_VERSION ?? "2022";
   }
 
-  const electronBuilderExecutable = resolveElectronBuilderExecutable(repoRoot);
-  if (!existsSync(electronBuilderExecutable)) {
+  const electronBuilderCliPath = resolveElectronBuilderCliPath(repoRoot);
+  if (!existsSync(electronBuilderCliPath)) {
     return yield* new BuildScriptError({
-      message: `electron-builder is missing at ${electronBuilderExecutable}. Run 'bun install' in the repo root.`,
+      message: `electron-builder CLI is missing at ${electronBuilderCliPath}. Run 'bun install' in the repo root.`,
     });
   }
 
@@ -737,9 +732,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       cwd: stageAppDir,
       env: buildEnv,
       ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims.
+      // Keep shell mode on Windows for consistency with the rest of the release pipeline.
       shell: process.platform === "win32",
-    })`${electronBuilderExecutable} ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`node ${electronBuilderCliPath} ${platformConfig.cliFlag} --${options.arch} --publish never`,
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");

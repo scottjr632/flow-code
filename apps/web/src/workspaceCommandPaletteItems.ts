@@ -1,5 +1,11 @@
 import { type ProjectId, type ThreadId } from "@t3tools/contracts";
-import { FolderIcon, ListTodoIcon, MessageSquareTextIcon, SquarePenIcon } from "lucide-react";
+import {
+  FolderIcon,
+  ListTodoIcon,
+  MessageSquareTextIcon,
+  PlusIcon,
+  SquarePenIcon,
+} from "lucide-react";
 
 import type { WorkspaceCommandPaletteItem } from "~/components/WorkspaceCommandPalette";
 
@@ -22,6 +28,7 @@ interface BuildWorkspaceCommandPaletteNavigationItemsOptions {
   readonly activeThreadId?: ThreadId | null;
   readonly newThreadShortcutLabel?: string;
   readonly onOpenNewThread: () => void;
+  readonly onOpenNewWorkItem?: (projectId: ProjectId | null) => void;
   readonly onOpenWorkSurface: (projectId: ProjectId | null) => void;
   readonly onSelectProject: (projectId: ProjectId) => void;
   readonly onSelectThread: (threadId: ThreadId) => void;
@@ -59,6 +66,25 @@ export function buildWorkspaceCommandPaletteNavigationItems(
       },
     },
   ];
+
+  if (options.onOpenNewWorkItem && options.projects.length > 0) {
+    const selectedProjectName =
+      options.selectedProjectId !== null
+        ? (projectNameById.get(options.selectedProjectId) ?? null)
+        : null;
+
+    items.push({
+      id: "action:new-work-item",
+      group: "actions",
+      title: "New work item",
+      keywords: "new work item create task todo backlog issue",
+      icon: PlusIcon,
+      ...(selectedProjectName ? { subtitle: selectedProjectName } : {}),
+      onSelect: () => {
+        options.onOpenNewWorkItem?.(options.selectedProjectId);
+      },
+    });
+  }
 
   options.projects.forEach((project) => {
     const isSelectedProject = project.id === options.selectedProjectId;

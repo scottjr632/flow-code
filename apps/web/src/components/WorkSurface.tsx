@@ -97,6 +97,9 @@ const STATUS_META: Record<
   },
 };
 
+const WORK_ITEM_VIZ_TEXT_CLASS = "text-[11px]";
+const WORK_ITEM_VIZ_TITLE_CLASS = "text-[11px] font-medium leading-4 text-foreground";
+
 interface WorkSurfaceProps {
   view: WorkSurfaceView;
   selectedProjectId: ProjectId | null;
@@ -304,9 +307,7 @@ function SortableWorkItemCard({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex items-start justify-between gap-1.5">
             <div className="min-w-0">
-              <div className="truncate text-[13px] font-medium leading-5 text-foreground">
-                {item.title}
-              </div>
+              <div className={cn("truncate", WORK_ITEM_VIZ_TITLE_CLASS)}>{item.title}</div>
               {item.notes ? (
                 <p className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">
                   {item.notes}
@@ -461,14 +462,18 @@ function SortableListRow({
 
       <StatusIcon status={item.status} className="shrink-0" />
 
-      <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{item.title}</span>
+      <span className={cn("min-w-0 flex-1 truncate", WORK_ITEM_VIZ_TEXT_CLASS, "text-foreground")}>
+        {item.title}
+      </span>
 
       {/* Right side: project info crossfades with action buttons on hover */}
       <div className="grid shrink-0">
         {/* Layer 1 — project info (visible at rest, fades out on hover) */}
         <div className="col-start-1 row-start-1 flex items-center justify-end gap-2 transition-all duration-200 ease-out group-hover/row:opacity-0 group-hover/row:-translate-x-1">
           {showProject ? (
-            <span className="text-[11px] text-muted-foreground">{projectName}</span>
+            <span className={cn(WORK_ITEM_VIZ_TEXT_CLASS, "text-muted-foreground")}>
+              {projectName}
+            </span>
           ) : null}
           {workspaceName ? (
             <Badge variant="outline" size="sm" className="h-4.5 gap-1 px-1.5 text-[10px]">
@@ -630,9 +635,7 @@ function WorkItemCardDragOverlay({
         </div>
         <div className="min-w-0 flex-1 space-y-1">
           <div className="min-w-0">
-            <div className="truncate text-[13px] font-medium leading-5 text-foreground">
-              {item.title}
-            </div>
+            <div className={cn("truncate", WORK_ITEM_VIZ_TITLE_CLASS)}>{item.title}</div>
             {item.notes ? (
               <p className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">
                 {item.notes}
@@ -678,10 +681,14 @@ function WorkItemListRowDragOverlay({
         <GripVerticalIcon className="size-3" />
       </div>
       <StatusIcon status={item.status} className="shrink-0" />
-      <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{item.title}</span>
+      <span className={cn("min-w-0 flex-1 truncate", WORK_ITEM_VIZ_TEXT_CLASS, "text-foreground")}>
+        {item.title}
+      </span>
       <div className="flex shrink-0 items-center gap-2">
         {showProject ? (
-          <span className="text-[11px] text-muted-foreground">{projectName}</span>
+          <span className={cn(WORK_ITEM_VIZ_TEXT_CLASS, "text-muted-foreground")}>
+            {projectName}
+          </span>
         ) : null}
         {workspaceName ? (
           <Badge variant="outline" size="sm" className="h-4.5 gap-1 px-1.5 text-[10px]">
@@ -793,17 +800,23 @@ export function WorkSurface({
     }),
   );
 
-  const openCreateDialog = useCallback(() => {
-    const nextValues = deriveWorkItemEditorValues(
-      { mode: "create", item: null },
-      activeProjectId ?? userProjects[0]?.id ?? null,
-    );
-    setDialogState({ mode: "create", item: null });
-    setEditorValues(nextValues);
-  }, [activeProjectId, userProjects]);
+  const openCreateDialog = useCallback(
+    (preferredProjectId: ProjectId | null = null) => {
+      const resolvedProjectId = userProjects.some((project) => project.id === preferredProjectId)
+        ? preferredProjectId
+        : (activeProjectId ?? userProjects[0]?.id ?? null);
+      const nextValues = deriveWorkItemEditorValues(
+        { mode: "create", item: null },
+        resolvedProjectId,
+      );
+      setDialogState({ mode: "create", item: null });
+      setEditorValues(nextValues);
+    },
+    [activeProjectId, userProjects],
+  );
 
   const workspaceCommandPaletteItems = useMemo<WorkspaceCommandPaletteItem[]>(() => {
-    const items = buildWorkspaceCommandPaletteNavigationItems({
+    return buildWorkspaceCommandPaletteNavigationItems({
       projects: userProjects,
       threads,
       selectedProjectId: activeProjectId,
@@ -812,6 +825,9 @@ export function WorkSurface({
           to: "/",
           ...(activeProjectId ? { search: { projectId: activeProjectId } } : {}),
         });
+      },
+      onOpenNewWorkItem: (projectId) => {
+        openCreateDialog(projectId);
       },
       onOpenWorkSurface: (projectId) => {
         void navigate({
@@ -829,32 +845,11 @@ export function WorkSurface({
         });
       },
     });
-
-    if (userProjects.length === 0) {
-      return items;
-    }
-
-    items.push({
-      id: "action:new-work-item",
-      group: "actions",
-      title: "New work item",
-      keywords: "new work item create task todo backlog issue",
-      icon: PlusIcon,
-      ...(activeProjectId
-        ? { subtitle: projectNameById.get(activeProjectId) ?? "Selected project" }
-        : {}),
-      onSelect: () => {
-        openCreateDialog();
-      },
-    });
-
-    return items;
   }, [
     activeProjectId,
     navigate,
     onProjectFilterChange,
     openCreateDialog,
-    projectNameById,
     threads,
     userProjects,
     view,
@@ -925,6 +920,28 @@ export function WorkSurface({
         description: error instanceof Error ? error.message : "An unexpected error occurred.",
       });
     });
+  };
+
+  const handleDeleteDialogItem = (item: WorkItem) => {
+    if (!window.confirm(`Delete "${item.title}"?`)) {
+      return;
+    }
+    void deleteWorkItem(item.id)
+      .then(() => {
+        setDialogState((current) => {
+          if (current?.mode !== "edit" || current.item?.id !== item.id) {
+            return current;
+          }
+          return null;
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Failed to delete work item",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
   };
 
   const handleLaunch = (item: WorkItem, mode: WorkItemLaunchMode) => {
@@ -1074,7 +1091,11 @@ export function WorkSurface({
             ready.
           </EmptyDescription>
         </EmptyHeader>
-        <Button onClick={openCreateDialog}>
+        <Button
+          onClick={() => {
+            openCreateDialog();
+          }}
+        >
           <PlusIcon className="size-4" />
           New work item
         </Button>
@@ -1173,10 +1194,15 @@ export function WorkSurface({
               <section key={section.status}>
                 <div className="flex items-center gap-2 border-b border-border/40 bg-muted/15 px-4 py-1.5">
                   <StatusIcon status={section.status} />
-                  <span className="text-[13px] font-medium text-foreground">
+                  <span className={cn(WORK_ITEM_VIZ_TEXT_CLASS, "font-medium text-foreground")}>
                     {STATUS_META[section.status].label}
                   </span>
-                  <span className="text-xs tabular-nums text-muted-foreground/60">
+                  <span
+                    className={cn(
+                      WORK_ITEM_VIZ_TEXT_CLASS,
+                      "tabular-nums text-muted-foreground/60",
+                    )}
+                  >
                     {sectionItemCount}
                   </span>
                 </div>
@@ -1275,7 +1301,13 @@ export function WorkSurface({
           ))}
         </SelectPopup>
       </Select>
-      <Button size="xs" onClick={openCreateDialog} disabled={userProjects.length === 0}>
+      <Button
+        size="xs"
+        onClick={() => {
+          openCreateDialog();
+        }}
+        disabled={userProjects.length === 0}
+      >
         <PlusIcon className="size-3.5" />
         New
       </Button>
@@ -1369,6 +1401,7 @@ export function WorkSurface({
         onSubmit={handleSubmitDialog}
         {...(dialogState?.item
           ? {
+              onDelete: () => handleDeleteDialogItem(dialogState.item!),
               onLaunchLocal: () => handleLaunch(dialogState.item!, "local"),
               onLaunchWorkspace: () => handleLaunch(dialogState.item!, "workspace"),
             }

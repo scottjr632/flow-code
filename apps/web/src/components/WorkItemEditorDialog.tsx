@@ -1,5 +1,5 @@
 import { type ProjectId, type WorkItemStatus } from "@t3tools/contracts";
-import { CommandIcon, GitForkIcon, PlayIcon } from "lucide-react";
+import { CommandIcon, GitForkIcon, PlayIcon, Trash2Icon } from "lucide-react";
 
 import { isMacPlatform, matchesModEnterShortcut } from "~/lib/utils";
 import type { WorkItem } from "~/types";
@@ -72,6 +72,7 @@ export function WorkItemEditorDialog({
   onOpenChange,
   onValuesChange,
   onSubmit,
+  onDelete,
   onLaunchLocal,
   onLaunchWorkspace,
 }: {
@@ -85,11 +86,14 @@ export function WorkItemEditorDialog({
   onOpenChange: (open: boolean) => void;
   onValuesChange: (updater: (current: WorkItemEditorValues) => WorkItemEditorValues) => void;
   onSubmit: () => void;
+  onDelete?: () => void;
   onLaunchLocal?: () => void;
   onLaunchWorkspace?: () => void;
 }) {
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;
   const shortcutModifierLabel = isMacPlatform(platform) ? "Cmd" : "Ctrl";
+  const showDelete = mode === "edit" && typeof onDelete === "function";
+  const showLeadingActions = showDelete || showLaunch;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -234,28 +238,44 @@ export function WorkItemEditorDialog({
           </div>
         </DialogPanel>
         <DialogFooter>
-          {showLaunch ? (
+          {showLeadingActions ? (
             <div className="mr-auto flex items-center gap-1.5">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={onLaunchLocal}
-                className="gap-1.5"
-              >
-                <PlayIcon className="size-3" />
-                Local
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={onLaunchWorkspace}
-                className="gap-1.5"
-              >
-                <GitForkIcon className="size-3" />
-                Workspace
-              </Button>
+              {showDelete ? (
+                <Button
+                  variant="destructive-outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={onDelete}
+                  className="gap-1.5"
+                >
+                  <Trash2Icon className="size-3" />
+                  Delete
+                </Button>
+              ) : null}
+              {showLaunch ? (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={onLaunchLocal}
+                    className="gap-1.5"
+                  >
+                    <PlayIcon className="size-3" />
+                    Local
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={onLaunchWorkspace}
+                    className="gap-1.5"
+                  >
+                    <GitForkIcon className="size-3" />
+                    Workspace
+                  </Button>
+                </>
+              ) : null}
             </div>
           ) : null}
           <Button variant="outline" onClick={() => onOpenChange(false)}>
