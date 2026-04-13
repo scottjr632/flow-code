@@ -671,6 +671,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     dependencies: {
       ...resolvedServerDependencies,
       ...resolvedDesktopRuntimeDependencies,
+      "@effect/platform-node-shared": rootPackageJson.workspaces.catalog["@effect/platform-node"],
     },
     devDependencies: {
       electron: electronVersion,
