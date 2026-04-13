@@ -7,8 +7,8 @@ import {
   FileSearchIcon,
   FolderTreeIcon,
   MessageSquareIcon,
-  PanelLeftCloseIcon,
-  PanelLeftIcon,
+  PanelRightCloseIcon,
+  PanelRightIcon,
   RefreshCwIcon,
   SearchIcon,
   TriangleAlertIcon,
@@ -188,7 +188,7 @@ function ResizableWorkspaceExplorerPanel(props: ResizableWorkspaceExplorerPanelP
       }
       event.preventDefault();
       const nextWidth = clampWorkspaceExplorerWidth(
-        resizeState.startWidth + (event.clientX - resizeState.startX),
+        resizeState.startWidth - (event.clientX - resizeState.startX),
       );
       if (nextWidth !== width) {
         onResize(nextWidth);
@@ -212,12 +212,12 @@ function ResizableWorkspaceExplorerPanel(props: ResizableWorkspaceExplorerPanelP
 
   return (
     <div
-      className="relative flex min-h-0 shrink-0 flex-col border-r border-border/60 bg-muted/[0.16]"
+      className="relative flex min-h-0 shrink-0 flex-col border-l border-border/60 bg-muted/[0.16]"
       style={{ width: `${width}px` }}
     >
       <div className="min-h-0 flex-1">{children}</div>
       <div
-        className="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize border-r border-border/60 transition-colors hover:border-primary/50 active:border-primary"
+        className="absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize border-l border-border/60 transition-colors hover:border-primary/50 active:border-primary"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerEnd}
@@ -833,113 +833,9 @@ export function WorkspaceEditorSurface(props: {
   const searchResults = searchEntriesQuery.data?.entries ?? [];
   return (
     <div className="h-full flex overflow-hidden">
-      {editorState.explorerOpen ? (
-        <ResizableWorkspaceExplorerPanel
-          width={clampWorkspaceExplorerWidth(
-            editorState.explorerWidth || DEFAULT_WORKSPACE_EXPLORER_WIDTH,
-          )}
-          onResize={(nextWidth) => setExplorerWidth(threadId, nextWidth)}
-        >
-          <div className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5">
-            <SearchIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
-            <input
-              value={explorerQuery}
-              onChange={(event) => setExplorerQuery(event.target.value)}
-              placeholder="Search files…"
-              className="h-6 w-full min-w-0 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/40"
-            />
-            {explorerQuery.length > 0 ? (
-              <button
-                type="button"
-                className="shrink-0 rounded-sm p-0.5 text-muted-foreground/50 hover:text-foreground"
-                onClick={() => setExplorerQuery("")}
-              >
-                <XIcon className="size-3" />
-              </button>
-            ) : null}
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1.5">
-            {explorerQuery.trim().length > 0 ? (
-              <div>
-                {searchResults.map((entry) => (
-                  <button
-                    key={`${entry.kind}:${entry.path}`}
-                    type="button"
-                    className="flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1 text-left text-[12px] leading-snug text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-                    onClick={() => {
-                      if (entry.kind === "directory") {
-                        ensureDirectoriesExpanded(props.threadId, [entry.path]);
-                        setExplorerQuery("");
-                        return;
-                      }
-                      handleOpenFile(entry.path);
-                    }}
-                  >
-                    <VscodeEntryIcon
-                      pathValue={entry.path}
-                      kind={entry.kind}
-                      theme={resolvedTheme}
-                      className="size-4"
-                    />
-                    <span className="truncate">{basenameOfPath(entry.path)}</span>
-                    {entry.parentPath ? (
-                      <span className="ml-auto truncate text-[11px] text-muted-foreground/50">
-                        {entry.parentPath}
-                      </span>
-                    ) : null}
-                  </button>
-                ))}
-                {searchEntriesQuery.isFetching ? (
-                  <div className="px-2 py-1.5 text-[12px] text-muted-foreground/70">Searching…</div>
-                ) : null}
-              </div>
-            ) : (
-              <div>
-                {(directoryEntriesByPath.get("") ?? []).map((entry) => (
-                  <ExplorerTreeNode
-                    key={entry.path}
-                    entry={entry}
-                    activeRelativePath={props.activeRelativePath}
-                    directoryEntriesByPath={directoryEntriesByPath}
-                    expandedDirectoryPaths={expandedDirectoryPaths}
-                    loadingDirectoryPaths={loadingDirectoryPaths}
-                    resolvedTheme={resolvedTheme}
-                    onToggleDirectory={(relativePath) =>
-                      toggleDirectoryExpanded(props.threadId, relativePath)
-                    }
-                    onOpenFile={handleOpenFile}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </ResizableWorkspaceExplorerPanel>
-      ) : null}
-
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex items-center gap-2 border-b border-border/60 bg-background px-3 py-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-2.5">
-            <button
-              type="button"
-              className={cn(
-                "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm transition-colors",
-                editorState.explorerOpen
-                  ? "text-foreground hover:bg-accent/50"
-                  : "text-muted-foreground/50 hover:text-foreground",
-              )}
-              onClick={() => setExplorerOpen(props.threadId, !editorState.explorerOpen)}
-              aria-label={
-                editorState.explorerOpen ? "Collapse file explorer" : "Expand file explorer"
-              }
-              title={editorState.explorerOpen ? "Collapse file explorer" : "Expand file explorer"}
-            >
-              {editorState.explorerOpen ? (
-                <PanelLeftCloseIcon className="size-4" />
-              ) : (
-                <PanelLeftIcon className="size-4" />
-              )}
-            </button>
             <span className="truncate text-sm font-medium text-foreground">
               {props.activeRelativePath ?? "No file open"}
             </span>
@@ -998,6 +894,26 @@ export function WorkspaceEditorSurface(props: {
                 Add an inline comment on the selected lines to include with your next message
               </TooltipPopup>
             </Tooltip>
+            <button
+              type="button"
+              className={cn(
+                "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm transition-colors",
+                editorState.explorerOpen
+                  ? "text-foreground hover:bg-accent/50"
+                  : "text-muted-foreground/50 hover:text-foreground",
+              )}
+              onClick={() => setExplorerOpen(props.threadId, !editorState.explorerOpen)}
+              aria-label={
+                editorState.explorerOpen ? "Collapse file explorer" : "Expand file explorer"
+              }
+              title={editorState.explorerOpen ? "Collapse file explorer" : "Expand file explorer"}
+            >
+              {editorState.explorerOpen ? (
+                <PanelRightCloseIcon className="size-4" />
+              ) : (
+                <PanelRightIcon className="size-4" />
+              )}
+            </button>
           </div>
         </div>
 
@@ -1104,6 +1020,90 @@ export function WorkspaceEditorSurface(props: {
           onSelectDiagnostic={handleOpenFile}
         />
       </div>
+
+      {editorState.explorerOpen ? (
+        <ResizableWorkspaceExplorerPanel
+          width={clampWorkspaceExplorerWidth(
+            editorState.explorerWidth || DEFAULT_WORKSPACE_EXPLORER_WIDTH,
+          )}
+          onResize={(nextWidth) => setExplorerWidth(threadId, nextWidth)}
+        >
+          <div className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5">
+            <SearchIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
+            <input
+              value={explorerQuery}
+              onChange={(event) => setExplorerQuery(event.target.value)}
+              placeholder="Search files…"
+              className="h-6 w-full min-w-0 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/40"
+            />
+            {explorerQuery.length > 0 ? (
+              <button
+                type="button"
+                className="shrink-0 rounded-sm p-0.5 text-muted-foreground/50 hover:text-foreground"
+                onClick={() => setExplorerQuery("")}
+              >
+                <XIcon className="size-3" />
+              </button>
+            ) : null}
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1.5">
+            {explorerQuery.trim().length > 0 ? (
+              <div>
+                {searchResults.map((entry) => (
+                  <button
+                    key={`${entry.kind}:${entry.path}`}
+                    type="button"
+                    className="flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1 text-left text-[12px] leading-snug text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+                    onClick={() => {
+                      if (entry.kind === "directory") {
+                        ensureDirectoriesExpanded(props.threadId, [entry.path]);
+                        setExplorerQuery("");
+                        return;
+                      }
+                      handleOpenFile(entry.path);
+                    }}
+                  >
+                    <VscodeEntryIcon
+                      pathValue={entry.path}
+                      kind={entry.kind}
+                      theme={resolvedTheme}
+                      className="size-4"
+                    />
+                    <span className="truncate">{basenameOfPath(entry.path)}</span>
+                    {entry.parentPath ? (
+                      <span className="ml-auto truncate text-[11px] text-muted-foreground/50">
+                        {entry.parentPath}
+                      </span>
+                    ) : null}
+                  </button>
+                ))}
+                {searchEntriesQuery.isFetching ? (
+                  <div className="px-2 py-1.5 text-[12px] text-muted-foreground/70">Searching…</div>
+                ) : null}
+              </div>
+            ) : (
+              <div>
+                {(directoryEntriesByPath.get("") ?? []).map((entry) => (
+                  <ExplorerTreeNode
+                    key={entry.path}
+                    entry={entry}
+                    activeRelativePath={props.activeRelativePath}
+                    directoryEntriesByPath={directoryEntriesByPath}
+                    expandedDirectoryPaths={expandedDirectoryPaths}
+                    loadingDirectoryPaths={loadingDirectoryPaths}
+                    resolvedTheme={resolvedTheme}
+                    onToggleDirectory={(relativePath) =>
+                      toggleDirectoryExpanded(props.threadId, relativePath)
+                    }
+                    onOpenFile={handleOpenFile}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </ResizableWorkspaceExplorerPanel>
+      ) : null}
     </div>
   );
 }
