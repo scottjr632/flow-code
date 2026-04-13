@@ -22,10 +22,13 @@ import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   CircleAlertIcon,
   EyeIcon,
   GlobeIcon,
   HammerIcon,
+  LayersIcon,
   type LucideIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -213,6 +216,39 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       });
     }
 
+    if (completionDividerBeforeEntryId) {
+      const responseDividerIndex = nextRows.findIndex(
+        (row) => row.kind === "message" && row.id === completionDividerBeforeEntryId,
+      );
+      if (responseDividerIndex > 0) {
+        let precedingUserIndex = -1;
+        for (let index = responseDividerIndex - 1; index >= 0; index -= 1) {
+          const row = nextRows[index];
+          if (row?.kind === "message" && row.message.role === "user") {
+            precedingUserIndex = index;
+            break;
+          }
+        }
+
+        if (precedingUserIndex >= 0) {
+          const traceStartIndex = precedingUserIndex + 1;
+          const traceRows = nextRows.slice(
+            traceStartIndex,
+            responseDividerIndex,
+          ) as TimelineTraceChildRow[];
+          if (traceRows.length > 0) {
+            const firstTraceRow = traceRows[0]!;
+            nextRows.splice(traceStartIndex, traceRows.length, {
+              kind: "pre-response-trace",
+              id: `trace:${completionDividerBeforeEntryId}`,
+              createdAt: firstTraceRow.createdAt,
+              rows: traceRows,
+            });
+          }
+        }
+      }
+    }
+
     return nextRows;
   }, [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt]);
 
@@ -267,6 +303,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     estimateSize: (index: number) => {
       const row = rows[index];
       if (!row) return 96;
+      if (row.kind === "pre-response-trace") {
+        if (!(expandedWorkGroups[row.id] ?? false)) return 48;
+        return (
+          56 +
+          row.rows.reduce((total, traceRow) => {
+            if (traceRow.kind === "work") return total + 112;
+            if (traceRow.kind === "proposed-plan") {
+              return total + estimateTimelineProposedPlanHeight(traceRow.proposedPlan);
+            }
+            return total + estimateTimelineMessageHeight(traceRow.message, { timelineWidthPx });
+          }, 0)
+        );
+      }
       if (row.kind === "work") return 112;
       if (row.kind === "proposed-plan") return estimateTimelineProposedPlanHeight(row.proposedPlan);
       if (row.kind === "working") return 40;
@@ -279,7 +328,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   useEffect(() => {
     if (timelineWidthPx === null) return;
     rowVirtualizer.measure();
-  }, [rowVirtualizer, timelineWidthPx]);
+  }, [expandedWorkGroups, rowVirtualizer, timelineWidthPx]);
   useEffect(() => {
     rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) => {
       const viewportHeight = instance.scrollRect?.height ?? 0;
@@ -328,6 +377,103 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
+      {row.kind === "pre-response-trace" &&
+        (() => {
+          const groupId = row.id;
+          const isExpanded = expandedWorkGroups[groupId] ?? false;
+          const traceLabel = summarizePreResponseTrace(row.rows);
+          const traceItemCount = countPreResponseTraceItems(row.rows);
+
+          if (!isExpanded) {
+            return (
+              <button
+                type="button"
+                className="group flex w-full cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-card/20 px-2.5 py-1.5 text-left transition-colors duration-150 hover:border-border/55 hover:bg-card/30"
+                onClick={() => onToggleWorkGroup(groupId)}
+                aria-expanded={false}
+              >
+                <LayersIcon className="size-3 shrink-0 text-muted-foreground/40 transition-colors duration-150 group-hover:text-muted-foreground/60" />
+                <p className="min-w-0 flex-1 text-[11px] text-muted-foreground/55 transition-colors duration-150 group-hover:text-muted-foreground/75">
+                  {traceLabel} <span className="text-muted-foreground/35">({traceItemCount})</span>
+                </p>
+                <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] text-muted-foreground/40 transition-colors duration-150 group-hover:text-muted-foreground/70">
+                  <ChevronDownIcon className="size-3" />
+                  Show
+                </span>
+              </button>
+            );
+          }
+
+          return (
+            <div className="overflow-hidden rounded-lg border border-border/40 bg-card/15">
+              <div className="flex items-center justify-between gap-2 border-b border-border/20 px-2.5 py-1.5">
+                <div className="flex items-center gap-2">
+                  <LayersIcon className="size-3 text-muted-foreground/40" />
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground/45">
+                    {traceLabel}{" "}
+                    <span className="text-muted-foreground/30">({traceItemCount})</span>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground/45 transition-colors duration-150 hover:bg-muted/15 hover:text-foreground/65"
+                  onClick={() => onToggleWorkGroup(groupId)}
+                  aria-expanded
+                >
+                  <ChevronUpIcon className="size-3" />
+                  Hide
+                </button>
+              </div>
+              <div className="px-2 py-1.5">
+                <div className="space-y-0.5 border-l-2 border-border/20 pl-2.5">
+                  {row.rows.map((traceRow) => (
+                    <div key={`trace-row:${traceRow.id}`}>
+                      {traceRow.kind === "work" && (
+                        <div className="space-y-0.5">
+                          {traceRow.groupedEntries.map((workEntry) => (
+                            <SimpleWorkEntryRow
+                              key={`trace-work:${workEntry.id}`}
+                              workEntry={workEntry}
+                            />
+                          ))}
+                        </div>
+                      )}
+                      {traceRow.kind === "message" && traceRow.message.role === "assistant" && (
+                        <TraceAssistantMessageRow
+                          message={traceRow.message}
+                          parsedAssistantDirectives={traceRow.parsedAssistantDirectives}
+                          durationStart={traceRow.durationStart}
+                          timestampFormat={timestampFormat}
+                          nowIso={nowIso}
+                          markdownCwd={markdownCwd}
+                          onOpenFileTarget={onOpenFileTarget}
+                        />
+                      )}
+                      {traceRow.kind === "message" && traceRow.message.role === "user" && (
+                        <div className="rounded-lg py-1.5 pl-1.5">
+                          <p className="truncate text-xs text-foreground/50">
+                            {traceRow.message.text}
+                          </p>
+                        </div>
+                      )}
+                      {traceRow.kind === "proposed-plan" && (
+                        <div className="min-w-0 px-1 py-0.5">
+                          <ProposedPlanCard
+                            planMarkdown={traceRow.proposedPlan.planMarkdown}
+                            cwd={markdownCwd}
+                            workspaceRoot={workspaceRoot}
+                            onOpenFileTarget={onOpenFileTarget}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
       {row.kind === "work" &&
         (() => {
           const groupId = row.id;
@@ -355,8 +501,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       type="button"
                       className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
                       onClick={() => onToggleWorkGroup(groupId)}
+                      aria-expanded={isExpanded}
                     >
-                      {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
+                      {isExpanded ? (
+                        <span className="inline-flex items-center gap-1">
+                          <ChevronUpIcon className="size-3" />
+                          Hide
+                        </span>
+                      ) : (
+                        `Show ${hiddenCount} more`
+                      )}
                     </button>
                   )}
                 </div>
@@ -639,7 +793,35 @@ type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineProposedPlan = Extract<TimelineEntry, { kind: "proposed-plan" }>["proposedPlan"];
 type TimelineWorkEntry = Extract<TimelineEntry, { kind: "work" }>["entry"];
+type TimelineTraceChildRow =
+  | {
+      kind: "work";
+      id: string;
+      createdAt: string;
+      groupedEntries: TimelineWorkEntry[];
+    }
+  | {
+      kind: "message";
+      id: string;
+      createdAt: string;
+      message: TimelineMessage;
+      parsedAssistantDirectives: ReturnType<typeof parseAssistantDirectives> | null;
+      durationStart: string;
+      showCompletionDivider: boolean;
+    }
+  | {
+      kind: "proposed-plan";
+      id: string;
+      createdAt: string;
+      proposedPlan: TimelineProposedPlan;
+    };
 type TimelineRow =
+  | {
+      kind: "pre-response-trace";
+      id: string;
+      createdAt: string;
+      rows: TimelineTraceChildRow[];
+    }
   | {
       kind: "work";
       id: string;
@@ -920,6 +1102,60 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
   }
   return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
 }
+
+function summarizePreResponseTrace(_rows: TimelineTraceChildRow[]): string {
+  return "Pre-response steps";
+}
+
+function countPreResponseTraceItems(rows: TimelineTraceChildRow[]): number {
+  return rows.reduce((total, row) => {
+    if (row.kind === "work") {
+      return total + row.groupedEntries.length;
+    }
+    return total + 1;
+  }, 0);
+}
+
+const TraceAssistantMessageRow = memo(function TraceAssistantMessageRow(props: {
+  message: TimelineMessage;
+  parsedAssistantDirectives: ReturnType<typeof parseAssistantDirectives> | null;
+  durationStart: string;
+  timestampFormat: TimestampFormat;
+  nowIso: string;
+  markdownCwd: string | undefined;
+  onOpenFileTarget?: InAppFileTargetOpener | undefined;
+}) {
+  const messageText = replaceTerminalLogReferenceTokensForDisplay(
+    replaceSessionReferenceTokensForDisplay(
+      props.parsedAssistantDirectives?.displayText ||
+        (props.message.streaming ? "" : "(empty response)"),
+    ),
+  );
+
+  if (messageText.trim().length === 0) return null;
+
+  return (
+    <div className="rounded-lg py-1.5 pl-1.5">
+      <div className="trace-markdown">
+        <ChatMarkdown
+          text={messageText}
+          cwd={props.markdownCwd}
+          isStreaming={Boolean(props.message.streaming)}
+          onOpenFileTarget={props.onOpenFileTarget}
+        />
+      </div>
+      <p className="mt-1 text-[9px] text-muted-foreground/35">
+        {formatMessageMeta(
+          props.message.createdAt,
+          props.message.streaming
+            ? formatElapsed(props.durationStart, props.nowIso)
+            : formatElapsed(props.durationStart, props.message.completedAt),
+          props.timestampFormat,
+        )}
+      </p>
+    </div>
+  );
+});
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;

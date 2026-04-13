@@ -393,6 +393,27 @@ label:has(> select#reasoning-effort) select {
   text-align: left;
 }
 
+/* Compact markdown for pre-response trace messages */
+.trace-markdown .chat-markdown {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--foreground) 60%, transparent);
+}
+
+.trace-markdown .chat-markdown p,
+.trace-markdown .chat-markdown ul,
+.trace-markdown .chat-markdown ol,
+.trace-markdown .chat-markdown blockquote,
+.trace-markdown .chat-markdown pre,
+.trace-markdown .chat-markdown table {
+  margin: 0.25rem 0;
+}
+
+.trace-markdown .chat-markdown :not(pre) > code {
+  font-size: 0.675rem;
+  padding: 0.1rem 0.3rem;
+}
+
 /* Diffs theme bridge (match diff surfaces to app palette) */
 .diff-panel-viewport {
   background: color-mix(in srgb, var(--background) 94%, var(--card));

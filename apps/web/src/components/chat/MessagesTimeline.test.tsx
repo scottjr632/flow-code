@@ -141,6 +141,162 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work log");
   });
 
+  it("collapses completed-turn thoughts and tool calls behind a single expander", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-user-1",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:27.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-user-1"),
+              role: "user",
+              text: "Do the thing",
+              createdAt: "2026-03-17T19:12:27.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-work-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Reasoning",
+              detail: "Investigating the failure",
+              tone: "thinking",
+            },
+          },
+          {
+            id: "entry-work-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Read file",
+              detail: "apps/web/src/components/ChatView.tsx",
+              tone: "tool",
+            },
+          },
+          {
+            id: "entry-message-1",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-3"),
+              role: "assistant",
+              text: '::code-comment{title="[P1] Visible result" body="Final answer is visible." file="/repo/project/apps/web/src/components/MessagesTimeline.tsx" start=1 end=1 priority=1 confidence=0.92}',
+              createdAt: "2026-03-17T19:12:30.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId="entry-message-1"
+        completionSummary="Worked for 2s"
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Pre-response steps");
+    expect(markup).toContain("(2)");
+    expect(markup).toContain("Response • Worked for 2s");
+    expect(markup).toContain("Visible result");
+    expect(markup).not.toContain("Investigating the failure");
+    expect(markup).not.toContain("apps/web/src/components/ChatView.tsx");
+  });
+
+  it("reveals completed-turn work entries when the expander is open", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "entry-user-1",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:27.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-user-2"),
+              role: "user",
+              text: "Do the thing",
+              createdAt: "2026-03-17T19:12:27.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-work-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Reasoning",
+              detail: "Investigating the failure",
+              tone: "thinking",
+            },
+          },
+          {
+            id: "entry-message-1",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-4"),
+              role: "assistant",
+              text: '::code-comment{title="[P1] Visible result" body="Final answer is visible." file="/repo/project/apps/web/src/components/MessagesTimeline.tsx" start=1 end=1 priority=1 confidence=0.92}',
+              createdAt: "2026-03-17T19:12:30.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId="entry-message-1"
+        completionSummary="Worked for 2s"
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{ "trace:entry-message-1": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Pre-response steps");
+    expect(markup).toContain("(1)");
+    expect(markup).toContain("Investigating the failure");
+    expect(markup).toContain("Hide");
+  });
+
   it("renders structured code review comments and hides the raw directive", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
