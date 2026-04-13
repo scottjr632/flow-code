@@ -1,7 +1,5 @@
 import { type ThreadId } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import { create } from "zustand";
-import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
 type WorkspaceEditorBufferStatus = "idle" | "loading" | "ready" | "saving" | "error";
 
@@ -23,8 +21,8 @@ interface ThreadWorkspaceEditorState {
   buffersByPath: Record<string, WorkspaceEditorBuffer>;
   expandedDirectoryPaths: string[];
   explorerOpen: boolean;
+  explorerWidth: number;
   problemsOpen: boolean;
-  vimMode: boolean;
 }
 
 interface WorkspaceEditorStoreState {
@@ -45,15 +43,10 @@ interface WorkspaceEditorStoreState {
   toggleDirectoryExpanded: (threadId: ThreadId, relativePath: string) => void;
   ensureDirectoriesExpanded: (threadId: ThreadId, relativePaths: readonly string[]) => void;
   setExplorerOpen: (threadId: ThreadId, open: boolean) => void;
+  setExplorerWidth: (threadId: ThreadId, width: number) => void;
   setProblemsOpen: (threadId: ThreadId, open: boolean) => void;
-  setVimMode: (threadId: ThreadId, enabled: boolean) => void;
 }
-
-export const WORKSPACE_EDITOR_VIM_MODE_KEY = "flow:workspace-editor-vim-mode";
-
-export function readPersistedWorkspaceEditorVimMode(): boolean {
-  return getLocalStorageItem(WORKSPACE_EDITOR_VIM_MODE_KEY, Schema.Boolean) ?? false;
-}
+export const DEFAULT_WORKSPACE_EXPLORER_WIDTH = 256;
 
 function createInitialThreadWorkspaceEditorState(): ThreadWorkspaceEditorState {
   return {
@@ -61,8 +54,8 @@ function createInitialThreadWorkspaceEditorState(): ThreadWorkspaceEditorState {
     buffersByPath: {},
     expandedDirectoryPaths: [],
     explorerOpen: true,
-    problemsOpen: true,
-    vimMode: readPersistedWorkspaceEditorVimMode(),
+    explorerWidth: DEFAULT_WORKSPACE_EXPLORER_WIDTH,
+    problemsOpen: false,
   };
 }
 
@@ -71,8 +64,8 @@ const INITIAL_THREAD_WORKSPACE_EDITOR_STATE: ThreadWorkspaceEditorState = {
   buffersByPath: {},
   expandedDirectoryPaths: [],
   explorerOpen: true,
-  problemsOpen: true,
-  vimMode: false,
+  explorerWidth: DEFAULT_WORKSPACE_EXPLORER_WIDTH,
+  problemsOpen: false,
 };
 
 function normalizeRelativePath(input: string): string {
@@ -262,6 +255,22 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStoreState>()((set)
         },
       };
     }),
+  setExplorerWidth: (threadId, width) =>
+    set((state) => {
+      const threadState = ensureThreadState(state.editorsByThreadId, threadId);
+      if (threadState.explorerWidth === width) {
+        return state;
+      }
+      return {
+        editorsByThreadId: {
+          ...state.editorsByThreadId,
+          [threadId]: {
+            ...threadState,
+            explorerWidth: width,
+          },
+        },
+      };
+    }),
   setProblemsOpen: (threadId, open) =>
     set((state) => {
       const threadState = ensureThreadState(state.editorsByThreadId, threadId);
@@ -274,23 +283,6 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStoreState>()((set)
           [threadId]: {
             ...threadState,
             problemsOpen: open,
-          },
-        },
-      };
-    }),
-  setVimMode: (threadId, enabled) =>
-    set((state) => {
-      const threadState = ensureThreadState(state.editorsByThreadId, threadId);
-      if (threadState.vimMode === enabled) {
-        return state;
-      }
-      setLocalStorageItem(WORKSPACE_EDITOR_VIM_MODE_KEY, enabled, Schema.Boolean);
-      return {
-        editorsByThreadId: {
-          ...state.editorsByThreadId,
-          [threadId]: {
-            ...threadState,
-            vimMode: enabled,
           },
         },
       };

@@ -66,6 +66,7 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   terminalFontFamily: makeBlankFallbackTrimmedStringSetting(DEFAULT_TERMINAL_FONT_FAMILY),
   timestampFormat: TimestampFormat.pipe(Schema.withDecodingDefault(() => DEFAULT_TIMESTAMP_FORMAT)),
+  vimMode: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 

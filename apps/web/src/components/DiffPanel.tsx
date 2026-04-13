@@ -1,5 +1,10 @@
 import { parsePatchFiles, type SelectedLineRange } from "@pierre/diffs";
-import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
+import {
+  FileDiff,
+  type DiffLineAnnotation,
+  type FileDiffMetadata,
+  Virtualizer,
+} from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@t3tools/contracts";
@@ -39,6 +44,7 @@ import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { CANCEL_ACTIVE_DIFF_COMMENT_EVENT } from "../lib/diffCommentEvents";
 import { buildReviewFileRenderKey, resolveReviewFilePath } from "../lib/reviewDiffFiles";
+import { useHydratedFileDiffs } from "../hooks/useHydratedFileDiffs";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
 import { useSettings } from "../hooks/useSettings";
@@ -283,6 +289,10 @@ function formatCommentSelectionSummary(selection: {
   side: DiffCommentSide;
 }): string {
   return formatDiffCommentLabel(selection);
+}
+
+function toDiffAnnotationSide(side: DiffCommentSide): "additions" | "deletions" {
+  return side === "deletions" ? "deletions" : "additions";
 }
 
 function buildDiffLineExcerpt(
@@ -542,6 +552,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     );
   }, [renderablePatch]);
+  const hydratedFiles = useHydratedFileDiffs(renderableFiles, activeCwd);
   const fileKeyByPath = useMemo(
     () =>
       new Map(
@@ -555,6 +566,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const submittedDiffCommentsByFileKey = useMemo(() => {
     const commentsByFileKey = new Map<string, DiffCommentDraft[]>();
     for (const comment of submittedThreadDiffComments) {
+      if (comment.side === "lines") {
+        continue;
+      }
       const fileKey = fileKeyByPath.get(comment.filePath);
       if (!fileKey) {
         continue;
@@ -1071,7 +1085,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                       intersectionObserverMargin: 1200,
                     }}
                   >
-                    {renderableFiles.map((fileDiff) => {
+                    {hydratedFiles.map((fileDiff) => {
                       const filePath = resolveReviewFilePath(fileDiff);
                       const fileKey = buildReviewFileRenderKey(fileDiff);
                       const themedFileKey = `${fileKey}:${resolvedTheme}`;
@@ -1080,6 +1094,28 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                       const isCommentComposerOpen = activeCommentSelection?.fileKey === fileKey;
                       const submittedDiffComments =
                         submittedDiffCommentsByFileKey.get(fileKey) ?? EMPTY_DRAFT_DIFF_COMMENTS;
+                      const lineAnnotations: DiffLineAnnotation<DiffCommentAnnotationMetadata>[] = [
+                        ...submittedDiffComments.map((comment) => ({
+                          side: toDiffAnnotationSide(comment.side),
+                          lineNumber: comment.lineEnd,
+                          metadata: {
+                            kind: "draft-comment",
+                            comment,
+                          } satisfies PendingDiffCommentAnnotationMetadata,
+                        })),
+                        ...(isCommentComposerOpen && activeCommentSelection
+                          ? [
+                              {
+                                side: toDiffAnnotationSide(activeCommentSelection.side),
+                                lineNumber: activeCommentSelection.lineEnd,
+                                metadata: {
+                                  kind: "draft-form",
+                                  selection: activeCommentSelection,
+                                } satisfies InlineDiffCommentAnnotationMetadata,
+                              },
+                            ]
+                          : []),
+                      ];
                       return (
                         <div
                           key={themedFileKey}
@@ -1098,28 +1134,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                         >
                           <FileDiff<DiffCommentAnnotationMetadata>
                             fileDiff={fileDiff}
-                            lineAnnotations={[
-                              ...submittedDiffComments.map((comment) => ({
-                                side: comment.side,
-                                lineNumber: comment.lineEnd,
-                                metadata: {
-                                  kind: "draft-comment",
-                                  comment,
-                                } satisfies PendingDiffCommentAnnotationMetadata,
-                              })),
-                              ...(isCommentComposerOpen && activeCommentSelection
-                                ? [
-                                    {
-                                      side: activeCommentSelection.side,
-                                      lineNumber: activeCommentSelection.lineEnd,
-                                      metadata: {
-                                        kind: "draft-form",
-                                        selection: activeCommentSelection,
-                                      } satisfies InlineDiffCommentAnnotationMetadata,
-                                    },
-                                  ]
-                                : []),
-                            ]}
+                            lineAnnotations={lineAnnotations}
                             options={{
                               collapsed: isFileCollapsed,
                               diffStyle: diffRenderMode === "split" ? "split" : "unified",

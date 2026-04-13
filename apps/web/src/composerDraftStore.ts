@@ -88,7 +88,7 @@ const PersistedDiffCommentDraft = Schema.Struct({
   filePath: Schema.String,
   lineStart: Schema.Number,
   lineEnd: Schema.Number,
-  side: Schema.Literals(["additions", "deletions"]),
+  side: Schema.Literals(["additions", "deletions", "lines"]),
   body: Schema.String,
   excerpt: Schema.String,
 });
@@ -446,7 +446,8 @@ function normalizeDiffCommentForThread(
     filePath,
     lineStart,
     lineEnd,
-    side: comment.side === "deletions" ? "deletions" : "additions",
+    side:
+      comment.side === "deletions" ? "deletions" : comment.side === "lines" ? "lines" : "additions",
     body,
     excerpt,
   };

@@ -481,6 +481,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.terminalFontFamily !== DEFAULT_UNIFIED_SETTINGS.terminalFontFamily
         ? ["Terminal font"]
         : []),
+      ...(settings.vimMode !== DEFAULT_UNIFIED_SETTINGS.vimMode ? ["Vim mode"] : []),
       ...(settings.gitBranchNamePrefix !== DEFAULT_UNIFIED_SETTINGS.gitBranchNamePrefix
         ? ["Branch name prefix"]
         : []),
@@ -515,6 +516,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.terminalFontFamily,
       settings.timestampFormat,
       settings.turnReviewVcs,
+      settings.vimMode,
       theme,
     ],
   );
@@ -930,6 +932,30 @@ export function GeneralSettingsPanel() {
               placeholder={DEFAULT_TERMINAL_FONT_FAMILY}
               spellCheck={false}
               aria-label="Terminal font family"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Vim mode"
+          description="Enable Vim keybindings in Flow's built-in file editor."
+          resetAction={
+            settings.vimMode !== DEFAULT_UNIFIED_SETTINGS.vimMode ? (
+              <SettingResetButton
+                label="vim mode"
+                onClick={() =>
+                  updateSettings({
+                    vimMode: DEFAULT_UNIFIED_SETTINGS.vimMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.vimMode}
+              onCheckedChange={(checked) => updateSettings({ vimMode: Boolean(checked) })}
+              aria-label="Enable vim mode in the file editor"
             />
           }
         />

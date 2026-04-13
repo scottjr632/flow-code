@@ -16,7 +16,23 @@ import { keymap } from "@codemirror/view";
 import { vim } from "@replit/codemirror-vim";
 import type { ProjectDiagnostic } from "@t3tools/contracts";
 import { tags as t } from "@lezer/highlight";
-import { useEffect, useMemo, useRef } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
+
+import {
+  type InlineCommentAnnotation,
+  PortalRegistry,
+  commentWidgetsExtension,
+  setCommentWidgets,
+} from "./workspaceCodeEditorComments";
+
+export type { InlineCommentAnnotation };
+
+export interface WorkspaceCodeCommentTarget {
+  lineStart: number;
+  lineEnd: number;
+  excerpt: string;
+}
 
 function extensionForPath(relativePath: string): Extension {
   const normalizedPath = relativePath.toLowerCase();
@@ -90,6 +106,23 @@ function toCodeMirrorDiagnostics(
   });
 }
 
+function buildCommentTarget(doc: EditorState["doc"], selection: EditorState["selection"]["main"]) {
+  const startLine = doc.lineAt(selection.from).number;
+  const endLine = doc.lineAt(selection.to).number;
+  const excerptLines: string[] = [];
+
+  for (let lineNumber = startLine; lineNumber <= endLine; lineNumber += 1) {
+    const line = doc.line(lineNumber);
+    excerptLines.push(`${lineNumber} | ${line.text}`);
+  }
+
+  return {
+    lineStart: startLine,
+    lineEnd: endLine,
+    excerpt: excerptLines.join("\n"),
+  } satisfies WorkspaceCodeCommentTarget;
+}
+
 const editorTheme = (dark: boolean) =>
   EditorView.theme(
     {
@@ -100,7 +133,7 @@ const editorTheme = (dark: boolean) =>
         overflow: "hidden",
         backgroundColor: "color-mix(in srgb, var(--muted) 78%, var(--background))",
         color: "var(--foreground)",
-        fontSize: "14px",
+        fontSize: "12px",
       },
       ".cm-scroller": {
         height: "100%",
@@ -299,6 +332,11 @@ export function WorkspaceCodeEditor(props: {
   vimMode?: boolean;
   resolvedTheme: "light" | "dark";
   autoFocus?: boolean;
+  /** Inline comment annotations to render as block widgets inside the editor. */
+  inlineComments?: InlineCommentAnnotation[];
+  /** Render callback for each inline comment annotation. */
+  renderInlineComment?: (annotation: InlineCommentAnnotation) => ReactNode;
+  onCommentTargetChange?: (target: WorkspaceCodeCommentTarget | null) => void;
   onChange: (value: string) => void;
   onSave: () => void;
 }) {
@@ -306,8 +344,11 @@ export function WorkspaceCodeEditor(props: {
   const viewRef = useRef<EditorView | null>(null);
   const latestValueRef = useRef(props.value);
   const diagnosticsRef = useRef<readonly ProjectDiagnostic[]>(props.diagnostics);
+  const onCommentTargetChangeRef = useRef(props.onCommentTargetChange);
   const onChangeRef = useRef(props.onChange);
   const onSaveRef = useRef(props.onSave);
+  const portalRegistryRef = useRef(new PortalRegistry());
+  const inlineCommentsRef = useRef(props.inlineComments);
   const languageExtension = useMemo(
     () => extensionForPath(props.relativePath),
     [props.relativePath],
@@ -315,8 +356,16 @@ export function WorkspaceCodeEditor(props: {
 
   latestValueRef.current = props.value;
   diagnosticsRef.current = props.diagnostics;
+  onCommentTargetChangeRef.current = props.onCommentTargetChange;
   onChangeRef.current = props.onChange;
   onSaveRef.current = props.onSave;
+  inlineCommentsRef.current = props.inlineComments;
+
+  // Subscribe to the portal registry for React portal containers.
+  const portalContainers = useSyncExternalStore(
+    (cb) => portalRegistryRef.current.subscribe(cb),
+    () => portalRegistryRef.current.getSnapshot(),
+  );
 
   useEffect(() => {
     const parent = containerRef.current;
@@ -345,6 +394,11 @@ export function WorkspaceCodeEditor(props: {
       editorHighlightStyle(props.resolvedTheme === "dark"),
       EditorState.readOnly.of(Boolean(props.readOnly)),
       EditorView.updateListener.of((update) => {
+        if (update.selectionSet || update.docChanged) {
+          onCommentTargetChangeRef.current?.(
+            buildCommentTarget(update.state.doc, update.state.selection.main),
+          );
+        }
         if (!update.docChanged) {
           return;
         }
@@ -353,6 +407,7 @@ export function WorkspaceCodeEditor(props: {
         onChangeRef.current(nextValue);
       }),
       languageExtension,
+      commentWidgetsExtension(portalRegistryRef.current),
     ];
 
     if (props.vimMode) {
@@ -367,11 +422,23 @@ export function WorkspaceCodeEditor(props: {
       parent,
     });
     viewRef.current = view;
+    onCommentTargetChangeRef.current?.(
+      buildCommentTarget(view.state.doc, view.state.selection.main),
+    );
     if (props.autoFocus) {
       view.focus();
     }
 
+    // Apply any initial inline comments.
+    const initialComments = inlineCommentsRef.current;
+    if (initialComments && initialComments.length > 0) {
+      view.dispatch({
+        effects: setCommentWidgets.of(initialComments),
+      });
+    }
+
     return () => {
+      onCommentTargetChangeRef.current?.(null);
       view.destroy();
       viewRef.current = null;
     };
@@ -393,6 +460,14 @@ export function WorkspaceCodeEditor(props: {
         insert: props.value,
       },
     });
+
+    // Re-apply comment widgets after a full document replacement since positions are invalidated.
+    const comments = inlineCommentsRef.current;
+    if (comments && comments.length > 0) {
+      view.dispatch({
+        effects: setCommentWidgets.of(comments),
+      });
+    }
   }, [props.value]);
 
   useEffect(() => {
@@ -403,5 +478,28 @@ export function WorkspaceCodeEditor(props: {
     forceLinting(view);
   }, [props.diagnostics]);
 
-  return <div ref={containerRef} className="h-full min-h-0 min-w-0 overflow-hidden" />;
+  // Dispatch comment widget updates when the inlineComments prop changes.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+    view.dispatch({
+      effects: setCommentWidgets.of(props.inlineComments ?? []),
+    });
+  }, [props.inlineComments]);
+
+  return (
+    <>
+      <div ref={containerRef} className="h-full min-h-0 min-w-0 overflow-hidden" />
+      {props.renderInlineComment &&
+        props.inlineComments?.map((annotation) => {
+          const container = portalContainers.get(annotation.id);
+          if (!container) {
+            return null;
+          }
+          return createPortal(props.renderInlineComment!(annotation), container, annotation.id);
+        })}
+    </>
+  );
 }

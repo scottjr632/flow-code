@@ -39,6 +39,7 @@ import { deepMerge } from "@t3tools/shared/Struct";
 
 const CLIENT_SETTINGS_STORAGE_KEY = "flow:client-settings:v1";
 const OLD_SETTINGS_KEY = "flow:app-settings:v1";
+export const LEGACY_WORKSPACE_EDITOR_VIM_MODE_KEY = "flow:workspace-editor-vim-mode";
 
 // ── Key sets for routing patches ─────────────────────────────────────
 
@@ -224,6 +225,10 @@ export function buildLegacyClientSettingsMigrationPatch(
     patch.timestampFormat = legacySettings.timestampFormat;
   }
 
+  if (Predicate.isBoolean(legacySettings.vimMode)) {
+    patch.vimMode = legacySettings.vimMode;
+  }
+
   return patch;
 }
 
@@ -236,10 +241,11 @@ export function migrateLocalSettingsToServer(): void {
   if (typeof window === "undefined") return;
 
   const raw = localStorage.getItem(OLD_SETTINGS_KEY);
-  if (!raw) return;
+  const standaloneVimMode = localStorage.getItem(LEGACY_WORKSPACE_EDITOR_VIM_MODE_KEY);
+  if (!raw && !standaloneVimMode) return;
 
   try {
-    const old = JSON.parse(raw);
+    const old = raw === null ? {} : JSON.parse(raw);
     if (!Predicate.isObject(old)) return;
 
     // Migrate server-relevant keys via RPC
@@ -251,6 +257,15 @@ export function migrateLocalSettingsToServer(): void {
 
     // Migrate client-only keys to the new localStorage key
     const clientPatch = buildLegacyClientSettingsMigrationPatch(old);
+    if (standaloneVimMode !== null) {
+      try {
+        clientPatch.vimMode = Schema.decodeSync(Schema.fromJsonString(Schema.Boolean))(
+          standaloneVimMode,
+        );
+      } catch (error) {
+        console.error("[MIGRATION] Error decoding standalone vim mode:", error);
+      }
+    }
     if (Object.keys(clientPatch).length > 0) {
       const existing = localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY);
       const current = existing ? (JSON.parse(existing) as Record<string, unknown>) : {};
@@ -264,5 +279,6 @@ export function migrateLocalSettingsToServer(): void {
   } finally {
     // Remove the legacy key regardless to keep migration one-shot behavior.
     localStorage.removeItem(OLD_SETTINGS_KEY);
+    localStorage.removeItem(LEGACY_WORKSPACE_EDITOR_VIM_MODE_KEY);
   }
 }

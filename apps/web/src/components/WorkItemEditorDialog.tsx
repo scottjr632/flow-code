@@ -94,6 +94,10 @@ export function WorkItemEditorDialog({
   const shortcutModifierLabel = isMacPlatform(platform) ? "Cmd" : "Ctrl";
   const showDelete = mode === "edit" && typeof onDelete === "function";
   const showLeadingActions = showDelete || showLaunch;
+  const dialogDescription =
+    mode === "create"
+      ? "Title, optional notes, and status. Workspace assignment is optional and can be added later."
+      : "Title, optional notes, status, and workspace.";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -109,9 +113,7 @@ export function WorkItemEditorDialog({
       >
         <DialogHeader>
           <DialogTitle>{mode === "create" ? "New work item" : "Edit work item"}</DialogTitle>
-          <DialogDescription className="text-xs">
-            Title, optional notes, status, and workspace.
-          </DialogDescription>
+          <DialogDescription className="text-xs">{dialogDescription}</DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -197,45 +199,49 @@ export function WorkItemEditorDialog({
             />
           </div>
 
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground">Workspace</label>
-            <Select
-              value={values.workspaceId ?? "__none__"}
-              onValueChange={(value) => {
-                onValuesChange((current) => ({
-                  ...current,
-                  workspaceId:
-                    value === "__none__" ? null : (value as NonNullable<WorkItem["workspaceId"]>),
-                }));
-              }}
-              items={[
-                { value: "__none__", label: "No workspace" },
-                ...workspaces.flatMap((workspace) =>
-                  workspace.id ? [{ value: workspace.id, label: workspace.name }] : [],
-                ),
-              ]}
-            >
-              <SelectTrigger>
-                {workspaces.find((workspace) => workspace.id === values.workspaceId)?.name ??
-                  "No workspace"}
-              </SelectTrigger>
-              <SelectPopup>
-                <SelectItem value="__none__">No workspace</SelectItem>
-                {workspaces
-                  .filter(
-                    (
-                      workspace,
-                    ): workspace is { id: NonNullable<WorkItem["workspaceId"]>; name: string } =>
-                      workspace.id !== null,
-                  )
-                  .map((workspace) => (
-                    <SelectItem key={workspace.id} value={workspace.id}>
-                      {workspace.name}
-                    </SelectItem>
-                  ))}
-              </SelectPopup>
-            </Select>
-          </div>
+          {mode === "edit" ? (
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Workspace</label>
+              <Select
+                value={values.workspaceId ?? "__none__"}
+                onValueChange={(value) => {
+                  onValuesChange((current) => ({
+                    ...current,
+                    workspaceId:
+                      value === "__none__" ? null : (value as NonNullable<WorkItem["workspaceId"]>),
+                  }));
+                }}
+                items={[
+                  { value: "__none__", label: "No workspace" },
+                  ...workspaces.flatMap((workspace) =>
+                    workspace.id ? [{ value: workspace.id, label: workspace.name }] : [],
+                  ),
+                ]}
+              >
+                <SelectTrigger>
+                  {workspaces.find((workspace) => workspace.id === values.workspaceId)?.name ??
+                    "No workspace"}
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="__none__">No workspace</SelectItem>
+                  {workspaces
+                    .filter(
+                      (
+                        workspace,
+                      ): workspace is {
+                        id: NonNullable<WorkItem["workspaceId"]>;
+                        name: string;
+                      } => workspace.id !== null,
+                    )
+                    .map((workspace) => (
+                      <SelectItem key={workspace.id} value={workspace.id}>
+                        {workspace.name}
+                      </SelectItem>
+                    ))}
+                </SelectPopup>
+              </Select>
+            </div>
+          ) : null}
         </DialogPanel>
         <DialogFooter>
           {showLeadingActions ? (

@@ -37,6 +37,14 @@ describe("diffCommentContext", () => {
         }),
       ),
     ).toBe("apps/web/src/components/DiffPanel.tsx removed line 12");
+    expect(
+      formatDiffCommentLabel(
+        makeComment({
+          side: "lines",
+          lineEnd: 12,
+        }),
+      ),
+    ).toBe("apps/web/src/components/DiffPanel.tsx line 12");
   });
 
   it("builds a numbered diff comment block", () => {

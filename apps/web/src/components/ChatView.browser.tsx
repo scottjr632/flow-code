@@ -3699,6 +3699,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
       newWorkItemCommand.click();
 
       await expect.element(page.getByText("New work item")).toBeInTheDocument();
+      await expect
+        .element(
+          page.getByText(
+            "Title, optional notes, and status. Workspace assignment is optional and can be added later.",
+          ),
+        )
+        .toBeInTheDocument();
+      await expect.element(page.getByText("Workspace")).not.toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }
@@ -3911,6 +3919,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await page.getByRole("button", { name: "Edit Browser test work item" }).click();
       await expect.element(page.getByText("Edit work item")).toBeInTheDocument();
+      await expect.element(page.getByText("Workspace")).toBeInTheDocument();
 
       const deleteButton = page.getByRole("button", { name: "Delete" });
       await expect.element(deleteButton).toBeInTheDocument();

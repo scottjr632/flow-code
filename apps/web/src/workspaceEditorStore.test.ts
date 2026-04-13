@@ -1,33 +1,66 @@
 import { ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { removeLocalStorageItem } from "./hooks/useLocalStorage";
-import {
-  WORKSPACE_EDITOR_VIM_MODE_KEY,
-  readPersistedWorkspaceEditorVimMode,
-  useWorkspaceEditorStore,
-} from "./workspaceEditorStore";
+import { DEFAULT_WORKSPACE_EXPLORER_WIDTH, useWorkspaceEditorStore } from "./workspaceEditorStore";
 
 describe("workspaceEditorStore", () => {
   beforeEach(() => {
-    removeLocalStorageItem(WORKSPACE_EDITOR_VIM_MODE_KEY);
     useWorkspaceEditorStore.setState({ editorsByThreadId: {} });
   });
 
-  it("persists vim mode when toggled", () => {
-    useWorkspaceEditorStore.getState().setVimMode(ThreadId.makeUnsafe("thread-1"), true);
-
-    expect(readPersistedWorkspaceEditorVimMode()).toBe(true);
-  });
-
-  it("hydrates new thread editor state from the persisted vim mode preference", () => {
-    useWorkspaceEditorStore.getState().setVimMode(ThreadId.makeUnsafe("persisted-thread"), true);
-    useWorkspaceEditorStore.setState({ editorsByThreadId: {} });
-
+  it("starts new thread editor state with the explorer open and diagnostics collapsed", () => {
     useWorkspaceEditorStore
       .getState()
-      .openFile(ThreadId.makeUnsafe("thread-2"), "apps/web/src/components/ChatView.tsx");
+      .openFile(ThreadId.makeUnsafe("thread-default-layout"), "README.md");
 
-    expect(useWorkspaceEditorStore.getState().editorsByThreadId["thread-2"]?.vimMode).toBe(true);
+    expect(
+      useWorkspaceEditorStore.getState().editorsByThreadId["thread-default-layout"]?.explorerOpen,
+    ).toBe(true);
+    expect(
+      useWorkspaceEditorStore.getState().editorsByThreadId["thread-default-layout"]?.problemsOpen,
+    ).toBe(false);
+  });
+
+  it("tracks explorer visibility per thread", () => {
+    const threadId = ThreadId.makeUnsafe("thread-explorer");
+
+    useWorkspaceEditorStore.getState().openFile(threadId, "apps/web/src/components/ChatView.tsx");
+    useWorkspaceEditorStore.getState().setExplorerOpen(threadId, true);
+
+    expect(
+      useWorkspaceEditorStore.getState().editorsByThreadId["thread-explorer"]?.explorerOpen,
+    ).toBe(true);
+
+    useWorkspaceEditorStore.getState().setExplorerOpen(threadId, false);
+
+    expect(
+      useWorkspaceEditorStore.getState().editorsByThreadId["thread-explorer"]?.explorerOpen,
+    ).toBe(false);
+  });
+
+  it("tracks explorer width per thread", () => {
+    const threadId = ThreadId.makeUnsafe("thread-explorer-width");
+
+    useWorkspaceEditorStore.getState().setExplorerWidth(threadId, 320);
+
+    expect(
+      useWorkspaceEditorStore.getState().editorsByThreadId["thread-explorer-width"]?.explorerWidth,
+    ).toBe(320);
+    expect(
+      useWorkspaceEditorStore.getState().editorsByThreadId["thread-explorer-width"]?.explorerOpen,
+    ).toBe(true);
+  });
+
+  it("hydrates new thread editor state with the default explorer width", () => {
+    useWorkspaceEditorStore
+      .getState()
+      .openFile(
+        ThreadId.makeUnsafe("thread-default-width"),
+        "apps/web/src/components/ChatView.tsx",
+      );
+
+    expect(
+      useWorkspaceEditorStore.getState().editorsByThreadId["thread-default-width"]?.explorerWidth,
+    ).toBe(DEFAULT_WORKSPACE_EXPLORER_WIDTH);
   });
 });

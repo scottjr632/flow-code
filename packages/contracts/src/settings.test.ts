@@ -13,6 +13,10 @@ describe("DEFAULT_CLIENT_SETTINGS", () => {
   it("includes the default terminal font family", () => {
     expect(DEFAULT_CLIENT_SETTINGS.terminalFontFamily).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
   });
+
+  it("disables vim mode by default", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.vimMode).toBe(false);
+  });
 });
 
 describe("DEFAULT_SERVER_SETTINGS", () => {

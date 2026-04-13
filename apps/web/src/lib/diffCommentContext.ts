@@ -1,6 +1,6 @@
 import { type ThreadId } from "@t3tools/contracts";
 
-export type DiffCommentSide = "additions" | "deletions";
+export type DiffCommentSide = "additions" | "deletions" | "lines";
 
 export interface DiffCommentSelection {
   filePath: string;
@@ -49,7 +49,12 @@ export function normalizeDiffCommentSelection(
     filePath,
     lineStart,
     lineEnd,
-    side: selection.side === "deletions" ? "deletions" : "additions",
+    side:
+      selection.side === "deletions"
+        ? "deletions"
+        : selection.side === "lines"
+          ? "lines"
+          : "additions",
     body,
     excerpt,
   };
@@ -67,6 +72,10 @@ export function formatDiffCommentLabel(selection: {
   lineEnd: number;
   side: DiffCommentSide;
 }): string {
+  if (selection.side === "lines") {
+    return `${selection.filePath} ${formatDiffCommentRange(selection)}`;
+  }
+
   const sideLabel = selection.side === "deletions" ? "removed" : "added";
   return `${selection.filePath} ${sideLabel} ${formatDiffCommentRange(selection)}`;
 }
