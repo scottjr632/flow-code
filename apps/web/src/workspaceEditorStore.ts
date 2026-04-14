@@ -2,6 +2,7 @@ import { type ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 
 type WorkspaceEditorBufferStatus = "idle" | "loading" | "ready" | "saving" | "error";
+export type WorkspaceEditorMode = "review" | "edit";
 
 interface WorkspaceEditorBuffer {
   relativePath: string;
@@ -23,6 +24,7 @@ interface ThreadWorkspaceEditorState {
   explorerOpen: boolean;
   explorerWidth: number;
   problemsOpen: boolean;
+  mode: WorkspaceEditorMode;
 }
 
 interface WorkspaceEditorStoreState {
@@ -45,6 +47,7 @@ interface WorkspaceEditorStoreState {
   setExplorerOpen: (threadId: ThreadId, open: boolean) => void;
   setExplorerWidth: (threadId: ThreadId, width: number) => void;
   setProblemsOpen: (threadId: ThreadId, open: boolean) => void;
+  setMode: (threadId: ThreadId, mode: WorkspaceEditorMode) => void;
 }
 export const DEFAULT_WORKSPACE_EXPLORER_WIDTH = 256;
 
@@ -56,6 +59,7 @@ function createInitialThreadWorkspaceEditorState(): ThreadWorkspaceEditorState {
     explorerOpen: true,
     explorerWidth: DEFAULT_WORKSPACE_EXPLORER_WIDTH,
     problemsOpen: false,
+    mode: "review",
   };
 }
 
@@ -66,6 +70,7 @@ const INITIAL_THREAD_WORKSPACE_EDITOR_STATE: ThreadWorkspaceEditorState = {
   explorerOpen: true,
   explorerWidth: DEFAULT_WORKSPACE_EXPLORER_WIDTH,
   problemsOpen: false,
+  mode: "review",
 };
 
 function normalizeRelativePath(input: string): string {
@@ -283,6 +288,22 @@ export const useWorkspaceEditorStore = create<WorkspaceEditorStoreState>()((set)
           [threadId]: {
             ...threadState,
             problemsOpen: open,
+          },
+        },
+      };
+    }),
+  setMode: (threadId, mode) =>
+    set((state) => {
+      const threadState = ensureThreadState(state.editorsByThreadId, threadId);
+      if (threadState.mode === mode) {
+        return state;
+      }
+      return {
+        editorsByThreadId: {
+          ...state.editorsByThreadId,
+          [threadId]: {
+            ...threadState,
+            mode,
           },
         },
       };

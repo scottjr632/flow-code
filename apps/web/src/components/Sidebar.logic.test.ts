@@ -14,6 +14,7 @@ import {
   resolveAdjacentThreadId,
   resolveThreadKeyboardTraversal,
   resolveProjectStatusIndicator,
+  resolveProjectNewThreadActionClassName,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -74,6 +75,28 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("resolveProjectNewThreadActionClassName", () => {
+  it("omits the staged opacity transition when no project terminal is active", () => {
+    const className = resolveProjectNewThreadActionClassName({
+      hasProjectTerminalStatus: false,
+    });
+
+    expect(className).not.toContain("transition-opacity");
+    expect(className).not.toContain("duration-150");
+    expect(className).not.toContain("group-hover/menu-item:delay-75");
+  });
+
+  it("keeps the staged opacity transition when the project terminal is active", () => {
+    const className = resolveProjectNewThreadActionClassName({
+      hasProjectTerminalStatus: true,
+    });
+
+    expect(className).toContain("transition-opacity");
+    expect(className).toContain("duration-150");
+    expect(className).toContain("group-hover/menu-item:delay-75");
   });
 });
 
@@ -292,7 +315,7 @@ describe("getVisibleThreadsForProject", () => {
       threads,
       activeThreadId: undefined,
       isThreadListExpanded: false,
-      previewLimit: 6,
+      previewLimit: 5,
     });
 
     expect(result.hasHiddenThreads).toBe(true);
@@ -302,7 +325,6 @@ describe("getVisibleThreadsForProject", () => {
       ThreadId.makeUnsafe("thread-3"),
       ThreadId.makeUnsafe("thread-4"),
       ThreadId.makeUnsafe("thread-5"),
-      ThreadId.makeUnsafe("thread-6"),
     ]);
   });
 
@@ -318,7 +340,7 @@ describe("getVisibleThreadsForProject", () => {
       threads,
       activeThreadId: ThreadId.makeUnsafe("thread-8"),
       isThreadListExpanded: false,
-      previewLimit: 6,
+      previewLimit: 5,
     });
 
     expect(result.hasHiddenThreads).toBe(true);
@@ -328,7 +350,6 @@ describe("getVisibleThreadsForProject", () => {
       ThreadId.makeUnsafe("thread-3"),
       ThreadId.makeUnsafe("thread-4"),
       ThreadId.makeUnsafe("thread-5"),
-      ThreadId.makeUnsafe("thread-6"),
       ThreadId.makeUnsafe("thread-8"),
     ]);
   });

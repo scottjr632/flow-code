@@ -115,6 +115,7 @@ import {
   deriveWorkspaceDisplayTitle,
   getThreadIdsForKeyboardTraversal,
   getVisibleThreadsForProject,
+  resolveProjectNewThreadActionClassName,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
   resolveThreadKeyboardTraversal,
@@ -130,7 +131,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
-const THREAD_PREVIEW_LIMIT = 6;
+const THREAD_PREVIEW_LIMIT = 5;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -2136,7 +2137,9 @@ export default function Sidebar({
                     />
                   }
                   showOnHover
-                  className="top-1 right-1.5 size-5 rounded-md p-0 text-muted-foreground/70 transition-opacity duration-150 delay-0 group-hover/menu-item:delay-75 hover:bg-secondary hover:text-foreground"
+                  className={resolveProjectNewThreadActionClassName({
+                    hasProjectTerminalStatus: projectTerminalStatus !== null,
+                  })}
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -2450,6 +2453,27 @@ export default function Sidebar({
     </SidebarMenuItem>
   );
 
+  const primaryNavigationMenu = (
+    <SidebarGroup className="px-2 pt-2 pb-1">
+      <SidebarMenu>
+        {globalNewThreadButton}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="sm"
+            className={cn(
+              "gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground",
+              isOnWork && "bg-accent text-foreground",
+            )}
+            onClick={() => void navigate({ to: "/work" })}
+          >
+            <LayoutGridIcon className="size-3.5" />
+            <span className="text-xs">Work</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    </SidebarGroup>
+  );
+
   return (
     <>
       {isElectron ? (
@@ -2467,6 +2491,7 @@ export default function Sidebar({
       ) : (
         <>
           <SidebarContent className="gap-0">
+            {primaryNavigationMenu}
             {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
               <SidebarGroup className="px-2 pt-2 pb-0">
                 <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
@@ -2684,20 +2709,6 @@ export default function Sidebar({
           <SidebarFooter className="p-2">
             <SidebarUpdatePill />
             <SidebarMenu>
-              {globalNewThreadButton}
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  size="sm"
-                  className={cn(
-                    "gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground",
-                    isOnWork && "bg-accent text-foreground",
-                  )}
-                  onClick={() => void navigate({ to: "/work" })}
-                >
-                  <LayoutGridIcon className="size-3.5" />
-                  <span className="text-xs">Work</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="sm"

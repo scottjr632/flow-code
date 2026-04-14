@@ -19,6 +19,9 @@ describe("workspaceEditorStore", () => {
     expect(
       useWorkspaceEditorStore.getState().editorsByThreadId["thread-default-layout"]?.problemsOpen,
     ).toBe(false);
+    expect(
+      useWorkspaceEditorStore.getState().editorsByThreadId["thread-default-layout"]?.mode,
+    ).toBe("review");
   });
 
   it("tracks explorer visibility per thread", () => {
@@ -62,5 +65,17 @@ describe("workspaceEditorStore", () => {
     expect(
       useWorkspaceEditorStore.getState().editorsByThreadId["thread-default-width"]?.explorerWidth,
     ).toBe(DEFAULT_WORKSPACE_EXPLORER_WIDTH);
+  });
+
+  it("tracks review and edit mode per thread", () => {
+    const threadId = ThreadId.makeUnsafe("thread-mode");
+
+    useWorkspaceEditorStore.getState().setMode(threadId, "edit");
+    expect(useWorkspaceEditorStore.getState().editorsByThreadId["thread-mode"]?.mode).toBe("edit");
+
+    useWorkspaceEditorStore.getState().setMode(threadId, "review");
+    expect(useWorkspaceEditorStore.getState().editorsByThreadId["thread-mode"]?.mode).toBe(
+      "review",
+    );
   });
 });

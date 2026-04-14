@@ -426,6 +426,17 @@ label:has(> select#reasoning-effort) select {
   background: color-mix(in srgb, var(--card) 92%, var(--background));
 }
 
+.workspace-diff-render-surface {
+  background: var(--background);
+}
+
+.workspace-diff-render-file {
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  background: var(--background);
+}
+
 @keyframes ultrathink-rainbow {
   0% {
     background-position: 0% 50%;

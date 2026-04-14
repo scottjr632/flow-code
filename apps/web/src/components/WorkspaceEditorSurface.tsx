@@ -1,142 +1,54 @@
-import type { ProjectDiagnostic, ProjectEntry, ThreadId } from "@t3tools/contracts";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import type { ThreadId } from "@t3tools/contracts";
+import type { SelectedLineRange } from "@pierre/diffs";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircleIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   FileSearchIcon,
   FolderTreeIcon,
   MessageSquareIcon,
   PanelRightCloseIcon,
   PanelRightIcon,
-  RefreshCwIcon,
   SearchIcon,
-  TriangleAlertIcon,
-  XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { openInPreferredEditor } from "../editorPreferences";
-import { useSettings } from "../hooks/useSettings";
 import {
-  projectDiagnosticsQueryOptions,
   projectLspStatusQueryOptions,
-  projectListDirectoryQueryOptions,
   projectSearchEntriesQueryOptions,
+  projectWorkspaceFileTreeQueryOptions,
 } from "../lib/projectReactQuery";
 import { type DiffCommentDraft } from "../lib/diffCommentContext";
 import { cn, randomUUID } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import {
-  directoryAncestorsOf,
   DEFAULT_WORKSPACE_EXPLORER_WIDTH,
   isBufferDirty,
   useThreadWorkspaceEditorState,
   useWorkspaceEditorStore,
 } from "../workspaceEditorStore";
 import { buildFileWorkspaceTabId } from "../workspaceTabs";
-import { basenameOfPath } from "../vscode-icons";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { formatReviewCommentSubmitShortcutLabel } from "./DiffPanel.logic";
-import { InlineCommentForm, InlinePendingComment } from "./InlineCommentWidgets";
-import {
-  WorkspaceCodeEditor,
-  type InlineCommentAnnotation,
-  type WorkspaceCodeCommentTarget,
-} from "./WorkspaceCodeEditor";
-import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
+import { FileTree, toFileTreeEntries } from "./FileTree";
 import { Button } from "./ui/button";
+import { Toggle, ToggleGroup } from "./ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import type {
+  WorkspaceReviewFileViewerLineAnnotation,
+  WorkspaceReviewFileViewerSelection,
+} from "./WorkspaceReviewFileViewer";
 
-interface ExplorerTreeNodeProps {
-  depth?: number;
-  entry: ProjectEntry;
-  activeRelativePath: string | null;
-  directoryEntriesByPath: ReadonlyMap<string, readonly ProjectEntry[]>;
-  expandedDirectoryPaths: ReadonlySet<string>;
-  loadingDirectoryPaths: ReadonlySet<string>;
-  resolvedTheme: "light" | "dark";
-  onToggleDirectory: (relativePath: string) => void;
-  onOpenFile: (relativePath: string) => void;
-}
-
-function ExplorerTreeNode({
-  depth = 0,
-  entry,
-  activeRelativePath,
-  directoryEntriesByPath,
-  expandedDirectoryPaths,
-  loadingDirectoryPaths,
-  resolvedTheme,
-  onToggleDirectory,
-  onOpenFile,
-}: ExplorerTreeNodeProps) {
-  const isDirectory = entry.kind === "directory";
-  const isExpanded = isDirectory && expandedDirectoryPaths.has(entry.path);
-  const childEntries = isDirectory ? (directoryEntriesByPath.get(entry.path) ?? []) : [];
-  const isActive = activeRelativePath === entry.path;
-
-  return (
-    <div>
-      <button
-        type="button"
-        className={cn(
-          "flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1 text-left text-[12px] leading-snug transition-colors",
-          isActive
-            ? "bg-primary/12 text-foreground"
-            : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-        )}
-        style={{ paddingLeft: `${10 + depth * 16}px` }}
-        onClick={() => {
-          if (isDirectory) {
-            onToggleDirectory(entry.path);
-            return;
-          }
-          onOpenFile(entry.path);
-        }}
-      >
-        {isDirectory ? (
-          isExpanded ? (
-            <ChevronDownIcon className="size-3.5 shrink-0" />
-          ) : (
-            <ChevronRightIcon className="size-3.5 shrink-0" />
-          )
-        ) : (
-          <span className="size-3.5 shrink-0" />
-        )}
-        <VscodeEntryIcon
-          pathValue={entry.path}
-          kind={entry.kind}
-          theme={resolvedTheme}
-          className="size-4"
-        />
-        <span className="truncate">{basenameOfPath(entry.path)}</span>
-        {isDirectory && loadingDirectoryPaths.has(entry.path) ? (
-          <RefreshCwIcon className="ml-auto size-3.5 shrink-0 animate-spin text-muted-foreground/60" />
-        ) : null}
-      </button>
-
-      {isDirectory && isExpanded ? (
-        <div>
-          {childEntries.map((childEntry) => (
-            <ExplorerTreeNode
-              key={childEntry.path}
-              depth={depth + 1}
-              entry={childEntry}
-              activeRelativePath={activeRelativePath}
-              directoryEntriesByPath={directoryEntriesByPath}
-              expandedDirectoryPaths={expandedDirectoryPaths}
-              loadingDirectoryPaths={loadingDirectoryPaths}
-              resolvedTheme={resolvedTheme}
-              onToggleDirectory={onToggleDirectory}
-              onOpenFile={onOpenFile}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
+const WorkspaceMonacoEditor = lazy(() =>
+  import("./WorkspaceMonacoEditor").then((module) => ({
+    default: module.WorkspaceMonacoEditor,
+  })),
+);
+const WorkspaceReviewFileViewer = lazy(() =>
+  import("./WorkspaceReviewFileViewer").then((module) => ({
+    default: module.WorkspaceReviewFileViewer,
+  })),
+);
 
 const WORKSPACE_EXPLORER_MIN_WIDTH = 200;
 const WORKSPACE_EXPLORER_MAX_WIDTH = 520;
@@ -233,89 +145,58 @@ function absoluteFilePath(workspaceRoot: string, relativePath: string): string {
 
 const EMPTY_DRAFT_DIFF_COMMENTS: ReadonlyArray<DiffCommentDraft> = [];
 
-interface WorkspaceFileCommentSelection extends WorkspaceCodeCommentTarget {
+interface WorkspaceFileCommentSelection {
   filePath: string;
+  excerpt: string;
+  lineEnd: number;
+  lineStart: number;
   side: "lines";
 }
 
-export function WorkspaceProblemsPanel(props: {
-  diagnostics: readonly ProjectDiagnostic[];
-  activeRelativePath: string | null;
-  open: boolean;
-  onToggleOpen: () => void;
-  onSelectDiagnostic: (relativePath: string) => void;
-}) {
-  const diagnosticsCount = props.diagnostics.length;
+function buildWorkspaceCommentSelection(
+  filePath: string,
+  contents: string,
+  range: SelectedLineRange | null,
+): WorkspaceFileCommentSelection | null {
+  if (!range) {
+    return null;
+  }
 
-  return (
-    <div className="shrink-0 border-t border-border/60 bg-muted/[0.12]">
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-accent/20"
-        aria-expanded={props.open}
-        aria-label={props.open ? "Collapse problems panel" : "Expand problems panel"}
-        onClick={props.onToggleOpen}
-      >
-        {props.open ? (
-          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
-        ) : (
-          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
-        )}
-        <span>Problems</span>
-        <span className="ml-auto shrink-0 text-xs text-muted-foreground/70">
-          {diagnosticsCount} problem{diagnosticsCount === 1 ? "" : "s"}
-        </span>
-      </button>
+  const lineStart = Math.max(1, Math.min(range.start, range.end));
+  const lineEnd = Math.max(lineStart, Math.max(range.start, range.end));
+  const lines = contents.replace(/\r\n/g, "\n").split("\n");
+  const excerptLines: string[] = [];
 
-      {props.open ? (
-        <div className="max-h-48 overflow-y-auto px-1.5 py-1.5">
-          {diagnosticsCount === 0 ? (
-            <div className="px-2.5 py-2.5 text-[13px] text-muted-foreground/60">
-              No problems found.
-            </div>
-          ) : (
-            <div>
-              {props.diagnostics.map((diagnostic) => (
-                <button
-                  key={`${diagnostic.relativePath}:${diagnostic.startLine}:${diagnostic.startColumn}:${diagnostic.code ?? diagnostic.message}`}
-                  type="button"
-                  className={cn(
-                    "flex w-full items-start gap-2 rounded-sm px-2 py-1 text-left transition-colors",
-                    diagnostic.relativePath === props.activeRelativePath
-                      ? "bg-primary/8"
-                      : "hover:bg-accent/30",
-                  )}
-                  onClick={() => props.onSelectDiagnostic(diagnostic.relativePath)}
-                >
-                  <TriangleAlertIcon
-                    className={cn(
-                      "mt-0.5 size-3.5 shrink-0",
-                      diagnostic.severity === "warning"
-                        ? "text-amber-500"
-                        : diagnostic.severity === "info"
-                          ? "text-sky-500"
-                          : "text-rose-500",
-                    )}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 text-[13px] text-foreground">
-                      <span className="truncate font-medium">{diagnostic.relativePath}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground/60">
-                        {diagnostic.startLine}:{diagnostic.startColumn}
-                      </span>
-                    </div>
-                    <div className="text-xs leading-snug text-muted-foreground/80">
-                      {diagnostic.message}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : null}
-    </div>
-  );
+  for (let lineNumber = lineStart; lineNumber <= lineEnd; lineNumber += 1) {
+    excerptLines.push(`${lineNumber} | ${lines[lineNumber - 1] ?? ""}`);
+  }
+
+  const excerpt = excerptLines.join("\n").trim();
+  if (excerpt.length === 0) {
+    return null;
+  }
+
+  return {
+    filePath,
+    excerpt,
+    lineEnd,
+    lineStart,
+    side: "lines",
+  };
+}
+
+function selectedLineRangeForSelection(
+  selection: WorkspaceFileCommentSelection | null,
+): SelectedLineRange | null {
+  if (!selection) {
+    return null;
+  }
+  return {
+    start: selection.lineStart,
+    end: selection.lineEnd,
+    side: "additions",
+    endSide: "additions",
+  };
 }
 
 export function WorkspaceEditorSurface(props: {
@@ -333,6 +214,7 @@ export function WorkspaceEditorSurface(props: {
   const [activeCommentSelection, setActiveCommentSelection] =
     useState<WorkspaceFileCommentSelection | null>(null);
   const [activeCommentBody, setActiveCommentBody] = useState("");
+  const [selectedReviewRange, setSelectedReviewRange] = useState<SelectedLineRange | null>(null);
   const lspOpenedPathsRef = useRef(new Set<string>());
   const lspSyncedContentsRef = useRef(new Map<string, string>());
   const editorState = useThreadWorkspaceEditorState(threadId);
@@ -340,14 +222,9 @@ export function WorkspaceEditorSurface(props: {
   const setBufferState = useWorkspaceEditorStore((state) => state.setBufferState);
   const setBufferContents = useWorkspaceEditorStore((state) => state.setBufferContents);
   const markBufferSaved = useWorkspaceEditorStore((state) => state.markBufferSaved);
-  const toggleDirectoryExpanded = useWorkspaceEditorStore((state) => state.toggleDirectoryExpanded);
-  const ensureDirectoriesExpanded = useWorkspaceEditorStore(
-    (state) => state.ensureDirectoriesExpanded,
-  );
   const setExplorerOpen = useWorkspaceEditorStore((state) => state.setExplorerOpen);
   const setExplorerWidth = useWorkspaceEditorStore((state) => state.setExplorerWidth);
-  const setProblemsOpen = useWorkspaceEditorStore((state) => state.setProblemsOpen);
-  const vimMode = useSettings((settings) => settings.vimMode);
+  const setMode = useWorkspaceEditorStore((state) => state.setMode);
   const addComposerDiffComment = useComposerDraftStore((state) => state.addDiffComment);
   const removeComposerDiffComment = useComposerDraftStore((state) => state.removeDiffComment);
   const submittedThreadDiffComments = useComposerDraftStore(
@@ -361,22 +238,12 @@ export function WorkspaceEditorSurface(props: {
   const activeBuffer = activeRelativePath
     ? (editorState.buffersByPath[activeRelativePath] ?? null)
     : null;
-  const rootDirectoryPaths = useMemo(
-    () => [
-      "",
-      ...editorState.expandedDirectoryPaths.toSorted((left, right) => left.localeCompare(right)),
-    ],
-    [editorState.expandedDirectoryPaths],
+  const workspaceFilesQuery = useQuery(
+    projectWorkspaceFileTreeQueryOptions({
+      cwd: workspaceRoot,
+      enabled: editorState.explorerOpen,
+    }),
   );
-  const directoryQueries = useQueries({
-    queries: rootDirectoryPaths.map((relativePath) =>
-      projectListDirectoryQueryOptions({
-        cwd: workspaceRoot,
-        relativePath,
-        enabled: editorState.explorerOpen,
-      }),
-    ),
-  });
   const searchEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       cwd: workspaceRoot,
@@ -385,47 +252,20 @@ export function WorkspaceEditorSurface(props: {
       limit: 120,
     }),
   );
-  const workspaceDiagnosticsQuery = useQuery(
-    projectDiagnosticsQueryOptions({
-      cwd: workspaceRoot,
-    }),
-  );
-  const activeFileDiagnosticsQuery = useQuery(
-    projectDiagnosticsQueryOptions({
-      cwd: workspaceRoot,
-      relativePath: activeRelativePath,
-      enabled: activeRelativePath !== null,
-    }),
-  );
   const lspStatusQuery = useQuery(
     projectLspStatusQueryOptions({
       cwd: workspaceRoot,
     }),
   );
 
-  const directoryEntriesByPath = useMemo(() => {
-    const nextEntriesByPath = new Map<string, readonly ProjectEntry[]>();
-    rootDirectoryPaths.forEach((relativePath, index) => {
-      nextEntriesByPath.set(relativePath, directoryQueries[index]?.data?.entries ?? []);
-    });
-    return nextEntriesByPath;
-  }, [directoryQueries, rootDirectoryPaths]);
-  const loadingDirectoryPaths = useMemo(() => {
-    const nextPaths = new Set<string>();
-    rootDirectoryPaths.forEach((relativePath, index) => {
-      if (directoryQueries[index]?.isLoading || directoryQueries[index]?.isFetching) {
-        nextPaths.add(relativePath);
-      }
-    });
-    return nextPaths;
-  }, [directoryQueries, rootDirectoryPaths]);
-  const expandedDirectoryPaths = useMemo(
-    () => new Set(editorState.expandedDirectoryPaths),
-    [editorState.expandedDirectoryPaths],
+  const explorerEntries = useMemo(
+    () =>
+      (explorerQuery.trim().length > 0
+        ? searchEntriesQuery.data?.entries
+        : workspaceFilesQuery.data?.entries
+      )?.filter((entry) => entry.kind === "file") ?? [],
+    [explorerQuery, searchEntriesQuery.data?.entries, workspaceFilesQuery.data?.entries],
   );
-  const activeDiagnostics = activeFileDiagnosticsQuery.data?.diagnostics ?? [];
-  const activeFileDiagnosticsCount = activeDiagnostics.length;
-  const totalDiagnosticsCount = workspaceDiagnosticsQuery.data?.diagnostics.length ?? 0;
   const lspStatus = lspStatusQuery.data;
   const submittedCommentsForActiveFile = useMemo(
     () =>
@@ -446,6 +286,7 @@ export function WorkspaceEditorSurface(props: {
   const clearCommentComposer = useCallback(() => {
     setActiveCommentSelection(null);
     setActiveCommentBody("");
+    setSelectedReviewRange(null);
   }, []);
 
   const openCommentComposer = useCallback(() => {
@@ -454,6 +295,7 @@ export function WorkspaceEditorSurface(props: {
     }
     setActiveCommentSelection(currentCommentTarget);
     setActiveCommentBody("");
+    setSelectedReviewRange(selectedLineRangeForSelection(currentCommentTarget));
   }, [currentCommentTarget]);
 
   const addSelectedCommentToDraft = useCallback(() => {
@@ -485,76 +327,45 @@ export function WorkspaceEditorSurface(props: {
     threadId,
   ]);
 
-  // Build inline comment annotations for the CodeMirror editor.
-  const inlineComments: InlineCommentAnnotation[] = useMemo(() => {
-    const annotations: InlineCommentAnnotation[] = [];
+  const reviewLineAnnotations: WorkspaceReviewFileViewerLineAnnotation[] = useMemo(() => {
+    const annotations: WorkspaceReviewFileViewerLineAnnotation[] = [];
     for (const comment of submittedCommentsForActiveFile) {
       annotations.push({
-        kind: "draft-comment",
-        id: comment.id,
-        lineEnd: comment.lineEnd,
-        lineStart: comment.lineStart,
+        side: "additions",
+        lineNumber: comment.lineEnd,
+        metadata: {
+          kind: "draft-comment",
+          comment,
+          onRemove: () => removeComposerDiffComment(threadId, comment.id),
+        },
       });
     }
     if (activeCommentSelection) {
       annotations.push({
-        kind: "draft-form",
-        id: "active-comment-form",
-        lineEnd: activeCommentSelection.lineEnd,
-        lineStart: activeCommentSelection.lineStart,
+        side: "additions",
+        lineNumber: activeCommentSelection.lineEnd,
+        metadata: {
+          kind: "draft-form",
+          selection: activeCommentSelection satisfies WorkspaceReviewFileViewerSelection,
+          body: activeCommentBody,
+          submitShortcutLabel: reviewCommentSubmitShortcutLabel,
+          onBodyChange: setActiveCommentBody,
+          onSubmit: addSelectedCommentToDraft,
+          onCancel: clearCommentComposer,
+        },
       });
     }
     return annotations;
-  }, [activeCommentSelection, submittedCommentsForActiveFile]);
-
-  const renderInlineComment = useCallback(
-    (annotation: InlineCommentAnnotation) => {
-      if (annotation.kind === "draft-form" && activeCommentSelection) {
-        return (
-          <InlineCommentForm
-            filePath={activeCommentSelection.filePath}
-            lineStart={activeCommentSelection.lineStart}
-            lineEnd={activeCommentSelection.lineEnd}
-            body={activeCommentBody}
-            submitShortcutLabel={reviewCommentSubmitShortcutLabel}
-            onBodyChange={setActiveCommentBody}
-            onSubmit={addSelectedCommentToDraft}
-            onCancel={clearCommentComposer}
-          />
-        );
-      }
-      if (annotation.kind === "draft-comment") {
-        const comment = submittedCommentsForActiveFile.find((c) => c.id === annotation.id);
-        if (!comment) {
-          return null;
-        }
-        return (
-          <InlinePendingComment
-            comment={comment}
-            onRemove={() => removeComposerDiffComment(threadId, comment.id)}
-          />
-        );
-      }
-      return null;
-    },
-    [
-      activeCommentBody,
-      activeCommentSelection,
-      addSelectedCommentToDraft,
-      clearCommentComposer,
-      removeComposerDiffComment,
-      reviewCommentSubmitShortcutLabel,
-      submittedCommentsForActiveFile,
-      threadId,
-    ],
-  );
-
-  useEffect(() => {
-    if (!activeRelativePath) {
-      return;
-    }
-    ensureDirectoriesExpanded(threadId, directoryAncestorsOf(activeRelativePath));
-  }, [activeRelativePath, ensureDirectoriesExpanded, threadId]);
+  }, [
+    activeCommentBody,
+    activeCommentSelection,
+    addSelectedCommentToDraft,
+    clearCommentComposer,
+    removeComposerDiffComment,
+    reviewCommentSubmitShortcutLabel,
+    submittedCommentsForActiveFile,
+    threadId,
+  ]);
 
   useEffect(() => {
     if (lspStatus?.state === "running") {
@@ -566,8 +377,9 @@ export function WorkspaceEditorSurface(props: {
 
   useEffect(() => {
     setCurrentCommentTarget(null);
+    setSelectedReviewRange(null);
     clearCommentComposer();
-  }, [activeRelativePath, clearCommentComposer]);
+  }, [activeRelativePath, editorState.mode, clearCommentComposer]);
 
   const loadFile = useCallback(
     async (relativePath: string, force = false) => {
@@ -679,9 +491,6 @@ export function WorkspaceEditorSurface(props: {
           }
           lspOpenedPathsRef.current.add(relativePath);
           lspSyncedContentsRef.current.set(relativePath, contents);
-          if (props.activeRelativePath === relativePath) {
-            void activeFileDiagnosticsQuery.refetch();
-          }
         })
         .catch(() => {
           // Ignore sync failures and keep compiler diagnostics as the fallback.
@@ -696,7 +505,6 @@ export function WorkspaceEditorSurface(props: {
       lspSyncedContentsRef.current.delete(relativePath);
     }
   }, [
-    activeFileDiagnosticsQuery,
     editorState.buffersByPath,
     editorState.openFilePaths,
     lspStatus?.state,
@@ -740,7 +548,6 @@ export function WorkspaceEditorSurface(props: {
             return;
           }
           lspSyncedContentsRef.current.set(activeRelativePath, nextContents);
-          void activeFileDiagnosticsQuery.refetch();
         })
         .catch(() => {
           // Ignore sync failures and keep compiler diagnostics as the fallback.
@@ -750,21 +557,14 @@ export function WorkspaceEditorSurface(props: {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [
-    activeBuffer,
-    activeFileDiagnosticsQuery,
-    activeRelativePath,
-    lspStatus?.state,
-    workspaceRoot,
-  ]);
+  }, [activeBuffer, activeRelativePath, lspStatus?.state, workspaceRoot]);
 
   const handleOpenFile = useCallback(
     (relativePath: string) => {
       openFile(threadId, relativePath);
-      ensureDirectoriesExpanded(threadId, directoryAncestorsOf(relativePath));
       onSelectWorkspaceTab(buildFileWorkspaceTabId(relativePath));
     },
-    [ensureDirectoriesExpanded, onSelectWorkspaceTab, openFile, threadId],
+    [onSelectWorkspaceTab, openFile, threadId],
   );
 
   const handleSaveFile = useCallback(
@@ -806,10 +606,6 @@ export function WorkspaceEditorSurface(props: {
           contents: buffer.contents,
           mtimeMs: result.mtimeMs,
         });
-        await Promise.all([
-          workspaceDiagnosticsQuery.refetch(),
-          activeFileDiagnosticsQuery.refetch(),
-        ]);
       } catch (error) {
         setBufferState(props.threadId, relativePath, (current) => ({
           ...(current ?? buffer),
@@ -819,18 +615,15 @@ export function WorkspaceEditorSurface(props: {
       }
     },
     [
-      activeFileDiagnosticsQuery,
       editorState.buffersByPath,
       lspStatus?.state,
       markBufferSaved,
       props.threadId,
       props.workspaceRoot,
       setBufferState,
-      workspaceDiagnosticsQuery,
     ],
   );
 
-  const searchResults = searchEntriesQuery.data?.entries ?? [];
   return (
     <div className="h-full flex overflow-hidden">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -850,20 +643,31 @@ export function WorkspaceEditorSurface(props: {
                       : ""}
               </span>
             ) : null}
-            {totalDiagnosticsCount > 0 ? (
-              <span className="shrink-0 text-xs text-muted-foreground/60">
-                {totalDiagnosticsCount} problem{totalDiagnosticsCount === 1 ? "" : "s"}
-              </span>
-            ) : null}
-            {activeRelativePath && activeFileDiagnosticsCount > 0 ? (
-              <span className="shrink-0 text-xs text-muted-foreground/60">
-                {activeFileDiagnosticsCount} file problem
-                {activeFileDiagnosticsCount === 1 ? "" : "s"}
-              </span>
-            ) : null}
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
+            {activeBuffer && !activeBuffer.binary && !activeBuffer.tooLarge ? (
+              <ToggleGroup
+                aria-label="Workspace file mode"
+                value={[editorState.mode]}
+                onValueChange={(value) => {
+                  const next = value[0];
+                  if (next === "review" || next === "edit") {
+                    setMode(props.threadId, next);
+                  }
+                }}
+                variant="outline"
+                size="xs"
+                className="gap-0 p-0.5"
+              >
+                <Toggle value="review" aria-label="View file">
+                  View
+                </Toggle>
+                <Toggle value="edit" aria-label="Edit file">
+                  Edit
+                </Toggle>
+              </ToggleGroup>
+            ) : null}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -973,52 +777,79 @@ export function WorkspaceEditorSurface(props: {
               </div>
             </div>
           ) : (
-            <WorkspaceCodeEditor
-              relativePath={props.activeRelativePath ?? ""}
-              value={activeBuffer.contents}
-              diagnostics={activeDiagnostics}
-              resolvedTheme={resolvedTheme}
-              vimMode={vimMode}
-              autoFocus
-              inlineComments={inlineComments}
-              renderInlineComment={renderInlineComment}
-              onCommentTargetChange={(target) => {
-                if (!props.activeRelativePath || !target) {
-                  setCurrentCommentTarget(null);
-                  return;
-                }
-
-                setCurrentCommentTarget({
-                  filePath: props.activeRelativePath,
-                  lineStart: target.lineStart,
-                  lineEnd: target.lineEnd,
-                  side: "lines",
-                  excerpt: target.excerpt,
-                });
-              }}
-              onChange={(nextValue) => {
-                if (!props.activeRelativePath) {
-                  return;
-                }
-                setBufferContents(props.threadId, props.activeRelativePath, nextValue);
-              }}
-              onSave={() => {
-                if (!props.activeRelativePath) {
-                  return;
-                }
-                void handleSaveFile(props.activeRelativePath);
-              }}
-            />
+            <Suspense
+              fallback={
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground/60">
+                  Loading…
+                </div>
+              }
+            >
+              {editorState.mode === "edit" ? (
+                <WorkspaceMonacoEditor
+                  relativePath={props.activeRelativePath}
+                  value={activeBuffer.contents}
+                  readOnly={false}
+                  resolvedTheme={resolvedTheme}
+                  autoFocus
+                  onChange={(nextValue) => {
+                    if (!props.activeRelativePath) {
+                      return;
+                    }
+                    setBufferContents(props.threadId, props.activeRelativePath, nextValue);
+                  }}
+                  onSave={() => {
+                    if (!props.activeRelativePath) {
+                      return;
+                    }
+                    void handleSaveFile(props.activeRelativePath);
+                  }}
+                />
+              ) : (
+                <WorkspaceReviewFileViewer
+                  relativePath={props.activeRelativePath}
+                  contents={activeBuffer.contents}
+                  resolvedTheme={resolvedTheme}
+                  selectedRange={selectedReviewRange}
+                  lineAnnotations={reviewLineAnnotations}
+                  onSelectedRangeChange={(range) => {
+                    setSelectedReviewRange(range);
+                    if (!props.activeRelativePath) {
+                      setCurrentCommentTarget(null);
+                      return;
+                    }
+                    setCurrentCommentTarget(
+                      buildWorkspaceCommentSelection(
+                        props.activeRelativePath,
+                        activeBuffer.contents,
+                        range,
+                      ),
+                    );
+                    if (!range && activeCommentSelection) {
+                      clearCommentComposer();
+                    }
+                  }}
+                  onGutterUtilityClick={(range) => {
+                    if (!props.activeRelativePath) {
+                      return;
+                    }
+                    const selection = buildWorkspaceCommentSelection(
+                      props.activeRelativePath,
+                      activeBuffer.contents,
+                      range,
+                    );
+                    if (!selection) {
+                      return;
+                    }
+                    setCurrentCommentTarget(selection);
+                    setActiveCommentSelection(selection);
+                    setActiveCommentBody("");
+                    setSelectedReviewRange(selectedLineRangeForSelection(selection));
+                  }}
+                />
+              )}
+            </Suspense>
           )}
         </div>
-
-        <WorkspaceProblemsPanel
-          diagnostics={workspaceDiagnosticsQuery.data?.diagnostics ?? []}
-          activeRelativePath={props.activeRelativePath}
-          open={editorState.problemsOpen}
-          onToggleOpen={() => setProblemsOpen(props.threadId, !editorState.problemsOpen)}
-          onSelectDiagnostic={handleOpenFile}
-        />
       </div>
 
       {editorState.explorerOpen ? (
@@ -1042,65 +873,27 @@ export function WorkspaceEditorSurface(props: {
                 className="shrink-0 rounded-sm p-0.5 text-muted-foreground/50 hover:text-foreground"
                 onClick={() => setExplorerQuery("")}
               >
-                <XIcon className="size-3" />
+                Clear
               </button>
             ) : null}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1.5">
-            {explorerQuery.trim().length > 0 ? (
-              <div>
-                {searchResults.map((entry) => (
-                  <button
-                    key={`${entry.kind}:${entry.path}`}
-                    type="button"
-                    className="flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1 text-left text-[12px] leading-snug text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-                    onClick={() => {
-                      if (entry.kind === "directory") {
-                        ensureDirectoriesExpanded(props.threadId, [entry.path]);
-                        setExplorerQuery("");
-                        return;
-                      }
-                      handleOpenFile(entry.path);
-                    }}
-                  >
-                    <VscodeEntryIcon
-                      pathValue={entry.path}
-                      kind={entry.kind}
-                      theme={resolvedTheme}
-                      className="size-4"
-                    />
-                    <span className="truncate">{basenameOfPath(entry.path)}</span>
-                    {entry.parentPath ? (
-                      <span className="ml-auto truncate text-[11px] text-muted-foreground/50">
-                        {entry.parentPath}
-                      </span>
-                    ) : null}
-                  </button>
-                ))}
-                {searchEntriesQuery.isFetching ? (
-                  <div className="px-2 py-1.5 text-[12px] text-muted-foreground/70">Searching…</div>
-                ) : null}
-              </div>
-            ) : (
-              <div>
-                {(directoryEntriesByPath.get("") ?? []).map((entry) => (
-                  <ExplorerTreeNode
-                    key={entry.path}
-                    entry={entry}
-                    activeRelativePath={props.activeRelativePath}
-                    directoryEntriesByPath={directoryEntriesByPath}
-                    expandedDirectoryPaths={expandedDirectoryPaths}
-                    loadingDirectoryPaths={loadingDirectoryPaths}
-                    resolvedTheme={resolvedTheme}
-                    onToggleDirectory={(relativePath) =>
-                      toggleDirectoryExpanded(props.threadId, relativePath)
-                    }
-                    onOpenFile={handleOpenFile}
-                  />
-                ))}
-              </div>
-            )}
+            {searchEntriesQuery.isFetching || workspaceFilesQuery.isFetching ? (
+              <div className="px-2 py-1.5 text-[12px] text-muted-foreground/70">Loading…</div>
+            ) : null}
+            <FileTree
+              entries={toFileTreeEntries(explorerEntries)}
+              resolvedTheme={resolvedTheme}
+              onSelectFile={handleOpenFile}
+              selectedPath={props.activeRelativePath}
+              textSize="compact"
+              emptyLabel={
+                explorerQuery.trim().length > 0
+                  ? "No files match filter."
+                  : "No files in this workspace."
+              }
+            />
           </div>
         </ResizableWorkspaceExplorerPanel>
       ) : null}

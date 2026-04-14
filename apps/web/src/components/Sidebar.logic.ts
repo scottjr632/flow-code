@@ -310,6 +310,16 @@ export function resolveProjectStatusIndicator(
   return highestPriorityStatus;
 }
 
+export function resolveProjectNewThreadActionClassName(input: {
+  hasProjectTerminalStatus: boolean;
+}): string {
+  return cn(
+    "top-1 right-1.5 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground",
+    input.hasProjectTerminalStatus &&
+      "transition-opacity duration-150 delay-0 group-hover/menu-item:delay-75",
+  );
+}
+
 export function getVisibleThreadsForProject(input: {
   threads: readonly Thread[];
   activeThreadId: Thread["id"] | undefined;

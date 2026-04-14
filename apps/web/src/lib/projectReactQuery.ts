@@ -1,5 +1,6 @@
 import type {
   ProjectGetDiagnosticsResult,
+  ProjectEntry,
   ProjectGetLspStatusResult,
   ProjectListDirectoryResult,
   ProjectReadFileResult,
@@ -12,6 +13,7 @@ export const projectQueryKeys = {
   all: ["projects"] as const,
   listDirectory: (cwd: string | null, relativePath: string) =>
     ["projects", "list-directory", cwd, relativePath] as const,
+  workspaceFileTree: (cwd: string | null) => ["projects", "workspace-file-tree", cwd] as const,
   readFile: (cwd: string | null, relativePath: string) =>
     ["projects", "read-file", cwd, relativePath] as const,
   diagnostics: (cwd: string | null, relativePath: string | null) =>
@@ -30,6 +32,9 @@ const EMPTY_SEARCH_ENTRIES_RESULT: ProjectSearchEntriesResult = {
 };
 const EMPTY_DIRECTORY_RESULT: ProjectListDirectoryResult = {
   relativePath: "",
+  entries: [],
+};
+const EMPTY_WORKSPACE_FILE_TREE_RESULT: { entries: ProjectEntry[] } = {
   entries: [],
 };
 const EMPTY_FILE_RESULT: ProjectReadFileResult = {
@@ -99,6 +104,57 @@ export function projectListDirectoryQueryOptions(input: {
     enabled: (input.enabled ?? true) && input.cwd !== null,
     staleTime: DEFAULT_SEARCH_ENTRIES_STALE_TIME,
     placeholderData: (previous) => previous ?? EMPTY_DIRECTORY_RESULT,
+  });
+}
+
+export function projectWorkspaceFileTreeQueryOptions(input: {
+  cwd: string | null;
+  enabled?: boolean;
+  staleTime?: number;
+}) {
+  return queryOptions({
+    queryKey: projectQueryKeys.workspaceFileTree(input.cwd),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!input.cwd) {
+        throw new Error("Workspace file tree is unavailable.");
+      }
+
+      const pendingDirectories = [""];
+      const visitedDirectories = new Set(pendingDirectories);
+      const fileEntries: ProjectEntry[] = [];
+
+      while (pendingDirectories.length > 0) {
+        const relativePath = pendingDirectories.shift() ?? "";
+        const result = await api.projects.listDirectory({
+          cwd: input.cwd,
+          ...(relativePath.length > 0 ? { relativePath } : {}),
+        });
+
+        for (const entry of result.entries) {
+          if (entry.kind === "directory") {
+            if (!visitedDirectories.has(entry.path)) {
+              visitedDirectories.add(entry.path);
+              pendingDirectories.push(entry.path);
+            }
+            continue;
+          }
+          fileEntries.push(entry);
+        }
+      }
+
+      fileEntries.sort((left, right) =>
+        left.path.localeCompare(right.path, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }),
+      );
+
+      return { entries: fileEntries };
+    },
+    enabled: (input.enabled ?? true) && input.cwd !== null,
+    staleTime: input.staleTime ?? DEFAULT_SEARCH_ENTRIES_STALE_TIME,
+    placeholderData: (previous) => previous ?? EMPTY_WORKSPACE_FILE_TREE_RESULT,
   });
 }
 

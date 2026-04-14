@@ -35,6 +35,7 @@ export const FileTree = memo(function FileTree(props: {
   allDirectoriesExpanded?: boolean;
   defaultDirectoriesExpanded?: boolean;
   emptyLabel?: string;
+  textSize?: "default" | "compact";
   className?: string;
 }) {
   const {
@@ -46,7 +47,10 @@ export const FileTree = memo(function FileTree(props: {
     onSelectFile,
     resolvedTheme,
     selectedPath = null,
+    textSize = "default",
   } = props;
+  const labelTextClass = textSize === "compact" ? "text-[11px]" : "text-sm";
+  const statTextClass = textSize === "compact" ? "text-[11px]" : "text-xs";
   const treeNodes = useMemo(() => buildTurnDiffTree(entries), [entries]);
   const directoryPaths = useMemo(() => collectDirectoryPaths(treeNodes), [treeNodes]);
   const allDirectoryExpansionState = useMemo(
@@ -82,7 +86,13 @@ export const FileTree = memo(function FileTree(props: {
 
   if (treeNodes.length === 0) {
     return (
-      <div className={cn("px-2 py-3 text-xs text-muted-foreground/70", className)}>
+      <div
+        className={cn(
+          "px-2 py-3 text-muted-foreground/70",
+          textSize === "compact" ? "text-[11px]" : "text-xs",
+          className,
+        )}
+      >
         {emptyLabel}
       </div>
     );
@@ -119,11 +129,18 @@ export const FileTree = memo(function FileTree(props: {
             ) : (
               <FolderClosedIcon className="size-4 shrink-0 text-muted-foreground/70" />
             )}
-            <span className="truncate font-mono text-sm leading-snug text-muted-foreground/90 group-hover:text-foreground/90">
+            <span
+              className={cn(
+                "truncate font-mono leading-snug text-muted-foreground/90 group-hover:text-foreground/90",
+                labelTextClass,
+              )}
+            >
               {node.name}
             </span>
             {hasNonZeroStat(node.stat) ? (
-              <span className="ml-auto shrink-0 font-mono text-xs tabular-nums opacity-70">
+              <span
+                className={cn("ml-auto shrink-0 font-mono tabular-nums opacity-70", statTextClass)}
+              >
                 <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
               </span>
             ) : null}
@@ -157,14 +174,15 @@ export const FileTree = memo(function FileTree(props: {
         />
         <span
           className={cn(
-            "truncate font-mono text-sm leading-snug text-muted-foreground/80 group-hover:text-foreground/90",
+            "truncate font-mono leading-snug text-muted-foreground/80 group-hover:text-foreground/90",
+            labelTextClass,
             isSelected && "text-accent-foreground",
           )}
         >
           {node.name}
         </span>
         {node.stat ? (
-          <span className="ml-auto shrink-0 font-mono text-xs tabular-nums opacity-70">
+          <span className={cn("ml-auto shrink-0 font-mono tabular-nums opacity-70", statTextClass)}>
             <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
           </span>
         ) : null}
