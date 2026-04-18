@@ -127,7 +127,7 @@ function ResizableWorkspaceExplorerPanel(props: ResizableWorkspaceExplorerPanelP
       className="relative flex min-h-0 shrink-0 flex-col border-l border-border/60 bg-muted/[0.16]"
       style={{ width: `${width}px` }}
     >
-      <div className="min-h-0 flex-1">{children}</div>
+      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
       <div
         className="absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize border-l border-border/60 transition-colors hover:border-primary/50 active:border-primary"
         onPointerDown={handlePointerDown}
