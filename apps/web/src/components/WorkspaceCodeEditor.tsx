@@ -25,6 +25,10 @@ import {
   commentWidgetsExtension,
   setCommentWidgets,
 } from "./workspaceCodeEditorComments";
+import {
+  WORKSPACE_CODE_FONT_SIZE_PX,
+  WORKSPACE_CODE_LINE_HEIGHT_PX,
+} from "../lib/workspaceCodeTypography";
 
 export type { InlineCommentAnnotation };
 
@@ -133,14 +137,14 @@ const editorTheme = (dark: boolean) =>
         overflow: "hidden",
         backgroundColor: "color-mix(in srgb, var(--muted) 78%, var(--background))",
         color: "var(--foreground)",
-        fontSize: "12px",
+        fontSize: `${WORKSPACE_CODE_FONT_SIZE_PX}px`,
       },
       ".cm-scroller": {
         height: "100%",
         overflow: "auto",
         fontFamily:
           'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-        lineHeight: "1.5",
+        lineHeight: `${WORKSPACE_CODE_LINE_HEIGHT_PX}px`,
       },
       ".cm-content": {
         padding: "4px 0",

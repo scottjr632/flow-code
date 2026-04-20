@@ -16,6 +16,7 @@ import {
   type DiffCommentSide,
 } from "../lib/diffCommentContext";
 import { resolveDiffThemeName } from "../lib/diffRendering";
+import { buildPierreDiffTypographyCSSVars } from "../lib/workspaceCodeTypography";
 
 export interface WorkspaceReviewFileViewerSelection {
   filePath: string;
@@ -241,6 +242,7 @@ export function WorkspaceReviewFileViewer(props: {
 [data-code],
 [data-error-wrapper],
 [data-virtualizer-buffer] {
+  ${buildPierreDiffTypographyCSSVars()}
   --diffs-bg: var(--background) !important;
   --diffs-light-bg: var(--background) !important;
   --diffs-dark-bg: var(--background) !important;

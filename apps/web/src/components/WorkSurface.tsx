@@ -41,7 +41,9 @@ import {
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 
 import { useWorkspaceCommandPalette } from "~/hooks/useWorkspaceCommandPalette";
+import { useWorkspaceFilePalette } from "~/hooks/useWorkspaceFilePalette";
 import { useWorkItemActions, WorkItemLaunchLinkError } from "~/hooks/useWorkItemActions";
+import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { useStore } from "~/store";
 import type { WorkItem } from "~/types";
@@ -71,6 +73,7 @@ import {
   WorkspaceCommandPalette,
   type WorkspaceCommandPaletteItem,
 } from "./WorkspaceCommandPalette";
+import { WorkspaceFilePalette } from "./WorkspaceFilePalette";
 import { isElectron } from "~/env";
 import { buildWorkspaceCommandPaletteNavigationItems } from "~/workspaceCommandPaletteItems";
 
@@ -710,6 +713,8 @@ export function WorkSurface({
   const navigate = useNavigate();
   const { isOpen: isWorkspaceCommandPaletteOpen, setIsOpen: setIsWorkspaceCommandPaletteOpen } =
     useWorkspaceCommandPalette();
+  const { isOpen: isWorkspaceFilePaletteOpen, setIsOpen: setIsWorkspaceFilePaletteOpen } =
+    useWorkspaceFilePalette();
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const workspaces = useStore((store) => store.workspaces);
@@ -799,6 +804,7 @@ export function WorkSurface({
       },
     }),
   );
+  const { resolvedTheme } = useTheme();
 
   const openCreateDialog = useCallback(
     (preferredProjectId: ProjectId | null = null) => {
@@ -1338,6 +1344,15 @@ export function WorkSurface({
           items={workspaceCommandPaletteItems}
           placeholder="Type command"
           emptyText="No matching work action."
+        />
+        <WorkspaceFilePalette
+          open={isWorkspaceFilePaletteOpen}
+          onOpenChange={setIsWorkspaceFilePaletteOpen}
+          cwd={null}
+          projectName={userProjects.find((project) => project.id === activeProjectId)?.name ?? null}
+          resolvedTheme={resolvedTheme}
+          onSelectFile={null}
+          unavailableText="Open a session workspace to browse project files in Flow."
         />
 
         {userProjects.length === 0 ? (

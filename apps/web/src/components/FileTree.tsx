@@ -41,7 +41,7 @@ export const FileTree = memo(function FileTree(props: {
   const {
     allDirectoriesExpanded,
     className,
-    defaultDirectoriesExpanded = true,
+    defaultDirectoriesExpanded = false,
     emptyLabel = "No files.",
     entries,
     onSelectFile,

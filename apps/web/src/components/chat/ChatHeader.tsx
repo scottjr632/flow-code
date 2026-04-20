@@ -4,6 +4,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ThreadId,
 } from "@t3tools/contracts";
+import { useQuery } from "@tanstack/react-query";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { DiffIcon, TerminalSquareIcon } from "lucide-react";
@@ -13,6 +14,8 @@ import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScr
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
+import { gitStatusQueryOptions } from "../../lib/gitReactQuery";
+import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 
 interface ChatHeaderProps {
   activeThreadId: ThreadId;
@@ -63,6 +66,25 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleTerminal,
   onToggleDiff,
 }: ChatHeaderProps) {
+  const { data: gitStatus = null } = useQuery(gitStatusQueryOptions(gitCwd));
+  const reviewStat =
+    gitStatus === null
+      ? null
+      : {
+          additions: gitStatus.workingTree.insertions,
+          deletions: gitStatus.workingTree.deletions,
+        };
+  const hasReviewStat = reviewStat !== null && hasNonZeroStat(reviewStat);
+  const reviewToggleLabel = !activeProjectName
+    ? "Review tab is unavailable until this thread has an active project."
+    : activeProjectIsHome
+      ? "Review tab is unavailable in Home."
+      : !isGitRepo
+        ? "Review tab is unavailable because this project is not a git repository."
+        : diffToggleShortcutLabel
+          ? `Toggle review tab (${diffToggleShortcutLabel})`
+          : "Toggle review tab";
+
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-1.5">
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:gap-2">
@@ -142,28 +164,42 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipTrigger
             render={
               <Toggle
-                className="shrink-0"
+                className="shrink-0 gap-1.5 px-2"
                 pressed={diffOpen}
                 onPressedChange={onToggleDiff}
-                aria-label="Toggle review tab"
+                aria-label={
+                  hasReviewStat
+                    ? `Toggle review tab with ${reviewStat.additions} additions and ${reviewStat.deletions} deletions`
+                    : "Toggle review tab"
+                }
                 variant="outline"
                 size="xs"
                 disabled={!isGitRepo}
               >
                 <DiffIcon className="size-3" />
+                {hasReviewStat ? (
+                  <span className="hidden font-mono text-[10px] tabular-nums sm:inline-flex">
+                    <DiffStatLabel
+                      additions={reviewStat.additions}
+                      deletions={reviewStat.deletions}
+                    />
+                  </span>
+                ) : null}
               </Toggle>
             }
           />
           <TooltipPopup side="bottom">
-            {!activeProjectName
-              ? "Review tab is unavailable until this thread has an active project."
-              : activeProjectIsHome
-                ? "Review tab is unavailable in Home."
-                : !isGitRepo
-                  ? "Review tab is unavailable because this project is not a git repository."
-                  : diffToggleShortcutLabel
-                    ? `Toggle review tab (${diffToggleShortcutLabel})`
-                    : "Toggle review tab"}
+            <div className="flex flex-col gap-0.5">
+              <span>{reviewToggleLabel}</span>
+              {hasReviewStat ? (
+                <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                  <DiffStatLabel
+                    additions={reviewStat.additions}
+                    deletions={reviewStat.deletions}
+                  />
+                </span>
+              ) : null}
+            </div>
           </TooltipPopup>
         </Tooltip>
       </div>

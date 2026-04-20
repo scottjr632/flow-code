@@ -2,6 +2,11 @@ import Editor from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { useCallback, useMemo, useRef } from "react";
 
+import {
+  WORKSPACE_CODE_FONT_SIZE_PX,
+  WORKSPACE_CODE_LINE_HEIGHT_PX,
+} from "../lib/workspaceCodeTypography";
+
 function languageForPath(relativePath: string): string {
   const normalizedPath = relativePath.toLowerCase();
   if (normalizedPath.endsWith(".tsx")) return "typescript";
@@ -94,8 +99,8 @@ export function WorkspaceMonacoEditor(props: {
       }
       options={{
         automaticLayout: true,
-        fontSize: 12,
-        lineHeight: 18,
+        fontSize: WORKSPACE_CODE_FONT_SIZE_PX,
+        lineHeight: WORKSPACE_CODE_LINE_HEIGHT_PX,
         minimap: { enabled: false },
         padding: { top: 8, bottom: 8 },
         readOnly,

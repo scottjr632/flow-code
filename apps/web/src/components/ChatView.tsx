@@ -82,6 +82,7 @@ import { basenameOfPath } from "../vscode-icons";
 import { requestCancelActiveDiffComment } from "../lib/diffCommentEvents";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
+import { useWorkspaceFilePalette } from "../hooks/useWorkspaceFilePalette";
 import BranchToolbar from "./BranchToolbar";
 import {
   isFocusComposerShortcut,
@@ -200,6 +201,7 @@ import {
   WorkspaceCommandPalette,
   type WorkspaceCommandPaletteItem,
 } from "./WorkspaceCommandPalette";
+import { WorkspaceFilePalette } from "./WorkspaceFilePalette";
 import { WorkspaceTabBar } from "./WorkspaceTabBar";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -480,6 +482,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const { isOpen: isWorkspaceCommandPaletteOpen, setIsOpen: setIsWorkspaceCommandPaletteOpen } =
     useWorkspaceCommandPalette();
+  const { isOpen: isWorkspaceFilePaletteOpen, setIsOpen: setIsWorkspaceFilePaletteOpen } =
+    useWorkspaceFilePalette();
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -4673,6 +4677,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     setActiveWorkspaceTabId("files");
   }, [activeProjectSupportsWorkspace, setActiveWorkspaceTabId]);
+  const openWorkspaceFileFromPalette = useCallback(
+    (relativePath: string) => {
+      if (!activeProjectSupportsWorkspace || !activeThreadId) {
+        return;
+      }
+      openWorkspaceEditorFile(activeThreadId, relativePath);
+      ensureWorkspaceEditorDirectoriesExpanded(activeThreadId, directoryAncestorsOf(relativePath));
+      setActiveWorkspaceTabId(buildFileWorkspaceTabId(relativePath));
+    },
+    [
+      activeProjectSupportsWorkspace,
+      activeThreadId,
+      ensureWorkspaceEditorDirectoriesExpanded,
+      openWorkspaceEditorFile,
+      setActiveWorkspaceTabId,
+    ],
+  );
   const selectWorkspaceTab = useCallback(
     (tabId: WorkspaceTabId) => {
       const targetTab = workspaceTabs.find((tab) => tab.id === tabId);
@@ -5087,6 +5108,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
         items={workspaceCommandPaletteItems}
         placeholder="Type command or search threads"
         emptyText="No matching terminal, thread, or action."
+      />
+      <WorkspaceFilePalette
+        open={isWorkspaceFilePaletteOpen}
+        onOpenChange={setIsWorkspaceFilePaletteOpen}
+        cwd={workspaceFileRoot}
+        projectName={activeProject?.name ?? null}
+        resolvedTheme={resolvedTheme}
+        onSelectFile={
+          activeProjectSupportsWorkspace && activeThreadId ? openWorkspaceFileFromPalette : null
+        }
+        unavailableText="Open a workspace-backed session to browse project files in Flow."
       />
       <WorkItemEditorDialog
         open={workItemDialogState !== null}

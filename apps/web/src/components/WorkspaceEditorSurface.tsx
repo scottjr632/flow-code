@@ -8,7 +8,6 @@ import {
   MessageSquareIcon,
   PanelRightCloseIcon,
   PanelRightIcon,
-  SearchIcon,
 } from "lucide-react";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -30,7 +29,8 @@ import {
 import { buildFileWorkspaceTabId } from "../workspaceTabs";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { formatReviewCommentSubmitShortcutLabel } from "./DiffPanel.logic";
-import { FileTree, toFileTreeEntries } from "./FileTree";
+import { toFileTreeEntries } from "./FileTree";
+import { SearchableFileTree } from "./SearchableFileTree";
 import { Button } from "./ui/button";
 import { Toggle, ToggleGroup } from "./ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -859,42 +859,22 @@ export function WorkspaceEditorSurface(props: {
           )}
           onResize={(nextWidth) => setExplorerWidth(threadId, nextWidth)}
         >
-          <div className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5">
-            <SearchIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
-            <input
-              value={explorerQuery}
-              onChange={(event) => setExplorerQuery(event.target.value)}
-              placeholder="Search files…"
-              className="h-6 w-full min-w-0 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/40"
-            />
-            {explorerQuery.length > 0 ? (
-              <button
-                type="button"
-                className="shrink-0 rounded-sm p-0.5 text-muted-foreground/50 hover:text-foreground"
-                onClick={() => setExplorerQuery("")}
-              >
-                Clear
-              </button>
-            ) : null}
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1.5">
-            {searchEntriesQuery.isFetching || workspaceFilesQuery.isFetching ? (
-              <div className="px-2 py-1.5 text-[12px] text-muted-foreground/70">Loading…</div>
-            ) : null}
-            <FileTree
-              entries={toFileTreeEntries(explorerEntries)}
-              resolvedTheme={resolvedTheme}
-              onSelectFile={handleOpenFile}
-              selectedPath={props.activeRelativePath}
-              textSize="compact"
-              emptyLabel={
-                explorerQuery.trim().length > 0
-                  ? "No files match filter."
-                  : "No files in this workspace."
-              }
-            />
-          </div>
+          <SearchableFileTree
+            entries={toFileTreeEntries(explorerEntries)}
+            resolvedTheme={resolvedTheme}
+            onSelectFile={handleOpenFile}
+            selectedPath={props.activeRelativePath}
+            textSize="compact"
+            searchValue={explorerQuery}
+            onSearchValueChange={setExplorerQuery}
+            searchAriaLabel="Search workspace files"
+            loading={searchEntriesQuery.isFetching || workspaceFilesQuery.isFetching}
+            emptyLabel={
+              explorerQuery.trim().length > 0
+                ? "No files match filter."
+                : "No files in this workspace."
+            }
+          />
         </ResizableWorkspaceExplorerPanel>
       ) : null}
     </div>

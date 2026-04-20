@@ -891,6 +891,19 @@ function dispatchWorkspaceCommandPaletteShortcut(): void {
   );
 }
 
+function dispatchWorkspaceFilePaletteShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "p",
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 function dispatchModEnterShortcut(target: HTMLElement): void {
   const useMetaForMod = isMacPlatform(navigator.platform);
   target.dispatchEvent(
@@ -3743,6 +3756,76 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       await expect.element(page.getByText("Work")).toBeInTheDocument();
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens project files from the file palette on a chat route", async () => {
+    customWsRpcResolver = (body) => {
+      if (body._tag === WS_METHODS.projectsSearchEntries) {
+        return {
+          entries: [
+            {
+              kind: "file",
+              path: "src/components/WorkspaceFilePalette.tsx",
+              parentPath: "src/components",
+            },
+          ],
+          truncated: false,
+        };
+      }
+      if (body._tag === WS_METHODS.projectsReadFile) {
+        return {
+          relativePath: "src/components/WorkspaceFilePalette.tsx",
+          contents: "export const workspaceFilePalette = true;\n",
+          binary: false,
+          tooLarge: false,
+          byteLength: 41,
+          maxBytes: 1024 * 1024,
+          mtimeMs: null,
+        };
+      }
+      return undefined;
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-file-palette-open-file" as MessageId,
+        targetText: "file palette open file",
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      dispatchWorkspaceFilePaletteShortcut();
+
+      await expect.element(page.getByPlaceholder("Search files in Project")).toBeInTheDocument();
+
+      const fileSearchInput = await waitForElement(
+        () =>
+          document.querySelector<HTMLInputElement>('input[placeholder="Search files in Project"]'),
+        "Unable to find the file palette search input.",
+      );
+      fileSearchInput.focus();
+      fileSearchInput.value = "workspacefile";
+      fileSearchInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+      const fileCommand = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (item) => item.textContent?.includes("WorkspaceFilePalette.tsx"),
+          ) ?? null,
+        "Unable to find the workspace file palette result.",
+      );
+      fileCommand.click();
+
+      await expect.element(page.getByText("WorkspaceFilePalette.tsx")).toBeInTheDocument();
+      await expect
+        .element(page.getByText("export const workspaceFilePalette = true;"))
+        .toBeInTheDocument();
+    } finally {
+      customWsRpcResolver = null;
       await mounted.cleanup();
     }
   });

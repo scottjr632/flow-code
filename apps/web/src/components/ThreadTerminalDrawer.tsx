@@ -30,7 +30,9 @@ import {
 import { readNativeApi } from "~/nativeApi";
 import {
   dispatchWorkspaceCommandPaletteOpen,
+  dispatchWorkspaceFilePaletteOpen,
   isWorkspaceCommandPaletteShortcut,
+  isWorkspaceFilePaletteShortcut,
 } from "../workspaceCommandPaletteShortcuts";
 import { buildTerminalLabelById, DEFAULT_TERMINAL_LABEL } from "../terminalLabels";
 
@@ -390,6 +392,13 @@ function TerminalViewport({
         event.preventDefault();
         event.stopPropagation();
         dispatchWorkspaceCommandPaletteOpen();
+        return false;
+      }
+
+      if (isWorkspaceFilePaletteShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        dispatchWorkspaceFilePaletteOpen();
         return false;
       }
 

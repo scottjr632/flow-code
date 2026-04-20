@@ -44,6 +44,7 @@ import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { CANCEL_ACTIVE_DIFF_COMMENT_EVENT } from "../lib/diffCommentEvents";
 import { buildReviewFileRenderKey, resolveReviewFilePath } from "../lib/reviewDiffFiles";
+import { buildPierreDiffTypographyCSSVars } from "../lib/workspaceCodeTypography";
 import { useHydratedFileDiffs } from "../hooks/useHydratedFileDiffs";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
@@ -80,6 +81,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
 [data-file],
 [data-error-wrapper],
 [data-virtualizer-buffer] {
+  ${buildPierreDiffTypographyCSSVars()}
   --diffs-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
   --diffs-light-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
   --diffs-dark-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;

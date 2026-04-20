@@ -38,6 +38,7 @@ import { useCreateWorkItemDialog } from "../hooks/useCreateWorkItemDialog";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTheme } from "../hooks/useTheme";
 import { useWorkspaceCommandPalette } from "../hooks/useWorkspaceCommandPalette";
+import { useWorkspaceFilePalette } from "../hooks/useWorkspaceFilePalette";
 import { formatShortcutLabel } from "../keybindings";
 import {
   collapseExpandedComposerCursor,
@@ -85,6 +86,7 @@ import { Separator } from "./ui/separator";
 import { SidebarTrigger } from "./ui/sidebar";
 import { isMacPlatform } from "../lib/utils";
 import { WorkspaceCommandPalette } from "./WorkspaceCommandPalette";
+import { WorkspaceFilePalette } from "./WorkspaceFilePalette";
 import { buildWorkspaceCommandPaletteNavigationItems } from "../workspaceCommandPaletteItems";
 import { basenameOfPath } from "../vscode-icons";
 
@@ -281,6 +283,8 @@ export function NewThreadScreen({
   const { handleNewThread, projects } = useHandleNewThread();
   const { isOpen: isWorkspaceCommandPaletteOpen, setIsOpen: setIsWorkspaceCommandPaletteOpen } =
     useWorkspaceCommandPalette();
+  const { isOpen: isWorkspaceFilePaletteOpen, setIsOpen: setIsWorkspaceFilePaletteOpen } =
+    useWorkspaceFilePalette();
   const threads = useStore((store) => store.threads);
   const threadMruIds = useStore(selectThreadMruIds);
   const workspaces = useStore((store) => store.workspaces);
@@ -977,6 +981,15 @@ export function NewThreadScreen({
           items={workspaceCommandPaletteItems}
           placeholder="Type command or search"
           emptyText="No matching project, thread, or action."
+        />
+        <WorkspaceFilePalette
+          open={isWorkspaceFilePaletteOpen}
+          onOpenChange={setIsWorkspaceFilePaletteOpen}
+          cwd={selectedProjectSearchCwd}
+          projectName={selectedProject?.name ?? null}
+          resolvedTheme={resolvedTheme}
+          onSelectFile={null}
+          unavailableText="Open a session workspace to browse project files in Flow."
         />
         <WorkItemEditorDialog
           open={workItemDialogState !== null}
